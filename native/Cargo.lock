@@ -279,6 +279,7 @@ version = "0.1.0"
 dependencies = [
  "fancy-regex",
  "fnmatch-rs",
+ "grep-matcher",
  "grep-regex",
  "grep-searcher",
  "pyo3",

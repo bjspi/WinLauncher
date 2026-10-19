@@ -1,8 +1,9 @@
-//! Streaming literal content checks for the candidates that survived filename ranking.
+//! Streaming fnmatch content checks for the candidates that survived filename ranking.
 
 use std::fs::File;
 use std::io::{self, Read, Take};
 
+use grep_matcher::LineTerminator;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{sinks, BinaryDetection, Searcher, SearcherBuilder};
 
@@ -76,12 +77,19 @@ pub struct ContentFilter {
 
 impl ContentFilter {
     pub fn new(text: &str) -> Result<Self, grep_regex::Error> {
+        let pattern = fnmatch_rs::translate(text);
+        // Content patterns match substrings within lines, not a whole filename or stream.
+        let pattern = pattern
+            .strip_prefix(r"(?s)\A")
+            .and_then(|body| body.strip_suffix(r"\z"))
+            .expect("fnmatch translation has documented whole-string anchors");
         Ok(Self {
             matcher: RegexMatcherBuilder::new()
-                .fixed_strings(true)
                 .case_insensitive(true)
-                .build(text)?,
+                .crlf(true)
+                .build(pattern)?,
             searcher: SearcherBuilder::new()
+                .line_terminator(LineTerminator::crlf())
                 .binary_detection(BinaryDetection::quit(b'\0'))
                 .heap_limit(Some((MAX_BYTES * 2 + 65536) as usize))
                 .line_number(true)
@@ -156,20 +164,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn literal_text_matches_case_insensitively_in_a_stream() {
-        let mut filter = ContentFilter::new("API_KEY=[ok]*").unwrap();
-        let mut found = false;
-        filter
-            .searcher
-            .search_reader(
-                &filter.matcher,
-                &b"api_key=[ok]*"[..],
-                sinks::UTF8(|_, _| {
-                    found = true;
-                    Ok(false)
-                }),
-            )
-            .unwrap();
-        assert!(found);
+    fn content_patterns_match_substrings_within_lines_case_insensitively() {
+        for (pattern, text, expected) in [
+            ("API_KEY=(ok)+.{}", "before\napi_key=(ok)+.{}\nafter", true),
+            ("API_KEY=(ok)+.{}", "API_KEY=okkkkk", false),
+            ("gsk_*", "prefix GSK_abcd suffix", true),
+            ("gsk_*", "prefix gsk suffix", false),
+            ("gsk_?", "gsk_Ä", true),
+            ("gsk_?", "gsk_", false),
+            ("gsk_[0-9]", "prefix gsk_7 suffix", true),
+            ("gsk_[0-9]", "prefix gsk_x suffix", false),
+            ("gsk_[!0-9]", "gsk_ä", true),
+            ("gsk_[!0-9]", "gsk_7", false),
+            ("API_KEY=[[]ok][*]", "api_key=[ok]*", true),
+            ("start*end", "start\nend", false),
+            ("start*end", "start\r\nend", false),
+            ("gsk_?", "gsk_\r\nend", false),
+            ("[!x]", "\n", false),
+            ("[z-a]", "z", false),
+            (r"\z", r"value=\z", true),
+        ] {
+            let mut filter = ContentFilter::new(pattern).unwrap();
+            let mut found = false;
+            filter
+                .searcher
+                .search_reader(
+                    &filter.matcher,
+                    text.as_bytes(),
+                    sinks::UTF8(|_, _| {
+                        found = true;
+                        Ok(false)
+                    }),
+                )
+                .unwrap();
+            assert_eq!(found, expected, "{pattern:?} in {text:?}");
+        }
     }
 }

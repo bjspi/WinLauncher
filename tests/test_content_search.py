@@ -27,7 +27,7 @@ except ImportError:
 
 
 class ContentQueryTest(unittest.TestCase):
-    def test_literal_content_query_validation_history_and_type_replacement(self):
+    def test_content_query_validation_history_and_type_replacement(self):
         query = parse_query('*.json contains:"API_KEY=[ok]*" type:file')
         self.assertEqual(query.content_text, "API_KEY=[ok]*")
         self.assertEqual(query.terms, ("*.json",))
@@ -86,7 +86,7 @@ class NativeContentTest(unittest.TestCase):
             return self.service.search(parse_query(text), self.settings)
 
     def test_streams_supported_text_types_after_name_filters_before_the_limit(self):
-        phrase = "API_KEY=[ok]*"
+        phrase = "API_KEY=(ok)+.{}"
         items, expected = [], set()
         for index in range(20):
             path = self.root / f"report{index:02}.json"
@@ -138,6 +138,33 @@ class NativeContentTest(unittest.TestCase):
         self.assertNotIn(
             changed, {hit.item.path for hit in self.search(f'report contains:"{phrase}"', "sqlite")}
         )
+
+    def test_fnmatch_content_patterns_filter_both_native_phases(self):
+        items = []
+        for name, text in (
+            ("a.txt", "prefix GSK_a7 suffix"),
+            ("b.txt", "prefix gsk_bx suffix"),
+            ("c.txt", "prefix gsk_ä5 suffix"),
+            ("d.txt", "prefix gsk_[1]* suffix"),
+            ("lines.txt", "gsk_\nend"),
+            ("other.txt", "other value"),
+        ):
+            path = self.root / name
+            path.write_text(text, encoding="utf-8")
+            items.append(CatalogItem(path, ItemKind.FILE))
+        self.publish(items)
+        for phase in ("rows", "sqlite"):
+            for pattern, expected in (
+                ("gsk_*", {"a.txt", "b.txt", "c.txt", "d.txt", "lines.txt"}),
+                ("gsk_?", {"a.txt", "b.txt", "c.txt", "d.txt"}),
+                ("gsk_[a-z][0-9]", {"a.txt"}),
+                ("gsk_[!0-9][0-9]", {"a.txt", "c.txt", "d.txt"}),
+                ("gsk_[[]1][*]", {"d.txt"}),
+                ("gsk_*end", set()),
+            ):
+                with self.subTest(phase=phase, pattern=pattern):
+                    hits = self.search(f"contains:{pattern}", phase)
+                    self.assertEqual({hit.item.path.name for hit in hits}, expected)
 
     def test_content_scan_releases_gil_and_cancels_between_read_chunks(self):
         path = self.root / "report.txt"

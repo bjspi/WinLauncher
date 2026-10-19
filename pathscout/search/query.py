@@ -46,7 +46,7 @@ class SearchQuery:
     navigation: str | None = None  # Explicit environment/home path; resolved on a worker.
     min_size: int | None = None  # Inclusive byte bounds; folders have no searchable size.
     max_size: int | None = None
-    content_text: str | None = None  # Literal, case-insensitive text; native backend only.
+    content_text: str | None = None  # Case-insensitive fnmatch text; native backend only.
 
     @property
     def uses_learned_items_only(self) -> bool:

@@ -25,7 +25,7 @@ from pathscout.search.candidates import (
 from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking
 
-API_VERSION = 3
+API_VERSION = 4
 _LOGGER = logging.getLogger(__name__)
 _LOGGED: set[str] = set()
 _LOG_LOCK = threading.Lock()

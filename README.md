@@ -116,6 +116,7 @@ size:>5mb size:<1gb                    files larger than 5 MB and smaller than 1
 report after:2026-02* before:2026-02*   reports modified during February 2026
 report !archive                         exclude paths containing "archive"
 report contains:"invoice number"        filter matching text files by their contents (Rust)
+*.json contains:gsk_*                   fnmatch pattern within text contents (Rust)
 report match:keyword score:match        no fuzzy matching, text relevance only
 report low:true                         include low-priority results
 %TEMP%                                 open the Windows temporary directory
@@ -139,7 +140,7 @@ report low:true                         include low-priority results
 | `after:2026-` · `after:2026-02*` | From January 1 or February 1, 2026 |
 | `before:2026-` · `before:2026-02*` | Through the end of 2026 or February 2026 |
 | `size:>5kb` · `size:<2mb` | File/application size; also `>=` and `<=` |
-| `contains:"some text"` | Literal, case-insensitive file contents; Rust backend required |
+| `contains:"some text"` · `contains:gsk_*` | Case-insensitive text/fnmatch content filter; Rust backend required |
 | `low:true` | Show low-priority results alongside the others |
 
 Quoted text keeps spaces, apostrophes are literal and Windows paths such as
@@ -171,6 +172,10 @@ Binary data, Office documents, PDFs, offline files and files over 64 MiB are
 skipped; unreadable or deleted files also do not match. PDFs with a text layer
 would require a separate text extractor; image-only PDFs would additionally need
 OCR. Narrow the filename, extension or folder first for large collections.
+
+Content patterns match anywhere within a line and support `*`, `?`, `[0-9]` and
+`[!0-9]`. They do not span lines. Regex punctuation such as `.` and `+` stays
+literal; use `[*]`, `[?]` and `[[]` to search for literal wildcard characters.
 
 Start with `%` to suggest known Windows directory variables (`%APPDATA%`,
 `%USERPROFILE%` and others). A trailing `/` or `\` lists direct children;

@@ -358,7 +358,7 @@ fn rank_sqlite(
 
 #[pymodule]
 fn pathscout_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add("API_VERSION", 3)?;
+    module.add("API_VERSION", 4)?;
     module.add("UNICODE_VERSION", unicode::UNICODE_VERSION)?;
     module.add_class::<CancelFlag>()?;
     module.add_function(wrap_pyfunction!(rank_rows, module)?)?;
