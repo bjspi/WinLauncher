@@ -1,0 +1,20 @@
+[package]
+name = "pathscout_native"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Optional native search engine for PathScout"
+
+[lib]
+name = "pathscout_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py311"] }
+unicode-normalization = "=0.1.22"
+fancy-regex = "0.14"
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+
+[profile.release]
+lto = "thin"
+

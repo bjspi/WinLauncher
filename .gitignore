@@ -9,3 +9,4 @@ build/
 dist/
 *.sqlite3*
 *.log
+native/target/

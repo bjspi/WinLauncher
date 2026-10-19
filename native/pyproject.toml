@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "pathscout-native"
+version = "0.1.0"
+description = "Optional Rust acceleration for PathScout search"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
