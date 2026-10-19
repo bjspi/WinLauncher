@@ -7,7 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from pathscout.catalog.model import ItemKind, normalize
-from pathscout.search.matching import MIN_FUZZY_TERM_LENGTH
+from pathscout.search.matching import MIN_FUZZY_TERM_LENGTH, is_wildcard
 
 
 class MatchMode(StrEnum):
@@ -44,6 +44,8 @@ class SearchQuery:
     modified_before: float | None = None
     score_mode: ScoreMode = ScoreMode.COMBINED
     navigation: str | None = None  # Explicit environment/home path; resolved on a worker.
+    min_size: int | None = None  # Inclusive byte bounds; folders have no searchable size.
+    max_size: int | None = None
 
     @property
     def uses_learned_items_only(self) -> bool:
@@ -58,7 +60,7 @@ class SearchQuery:
         if self.match_mode != MatchMode.FUZZY:
             return False
         texts = (*self.terms, *self.folder_parts)
-        return any(len(text) >= MIN_FUZZY_TERM_LENGTH for text in texts)
+        return any(not is_wildcard(text) and len(text) >= MIN_FUZZY_TERM_LENGTH for text in texts)
 
     @property
     def history_key(self) -> str:

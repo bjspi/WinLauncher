@@ -2,6 +2,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::matching::Term;
+
 pub(crate) fn required<'py, T: FromPyObject<'py>>(
     dict: &Bound<'py, PyDict>,
     key: &str,
@@ -12,14 +14,16 @@ pub(crate) fn required<'py, T: FromPyObject<'py>>(
 }
 
 pub(crate) struct Query {
-    pub terms: Vec<String>,
-    pub folder_parts: Vec<String>,
+    pub terms: Vec<Term>,
+    pub folder_parts: Vec<Term>,
     pub excluded_terms: Vec<String>,
     pub kind: Option<String>,
     pub extensions: Vec<String>,
     pub scope_key: Option<String>,
     pub modified_after: Option<f64>,
     pub modified_before: Option<f64>,
+    pub min_size: Option<i64>,
+    pub max_size: Option<i64>,
     pub basename_only: bool,
     pub fuzzy: bool,
     pub combined: bool,
@@ -31,14 +35,16 @@ pub(crate) struct Query {
 impl Query {
     pub fn from_dict(dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let query = Self {
-            terms: required(dict, "terms")?,
-            folder_parts: required(dict, "folder_parts")?,
+            terms: compile_terms(required(dict, "terms")?)?,
+            folder_parts: compile_terms(required(dict, "folder_parts")?)?,
             excluded_terms: required(dict, "excluded_terms")?,
             kind: required(dict, "kind")?,
             extensions: required(dict, "extensions")?,
             scope_key: required(dict, "scope_key")?,
             modified_after: required(dict, "modified_after")?,
             modified_before: required(dict, "modified_before")?,
+            min_size: required(dict, "min_size")?,
+            max_size: required(dict, "max_size")?,
             basename_only: required(dict, "basename_only")?,
             fuzzy: required(dict, "fuzzy")?,
             combined: required(dict, "combined")?,
@@ -51,6 +57,9 @@ impl Query {
             || !query.now.is_finite()
             || query.modified_after.is_some_and(|v| !v.is_finite())
             || query.modified_before.is_some_and(|v| !v.is_finite())
+            || query.min_size.is_some_and(|v| v < 0)
+            || query.max_size.is_some_and(|v| v < 0)
+            || matches!((query.min_size, query.max_size), (Some(lower), Some(upper)) if lower > upper)
         {
             return Err(PyValueError::new_err("Invalid native query"));
         }
@@ -74,11 +83,21 @@ impl Query {
             || self
                 .modified_before
                 .is_some_and(|before| row.modified >= before)
+            || ((self.min_size.is_some() || self.max_size.is_some()) && row.kind == "folder")
+            || self.min_size.is_some_and(|lower| row.size < lower)
+            || self.max_size.is_some_and(|upper| row.size > upper)
         {
             return false;
         }
         true
     }
+}
+
+fn compile_terms(texts: Vec<String>) -> PyResult<Vec<Term>> {
+    texts
+        .into_iter()
+        .map(|text| Term::new(text).map_err(|err| PyValueError::new_err(err.to_string())))
+        .collect()
 }
 
 #[derive(Clone, Debug)]

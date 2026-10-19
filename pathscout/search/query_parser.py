@@ -9,10 +9,14 @@ colon-containing token (for example `C:\\Work`) is ordinary search text.
 from __future__ import annotations
 
 import ntpath
+import re
 import shlex
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
+from fractions import Fraction
+from math import ceil, floor
 from pathlib import Path
 from typing import TypeVar
 
@@ -24,8 +28,27 @@ MAX_TERM_LENGTH = 128
 EXCLUSION_PREFIX = "!"
 _Choice = TypeVar("_Choice", bound=StrEnum)
 FILTER_NAMES = frozenset(
-    {"type", "ext", "in", "path", "name", "match", "sort", "score", "low", "after", "before"}
+    {
+        "type",
+        "ext",
+        "in",
+        "path",
+        "name",
+        "match",
+        "sort",
+        "score",
+        "low",
+        "after",
+        "before",
+        "size",
+    }
 )
+_SIZE_UNITS = {"": 1, "b": 1, "byte": 1, "bytes": 1} | {
+    prefix + suffix: 1024**power
+    for power, prefix in enumerate("kmgt", 1)
+    for suffix in ("b", "byte", "bytes", "ib")
+}
+_MAX_SIZE = 2**63 - 1  # SQLite and the native engine store signed 64-bit sizes.
 
 
 def parse_query(text: str, scope: Path | None = None) -> SearchQuery:
@@ -35,7 +58,15 @@ def parse_query(text: str, scope: Path | None = None) -> SearchQuery:
     if stripped.startswith(("%", "~/", "~\\")) or stripped == "~":
         return SearchQuery(navigation=stripped)
     draft = _QueryDraft(scope=scope)
-    for token in _split_tokens(text):
+    tokens = iter(_split_tokens(text))
+    for token in tokens:
+        name, separator, value = token.partition(":")
+        if separator and normalize(name) == "size":
+            if not value:
+                value = next(tokens, "")
+            if value in (">", "<", ">=", "<="):
+                value += next(tokens, "")
+            token = "size:" + value
         draft.add(token)
     return draft.build()
 
@@ -74,6 +105,8 @@ class _QueryDraft:
     include_low_priority: bool = False
     modified_after: float | None = None
     modified_before: float | None = None
+    min_size: int | None = None
+    max_size: int | None = None
 
     def add(self, token: str) -> None:
         if not token:
@@ -112,6 +145,12 @@ class _QueryDraft:
             self.modified_after = _start_of_day(_parse_day(name, value))
         elif name == "before":
             self.modified_before = _end_of_day(_parse_day(name, value))
+        elif name == "size":
+            lower, upper = _parse_size(value)
+            if lower is not None:
+                self.min_size = max(self.min_size or 0, lower)
+            if upper is not None:
+                self.max_size = upper if self.max_size is None else min(self.max_size, upper)
         else:
             raise AssertionError(f"FILTER_NAMES lists {name!r} without a parser.")
 
@@ -130,6 +169,8 @@ class _QueryDraft:
             include_low_priority=self.include_low_priority,
             modified_after=self.modified_after,
             modified_before=self.modified_before,
+            min_size=self.min_size,
+            max_size=self.max_size,
             score_mode=self.score_mode,
         )
 
@@ -138,9 +179,17 @@ class _QueryDraft:
             raise ValueError(
                 f"Individual search terms are limited to {MAX_TERM_LENGTH} characters."
             )
-        if self.modified_after is None or self.modified_before is None:
-            return
-        if self.modified_after >= self.modified_before:
+        if (
+            self.min_size is not None
+            and self.max_size is not None
+            and self.min_size > self.max_size
+        ):
+            raise ValueError("The size filters describe an empty range.")
+        if (
+            self.modified_after is not None
+            and self.modified_before is not None
+            and self.modified_after >= self.modified_before
+        ):
             raise ValueError("The after date must precede the end of the before date.")
 
 
@@ -176,9 +225,41 @@ def _parse_boolean(name: str, value: str) -> bool:
 
 def _parse_day(name: str, value: str) -> date:
     try:
+        expanded = value.removesuffix("*").removesuffix("-")
+        if re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}){0,2}", expanded):
+            parts = [int(part) for part in expanded.split("-")]
+            year = parts[0]
+            month = parts[1] if len(parts) > 1 else (12 if name == "before" else 1)
+            day = (
+                parts[2]
+                if len(parts) > 2
+                else (monthrange(year, month)[1] if name == "before" else 1)
+            )
+            return date(year, month, day)
         return date.fromisoformat(value)
     except ValueError:
-        raise ValueError(f"{name}: expects a date such as 2024-05-31.") from None
+        raise ValueError(f"{name}: expects a date such as 2026, 2026-02* or 2026-02-28.") from None
+
+
+def _parse_size(value: str) -> tuple[int | None, int | None]:
+    match = re.fullmatch(r"(>=|<=|>|<)\s*([0-9]+(?:[.,][0-9]+)?)\s*([a-z]*)", value.lower())
+    if match is None or match[3] not in _SIZE_UNITS:
+        raise ValueError("size: expects >5kb, <2mb, >=1gb or <=512kbyte (b/kb/mb/gb/tb).")
+    comparison = match[1]
+    amount = Fraction(match[2].replace(",", ".")) * _SIZE_UNITS[match[3]]
+    if comparison == ">":
+        bound = floor(amount) + 1
+    elif comparison == ">=":
+        bound = ceil(amount)
+    elif comparison == "<":
+        bound = ceil(amount) - 1
+    else:
+        bound = floor(amount)
+    if not 0 <= bound <= _MAX_SIZE:
+        raise ValueError(
+            "size: must describe a nonnegative size within the signed 64-bit byte range."
+        )
+    return (bound, None) if comparison.startswith(">") else (None, bound)
 
 
 def _end_of_day(day: date) -> float:

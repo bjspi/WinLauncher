@@ -72,13 +72,14 @@ Queries are limited to 512 characters, terms to 128 characters; control characte
 and invalid operator values are rejected with a message naming the operator and its
 accepted values. Double-quoted tokens preserve spaces; an empty quoted token (`""`)
 is ignored; apostrophes are literal characters. Repeated `ext:` and `path:` filters
-accumulate; for other filters the last value wins. Unsupported dates return a validation error. Windows
+accumulate; size comparisons intersect; for other filters the last value wins. Unsupported dates return a validation error. Windows
 backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 
 | Expression | Contract |
 | --- | --- |
 | `annual report` | Every term must match the name or literal full path |
 | `"annual report"` | One term containing a space |
+| `*.json`, `report?.json`, `report[0-9].json` | Whole-filename fnmatch patterns, including the extension |
 | `type:file`, `type:folder`, `type:app` | Restrict item kind; overrides the UI kind button |
 | `ext:pdf,txt` | Any listed extension, case-insensitive, optional leading dots |
 | `in:"D:\Work Projects"` | Restrict to descendants of this absolute folder |
@@ -94,12 +95,45 @@ backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 | `sort:modified` | Ordinary before low results, then newest modification |
 | `after:2025-06-01` | Modification on or after local midnight on this day |
 | `before:2025-06-30` | Modification through the end of this local day, inclusive |
+| `after:2026-`, `after:2026-02*` | Start of the specified local year/month (January 1 / February 1) |
+| `before:2026-`, `before:2026-02*` | Through the last day of the specified local year/month |
+| `size:>5kb`, `size:<2mb` | Strict file/application size comparison; `>=` and `<=` include the boundary |
 | `low:true` | Include low results even when ordinary/high results exist |
 
 An Explorer session supplies the default folder scope. An explicit `in:` overrides
 it. The scope directory itself is excluded from its descendant results. Folder-path
 matching uses the selected keyword/fuzzy matcher on each parent component. Unknown
 prefixes remain literal text, which allows ordinary paths containing colons.
+
+Size units use powers of 1024, case-insensitively: bytes (`b`, `byte`, `bytes`),
+`kb`/`kbyte`/`kbytes`/`KiB`, and equivalent `m`, `g` and `t` prefixes. No unit means
+bytes. Decimal points and commas are accepted; byte bounds are rounded exactly
+according to the comparison. Spaces after `size:` or its comparison are allowed.
+Repeated comparisons form an intersection; invalid units, out-of-range byte bounds
+and empty ranges report validation errors. Folders are excluded by size filters;
+no recursive folder-size calculation is performed. SQL, Python and native ranking
+apply the same inclusive integer byte bounds. Old native API versions fall back
+to Python until rebuilt, so newly added filters cannot be silently ignored.
+
+Dates accept `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, with an optional trailing `*` or
+`-`. Missing parts expand to the first day for `after:` and the last day for
+`before:`; leap years and local midnight boundaries are respected.
+
+Fnmatch patterns support `*`, `?`, character sets/ranges and `[!...]` negation;
+`[[]` escapes an opening bracket and an unmatched `[` is literal. `*` has no
+special recursive meaning. Quoting preserves patterns. Matching uses the same
+normalization as ordinary terms, with either slash spelling accepted in paths.
+Without a separator, patterns match only the display name or actual filename,
+never a parent folder. `name:` matches the stem; `path:` matches ordered parent
+components. Patterns are not fuzzy, but accompanying ordinary terms may be.
+The Python backend uses standard-library fnmatch; Rust uses fnmatch-rs with
+regexes compiled once per query. SQL only supplies a safe candidate superset.
+Excluded terms remain literal substrings.
+
+Rows show approximate catalog size when a size filter is active and the local
+modification timestamp when a date filter is active, including in Explorer mode
+and accessible text. Painting performs no filesystem metadata reads. Creation
+timestamps are not stored or used by the modification date filters.
 
 Leading `%VARIABLE%` and `~`/`~/`/`~\` enter direct path navigation. An exact
 existing path returns the file/folder; a trailing separator lists its direct

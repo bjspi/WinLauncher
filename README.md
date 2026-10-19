@@ -100,10 +100,14 @@ picker shows how many catalog entries each choice removes.
 ```text
 report                                  name or path contains "report"
 vsc type:app                            initials of an application
+*.json                                 shell-style filename wildcard
+report[0-9].json                        one digit in the filename
 report ext:pdf,docx                     only these extensions
 budget in:"D:\Work Projects"            inside this folder
 path:projects/reports name:annual       ordered parent folders, name only
 report after:2025-06-01 before:2025-06-30 sort:modified
+size:>5mb size:<1gb                    files larger than 5 MB and smaller than 1 GB
+report after:2026-02* before:2026-02*   reports modified during February 2026
 report !archive                         exclude paths containing "archive"
 report match:keyword score:match        no fuzzy matching, text relevance only
 report low:true                         include low-priority results
@@ -125,11 +129,31 @@ report low:true                         include low-priority results
 | `sort:score` · `sort:name` · `sort:modified` | Order (default score) |
 | `score:combined` · `score:match` | With or without personal ranking |
 | `after:YYYY-MM-DD` · `before:YYYY-MM-DD` | Modification date range, inclusive |
+| `after:2026-` · `after:2026-02*` | From January 1 or February 1, 2026 |
+| `before:2026-` · `before:2026-02*` | Through the end of 2026 or February 2026 |
+| `size:>5kb` · `size:<2mb` | File/application size; also `>=` and `<=` |
 | `low:true` | Show low-priority results alongside the others |
 
 Quoted text keeps spaces, apostrophes are literal and Windows paths such as
 `C:\Work` stay ordinary search text. The full contract is in the
 [behavior specification](docs/specification.md).
+
+Search terms support fnmatch patterns: `*`, `?`, `[abc]`, `[0-9]` and `[!0-9]`.
+Patterns match the whole filename, including its extension; `name:` matches the
+stem instead. Use `[[]` for a literal opening bracket. Patterns work inside
+quotes, alongside ordinary fuzzy terms and with filters. `path:` accepts the
+same patterns for individual parent folders; `!text` remains a literal exclusion.
+
+Size units are case-insensitive: `b`/`byte`, `kb`/`kbyte`/`KiB`, `mb`/`mbyte`,
+`gb`/`gbyte` and `tb`/`tbyte` (plural `bytes` forms also work). Each step is 1024;
+without a unit the value is bytes. Decimal points or commas work (`size:>1.5mb`),
+and `size:> 5kb` is accepted. Repeated size filters intersect their bounds.
+Folder sizes are not calculated. Partial dates accept a year or year-month,
+optionally ending in `-` or `*`; `after:` starts the period and `before:` includes
+its final day, using local time.
+Size filters show approximate sizes on each result row; date filters show the
+stored modification date. These labels use catalog metadata without reading
+files while painting the UI.
 
 Start with `%` to suggest known Windows directory variables (`%APPDATA%`,
 `%USERPROFILE%` and others). A trailing `/` or `\` lists direct children;

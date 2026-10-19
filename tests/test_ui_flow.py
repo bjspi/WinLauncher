@@ -7,12 +7,13 @@ import tempfile
 import unittest
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QLocale, Qt, QTimer
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
 from pathscout.catalog.model import CatalogItem, ItemKind
 from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from pathscout.platform.gesture import InputUnavailable
+from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import SearchHit
 from pathscout.settings import Settings, SettingsFile
 from pathscout.ui.controller import LauncherController
@@ -95,6 +97,28 @@ class UiFlowTest(unittest.TestCase):
         self.tasks.finish(TaskCategory.SEARCH)
         self.window = self.controller.window
         self.indexing = self.controller.indexing
+
+    def test_filtered_results_show_cached_size_and_modification_date(self):
+        modified = datetime(2026, 2, 15, 12, 34).timestamp()
+        hit = SearchHit(
+            CatalogItem(self.root / "report.json", ItemKind.FILE, size=1536, modified=modified),
+            90,
+            "Name wildcard",
+        )
+        query = parse_query("*.json size:>1kb after:2026-02*")
+        for explorer in (False, True):
+            with self.subTest(explorer=explorer):
+                self.window._set_explorer_mode(explorer, self.root)
+                with patch.object(Path, "stat", side_effect=AssertionError("GUI filesystem read")):
+                    self.window.set_results([hit], 1, query=query)
+                    self.assertFalse(self.window.grab().isNull())
+                item = self.window.results.item(0)
+                metadata = item.data(Qt.ItemDataRole.UserRole + 1)
+                self.assertIn(QLocale().formattedDataSize(1536), metadata)
+                self.assertIn("Modified 2026-02-15 12:34", metadata)
+                self.assertIn(metadata, item.text())
+        self.window.set_results([hit], 1, query=parse_query("report"))
+        self.assertFalse(self.window.results.item(0).data(Qt.ItemDataRole.UserRole + 1))
 
     def test_scan_requests_coalesce_without_cancelling_active_scan(self):
         child = self.root / "nested"

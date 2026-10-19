@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from pathscout.catalog.model import ItemKind
+from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import SearchHit
 from pathscout.ui.highlight import matched_positions
 from pathscout.ui.icons import ResultIcons
@@ -82,6 +83,7 @@ FILTERS = (
 )
 NO_MATCHES = "No matches. Try a shorter name, another spelling or fewer filters."
 logger = logging.getLogger(__name__)
+_METADATA_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class ResultDelegate(QStyledItemDelegate):
@@ -112,13 +114,22 @@ class ResultDelegate(QStyledItemDelegate):
         shortcut_width = self._paint_shortcut(painter, row, index.row(), hit.item.pinned)
         left = icon.right() + 14
         text = QRect(left, row.top(), row.right() - left - shortcut_width - 8, row.height())
+        baseline = text.top() + 41 if self.rows.two_lines else text.center().y() + 6
+        metadata = index.data(_METADATA_ROLE) or ""
+        metadata_width = (
+            min(text.width(), QFontMetrics(QFont("Segoe UI", 8)).horizontalAdvance(metadata) + 12)
+            if metadata
+            else 0
+        )
+        metadata_area = text.adjusted(max(0, text.width() - metadata_width + 12), 0, 0, 0)
+        self._paint_folder(painter, metadata_area, metadata, baseline=baseline)
+        location_area = text.adjusted(0, 0, -metadata_width, 0)
         if self.rows.two_lines:
-            name_end = self._paint_name(painter, text, hit.item.name, baseline=text.top() + 23)
-            self._paint_folder(painter, text, str(hit.item.path.parent), baseline=text.top() + 41)
+            self._paint_name(painter, text, hit.item.name, baseline=text.top() + 23)
+            self._paint_folder(painter, location_area, str(hit.item.path.parent), baseline=baseline)
         else:
-            baseline = text.center().y() + 6
-            name_end = self._paint_name(painter, text, hit.item.name, baseline=baseline)
-            location = text.adjusted(name_end - text.left() + 12, 0, 0, 0)
+            name_end = self._paint_name(painter, location_area, hit.item.name, baseline=baseline)
+            location = location_area.adjusted(name_end - text.left() + 12, 0, 0, 0)
             self._paint_folder(painter, location, self._location(hit), baseline=baseline)
         painter.restore()
 
@@ -200,10 +211,22 @@ def _runs(text: str, highlighted: set[int]) -> Iterator[tuple[int, int, bool]]:
             start = index
 
 
-def _accessible_text(hit: SearchHit) -> str:
+def _accessible_text(hit: SearchHit, metadata: str = "") -> str:
     """What screen readers announce for a row the delegate paints."""
     favorite = ", favorite" if hit.item.pinned else ""
-    return f"{hit.item.name}, {hit.item.kind.value}{favorite}\n{hit.item.path}"
+    details = f"\n{metadata}" if metadata else ""
+    return f"{hit.item.name}, {hit.item.kind.value}{favorite}{details}\n{hit.item.path}"
+
+
+def _result_metadata(hit: SearchHit, query: SearchQuery | None) -> str:
+    if query is None:
+        return ""
+    parts = []
+    if query.min_size is not None or query.max_size is not None:
+        parts.append(QLocale().formattedDataSize(hit.item.size))
+    if query.modified_after is not None or query.modified_before is not None:
+        parts.append(f"Modified {_format_modified(hit.item.modified)}")
+    return " · ".join(parts)
 
 
 def _format_modified(timestamp: float) -> str:
@@ -454,16 +477,18 @@ class LauncherWindow(QWidget):
         elapsed_ms: float,
         *,
         preserve_selection: bool = True,
-        highlight_terms: tuple[str, ...] = (),
+        query: SearchQuery | None = None,
     ) -> None:
         """Show new results; keep the selected path only when the query is unchanged."""
         previous = self.selected_hit() if preserve_selection else None
-        self.delegate.terms = highlight_terms
+        self.delegate.terms = query.terms if query is not None else ()
         self.results.clear()
         selected_row = 0
         for row, hit in enumerate(hits):
-            item = QListWidgetItem(_accessible_text(hit))
+            metadata = _result_metadata(hit, query)
+            item = QListWidgetItem(_accessible_text(hit, metadata))
             item.setData(Qt.ItemDataRole.UserRole, hit)
+            item.setData(_METADATA_ROLE, metadata)
             item.setToolTip(f"{hit.item.path}\n{hit.reason}\nRelevance: {hit.score:.1f}")
             self.results.addItem(item)
             if previous is not None and hit.item.path == previous.item.path:

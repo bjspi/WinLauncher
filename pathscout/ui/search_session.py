@@ -151,9 +151,7 @@ class SearchSession(QObject):
         same_query = self.displayed_query == query
         self.displayed_query = query
         hits, elapsed_ms = result
-        self.window.set_results(
-            hits, elapsed_ms, preserve_selection=same_query, highlight_terms=query.terms
-        )
+        self.window.set_results(hits, elapsed_ms, preserve_selection=same_query, query=query)
         if self.open_pending:
             self.open_pending = False
             self.request_open(self.window.selected_hit())

@@ -54,6 +54,10 @@ ASCII_NAMES = (
     ".hidden",
     "Folder.With.Dots",
     "100%_complete.txt",
+    "report1.json",
+    "reportA.json",
+    "report[1].json",
+    "report[.json",
     "mom's report.txt",
     "Report-REPORT.txt",
     "BudgetReview3.csv",
@@ -94,6 +98,26 @@ QUERY_TEXTS = (
     "path:deep/work report",
     "report !archive",
     "report after:2024-06-01 before:2024-12-15",
+    "report after:2024- before:2024-06*",
+    "size:>1kb",
+    "size:<1kbyte",
+    "size:>=1kb size:<=2kb",
+    "report size:>1kb size:<4kb",
+    "*.json",
+    '"*.json"',
+    "report?.json",
+    "report[0-9].json",
+    "report[!0-9].json",
+    "report[[]1].json",
+    "report[.json",
+    "**.json",
+    "*.exe",
+    "*.txt rpt",
+    "*.txt ![archive]",
+    "[!0-9]* size:>1kb",
+    "name:report[0-9]",
+    "path:[aw]* report*",
+    "100%_*.txt",
     "report low:true",
     '"100%_"',
     "mom's",
@@ -462,6 +486,21 @@ class NativeParityTest(unittest.TestCase):
                     spec, priority_spec(policy), rows, lambda *_: True, NATIVE.CancelFlag()
                 )
 
+    def test_invalid_native_size_bounds_are_rejected(self):
+        spec = query_spec(parse_query("report"), Ranker(parse_query("report")), 10)
+        for lower, upper in ((-1, None), (None, -1), (10, 9), (2**63, None)):
+            with (
+                self.subTest(lower=lower, upper=upper),
+                self.assertRaises((ValueError, OverflowError)),
+            ):
+                NATIVE.rank_rows(
+                    {**spec, "min_size": lower, "max_size": upper},
+                    priority_spec(PriorityPolicy()),
+                    [],
+                    lambda *_: True,
+                    NATIVE.CancelFlag(),
+                )
+
     def test_cancel_flag_returns_empty_promptly_and_releases_the_gil(self):
         query = SearchQuery(terms=("ab" * 20,))
         spec = query_spec(query, Ranker(query, now=NOW), 10)
@@ -563,6 +602,7 @@ class NativeAdapterFallbackTest(unittest.TestCase):
             {"side_effect": ModuleNotFoundError("missing", name="pathscout_native")},
             {"side_effect": ImportError("broken extension")},
             {"return_value": ModuleType("pathscout_native")},
+            {"return_value": type("OldNative", (), {"API_VERSION": 1})()},
             {
                 "return_value": type(
                     "StaleUnicode",

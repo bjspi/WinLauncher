@@ -1,4 +1,4 @@
-"""Structured query filters: type, extension, location and modification date.
+"""Structured query filters: type, extension, location, modification date and size.
 
 These decide eligibility only. Text relevance and personal ranking never
 override a structured filter.
@@ -6,7 +6,7 @@ override a structured filter.
 
 from __future__ import annotations
 
-from pathscout.catalog.model import path_key
+from pathscout.catalog.model import ItemKind, path_key
 from pathscout.search.candidates import Candidate
 from pathscout.search.query import SearchQuery
 
@@ -23,6 +23,7 @@ class StructuredFilters:
             self._matches_type(candidate)
             and self._matches_location(candidate)
             and self._matches_date(candidate)
+            and self._matches_size(candidate)
         )
 
     def _matches_type(self, candidate: Candidate) -> bool:
@@ -45,3 +46,13 @@ class StructuredFilters:
         if before is not None and candidate.modified >= before:
             return False
         return True
+
+    def _matches_size(self, candidate: Candidate) -> bool:
+        lower, upper = self.query.min_size, self.query.max_size
+        if lower is None and upper is None:
+            return True
+        return (
+            candidate.kind != ItemKind.FOLDER
+            and (lower is None or candidate.size >= lower)
+            and (upper is None or candidate.size <= upper)
+        )

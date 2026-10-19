@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from functools import cached_property
 
 from pathscout.catalog.model import normalize
@@ -68,6 +69,16 @@ class NameForms:
 
 def match_term(term: str, name: NameForms, path: str | None, fuzzy: bool) -> TextMatch | None:
     """Score `term` against a name and, unless `path` is None, the normalized full path."""
+    if is_wildcard(term):
+        if _wildcard_matches(term, name.normalized):
+            return TextMatch(WORD_PREFIX_SCORE, "Name wildcard")
+        if path is not None:
+            filename = path.replace("\\", "/").rsplit("/", 1)[-1]
+            if _wildcard_matches(term, filename):
+                return TextMatch(WORD_PREFIX_SCORE, "Name wildcard")
+            if ("/" in term or "\\" in term) and _wildcard_matches(term, path):
+                return TextMatch(PATH_CONTAINS_SCORE, "Path wildcard")
+        return None
     if term in (name.normalized, name.without_extension):
         return TextMatch(EXACT_NAME_SCORE, "Exact name")
     if name.normalized.startswith(term):
@@ -86,6 +97,15 @@ def match_term(term: str, name: NameForms, path: str | None, fuzzy: bool) -> Tex
     if fuzzy_term and (score := fuzzy_score(term, name.original)) is not None:
         return TextMatch(score, "Fuzzy match")
     return None
+
+
+def is_wildcard(term: str) -> bool:
+    return any(char in term for char in "*?[")
+
+
+def _wildcard_matches(pattern: str, text: str) -> bool:
+    pattern = pattern.replace("\\", "/")
+    return fnmatchcase(text.replace("\\", "/"), pattern)
 
 
 def best_possible_score(term: str, normalized_name: str) -> float:

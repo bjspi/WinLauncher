@@ -308,6 +308,87 @@ class BusinessRulesTest(unittest.TestCase):
         )
         self.assertTrue(self.hits("report"))
 
+    def test_fnmatch_patterns_use_filenames_and_combine_with_other_filters(self):
+        names = (
+            "report1.json",
+            "reportA.json",
+            "report[1].json",
+            "report[.json",
+            "100%_complete.json",
+            "100xxcomplete.json",
+            "report2.txt",
+            "röport.json",
+            "directory.json/other.txt",
+            "deep/report3.json",
+            "VisualStudioCode.exe",
+        )
+        paths = {name: self.file(name) for name in names}
+        self.scan()
+        for text, expected in (
+            ('"*.json" type:file', {name for name in names if name.endswith(".json")}),
+            ("report?.json", {"report1.json", "reportA.json", "report[.json", "deep/report3.json"}),
+            ("report[0-9].json", {"report1.json", "deep/report3.json"}),
+            ("report[!0-9].json", {"reportA.json", "report[.json"}),
+            ("report[[]1].json", {"report[1].json"}),
+            ("report[.json", {"report[.json"}),
+            ("100%_*.json", {"100%_complete.json"}),
+            ("r?port.json", {"röport.json"}),
+            ("*.exe", {"VisualStudioCode.exe"}),
+            (
+                "*.json rpt size:>0b",
+                {
+                    "report1.json",
+                    "reportA.json",
+                    "report[1].json",
+                    "report[.json",
+                    "deep/report3.json",
+                    "röport.json",
+                },
+            ),
+            ("name:report[0-9]", {"report1.json", "report2.txt", "deep/report3.json"}),
+            ("path:d* report[0-9].json", {"deep/report3.json"}),
+            (
+                "report* ![1]",
+                {
+                    "report1.json",
+                    "reportA.json",
+                    "report[.json",
+                    "report2.txt",
+                    "deep/report3.json",
+                },
+            ),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    {h.item.path for h in self.hits(text)}, {paths[name] for name in expected}
+                )
+
+    def test_size_and_partial_date_filters_include_only_matching_files(self):
+        paths = {}
+        for name, size, modified in (
+            ("empty.txt", 0, datetime(2026, 2, 1)),
+            ("exact.txt", 1024, datetime(2026, 2, 1)),
+            ("small.txt", 1025, datetime(2026, 2, 1)),
+            ("last.exe", 2048, datetime(2026, 2, 28, 23, 59, 59)),
+            ("large.txt", 2049, datetime(2026, 2, 15)),
+            ("old.txt", 1500, datetime(2026, 1, 31, 23, 59, 59)),
+            ("next.txt", 1500, datetime(2026, 3, 1)),
+        ):
+            path = self.file(name, "x" * size)
+            os.utime(path, (modified.timestamp(),) * 2)
+            paths[name] = path
+        (self.root / "folder").mkdir()
+        self.scan()
+        self.assertEqual(
+            {
+                h.item.path
+                for h in self.hits("size:>1kb size:<=2kbyte after:2026-02* before:2026-02*")
+            },
+            {paths["small.txt"], paths["last.exe"]},
+        )
+        self.assertEqual([h.item.path for h in self.hits("size:<1byte")], [paths["empty.txt"]])
+        self.assertFalse(self.hits("type:folder size:<1gb"))
+
     def test_query_filters_paths_dates_and_literal_sql_wildcards(self):
         path = self.file("Projects/Reports/100%_complete.txt")
         self.file("Projects/Other/100xxcomplete.txt")

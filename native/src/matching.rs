@@ -3,6 +3,8 @@
 use std::borrow::Cow;
 use std::cell::OnceCell;
 
+use regex::Regex;
+
 use crate::fuzzy::fuzzy_score;
 use crate::unicode::{isalnum, normalize};
 
@@ -14,6 +16,24 @@ pub const NAME_CONTAINS_POSITION_PENALTY: f64 = 0.05;
 pub const ABBREVIATION_SCORE: f64 = 65.0;
 pub const PATH_CONTAINS_SCORE: f64 = 35.0;
 pub const MIN_FUZZY_TERM_LENGTH: usize = 2;
+
+pub struct Term {
+    pub text: String,
+    pattern: Option<Regex>,
+}
+
+impl Term {
+    pub fn new(text: String) -> Result<Self, regex::Error> {
+        let pattern = if text.contains(['*', '?', '[']) {
+            Some(Regex::new(&fnmatch_rs::translate(
+                &text.replace('\\', "/"),
+            ))?)
+        } else {
+            None
+        };
+        Ok(Self { text, pattern })
+    }
+}
 
 pub struct NameForms<'a> {
     pub original: &'a str,
@@ -78,11 +98,27 @@ fn name_words(original: &str) -> Vec<String> {
 }
 
 pub fn match_term(
-    term: &str,
+    term: &Term,
     name: &NameForms<'_>,
     path: Option<&str>,
     fuzzy: bool,
 ) -> Option<(f64, &'static str)> {
+    if let Some(pattern) = &term.pattern {
+        if pattern.is_match(&name.normalized.replace('\\', "/")) {
+            return Some((WORD_PREFIX_SCORE, "Name wildcard"));
+        }
+        if let Some(path) = path {
+            let filename = path.rsplit(['/', '\\']).next().unwrap_or("");
+            if pattern.is_match(filename) {
+                return Some((WORD_PREFIX_SCORE, "Name wildcard"));
+            }
+            if term.text.contains(['/', '\\']) && pattern.is_match(&path.replace('\\', "/")) {
+                return Some((PATH_CONTAINS_SCORE, "Path wildcard"));
+            }
+        }
+        return None;
+    }
+    let term = term.text.as_str();
     if term == name.normalized.as_ref() || term == name.without_extension() {
         return Some((EXACT_NAME_SCORE, "Exact name"));
     }
@@ -120,7 +156,7 @@ pub fn best_possible_score(term: &str, normalized_name: &str) -> f64 {
     }
 }
 
-pub fn matches_folder_order(parts: &[String], folders: &[String], fuzzy: bool) -> bool {
+pub fn matches_folder_order(parts: &[Term], folders: &[String], fuzzy: bool) -> bool {
     let mut start = 0;
     for part in parts {
         let position = folders[start..].iter().position(|folder| {
@@ -196,7 +232,19 @@ mod tests {
     use super::*;
 
     fn matching(term: &str, original: &str, fuzzy: bool) -> Option<(f64, &'static str)> {
-        match_term(term, &NameForms::new(original, None), None, fuzzy)
+        match_term(
+            &Term::new(term.into()).unwrap(),
+            &NameForms::new(original, None),
+            None,
+            fuzzy,
+        )
+    }
+
+    fn terms(texts: &[&str]) -> Vec<Term> {
+        texts
+            .iter()
+            .map(|text| Term::new((*text).into()).unwrap())
+            .collect()
     }
 
     #[test]
@@ -229,12 +277,12 @@ mod tests {
         assert_eq!(matching("zzz", "Report.txt", true), None);
         let name = NameForms::new("Report.txt", None);
         assert_eq!(
-            match_term("rpt", &name, Some("c:/rpt/report.txt"), true),
+            match_term(&terms(&["rpt"])[0], &name, Some("c:/rpt/report.txt"), true),
             Some((35.0, "Path contains query"))
         );
         let abbreviation = NameForms::new("VisualStudioCode.exe", None);
         assert_eq!(
-            match_term("vsc", &abbreviation, Some("c:/vsc"), true),
+            match_term(&terms(&["vsc"])[0], &abbreviation, Some("c:/vsc"), true),
             Some((65.0, "Abbreviation"))
         );
     }
@@ -256,8 +304,18 @@ mod tests {
     #[test]
     fn exact_and_prefix_do_not_prepare_words() {
         let name = NameForms::new("Report.txt", Some("report.txt"));
-        assert_eq!(match_term("report", &name, None, true).unwrap().0, 150.0);
-        assert_eq!(match_term("rep", &name, None, true).unwrap().0, 110.0);
+        assert_eq!(
+            match_term(&terms(&["report"])[0], &name, None, true)
+                .unwrap()
+                .0,
+            150.0
+        );
+        assert_eq!(
+            match_term(&terms(&["rep"])[0], &name, None, true)
+                .unwrap()
+                .0,
+            110.0
+        );
         assert!(name.words.get().is_none());
         assert!(name.initials.get().is_none());
     }
@@ -280,22 +338,22 @@ mod tests {
             .map(String::from)
             .into();
         assert!(matches_folder_order(
-            &["proj".into(), "rep".into()],
+            &terms(&["proj", "rep"]),
             &folders,
             false
         ));
         assert!(!matches_folder_order(
-            &["rep".into(), "proj".into()],
+            &terms(&["rep", "proj"]),
             &folders,
             true
         ));
         assert!(!matches_folder_order(
-            &["proj".into(), "proj".into()],
+            &terms(&["proj", "proj"]),
             &folders,
             true
         ));
         assert!(matches_folder_order(&[], &folders, true));
-        assert!(matches_folder_order(&["c:".into()], &folders, false));
+        assert!(matches_folder_order(&terms(&["c:"]), &folders, false));
         assert_eq!(best_possible_score("rep", "report.txt"), 150.0);
         assert_eq!(best_possible_score("rep", "annual report.txt"), 90.0);
     }

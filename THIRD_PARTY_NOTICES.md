@@ -30,6 +30,8 @@ cache. The following inventory is from `cargo metadata` for that lockfile:
 | --- | --- |
 | `pyo3`, `pyo3-build-config`, `pyo3-ffi`, `pyo3-macros`, `pyo3-macros-backend` 0.23.5 | MIT OR Apache-2.0 |
 | `fancy-regex` 0.14.0 | MIT |
+| `fnmatch-rs` 0.1.0 | MIT |
+| `regex` 1.13.1 | MIT OR Apache-2.0 |
 | `rusqlite` 0.32.1, `libsqlite3-sys` 0.30.1 | MIT (SQLite itself is public domain) |
 | `unicode-normalization` 0.1.22 | MIT OR Apache-2.0 |
 | `unicode-ident` 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |

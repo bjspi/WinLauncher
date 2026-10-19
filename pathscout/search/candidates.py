@@ -26,6 +26,7 @@ from pathscout.catalog.model import (
     path_range,
 )
 from pathscout.catalog.store import CatalogStore
+from pathscout.search.matching import is_wildcard
 from pathscout.search.query import SearchQuery
 
 MIN_TRIGRAM_TERM_LENGTH = 3  # FTS5 trigram indexes cannot match shorter terms.
@@ -162,10 +163,24 @@ def _escape_like(text: str) -> str:
 
 
 def _contains(text: str) -> str:
+    if is_wildcard(text):
+        # A LIKE prefix safely narrows character classes; fnmatch decides the full match.
+        if "[" in text:
+            text = text.partition("[")[0] + "*"
+        return (
+            "%"
+            + "".join(
+                "%" if char == "*" else "_" if char in "?/\\" else _escape_like(char)
+                for char in text
+            )
+            + "%"
+        )
     return "%" + _escape_like(text) + "%"
 
 
 def _subsequence(text: str) -> str:
+    if is_wildcard(text):
+        return _contains(text)
     return "%" + "%".join(_escape_like(char) for char in text) + "%"
 
 
@@ -268,15 +283,23 @@ def _require_structured_filters(where: _SqlFilter, query: SearchQuery) -> None:
         where.require("e.modified >= ?", query.modified_after)
     if query.modified_before is not None:
         where.require("e.modified < ?", query.modified_before)
+    if query.min_size is not None or query.max_size is not None:
+        where.require("e.kind != 'folder'")
+    if query.min_size is not None:
+        where.require("e.size >= ?", query.min_size)
+    if query.max_size is not None:
+        where.require("e.size <= ?", query.max_size)
     for term in query.excluded_terms:
-        where.require(f"NOT {_PATH_LIKE}", _contains(term))
+        where.require(f"NOT {_PATH_LIKE}", "%" + _escape_like(term) + "%")
 
 
 def _require_literal_text(where: _SqlFilter, query: SearchQuery) -> None:
     for part in query.folder_parts:
         where.require(_PATH_LIKE, _contains(part))
-    long_terms = [t for t in query.terms if len(t) >= MIN_TRIGRAM_TERM_LENGTH]
-    short_terms = [t for t in query.terms if len(t) < MIN_TRIGRAM_TERM_LENGTH]
+    long_terms = [
+        t for t in query.terms if len(t) >= MIN_TRIGRAM_TERM_LENGTH and not is_wildcard(t)
+    ]
+    short_terms = [t for t in query.terms if len(t) < MIN_TRIGRAM_TERM_LENGTH or is_wildcard(t)]
     if long_terms:
         where.require(
             "e.rowid IN (SELECT rowid FROM entry_fts WHERE entry_fts MATCH ?)",

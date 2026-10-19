@@ -85,7 +85,7 @@ pub(crate) fn bound(query: &Query, row: &Candidate, priority: &Decision) -> f64 
     let mut score: f64 = query
         .terms
         .iter()
-        .map(|term| best_possible_score(term, &row.search_name))
+        .map(|term| best_possible_score(&term.text, &row.search_name))
         .sum();
     if query.combined {
         score += personalization(row, query.now, &mut Vec::new());
