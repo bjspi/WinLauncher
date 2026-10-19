@@ -23,6 +23,7 @@ from pathscout.catalog.model import ItemKind
 from pathscout.catalog.priority import PriorityDecision
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.candidates import Candidate, read_candidates
+from pathscout.search.native_engine import log_native_failure, rank_with_native, select_native
 from pathscout.search.query import SearchQuery, SortOrder
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking, SearchHit
 from pathscout.settings import Settings
@@ -122,6 +123,25 @@ class SearchService:
         exclusions = settings.exclusions()
         priorities = settings.priorities()
         ranker = Ranker(query)
+        native = select_native()
+        if native is not None:
+            try:
+                kept = rank_with_native(
+                    native,
+                    self.store,
+                    query,
+                    priorities,
+                    ranker,
+                    settings.max_results,
+                    lambda path, directory: exclusions.allows(Path(path), directory=directory),
+                    cancel=cancel,
+                )
+                if cancel is not None and cancel.is_set():
+                    return []
+                hits = [ranking.hit(candidate.to_item()) for candidate, ranking in kept]
+                return _hide_fallbacks_unless_needed(hits, query)
+            except Exception as exc:
+                log_native_failure(exc)
         order = ResultOrder(query, ranker)
         best = _BestHits(settings.max_results)
         for candidate in self._candidates(query, cancel):

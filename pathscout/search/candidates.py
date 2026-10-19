@@ -181,6 +181,16 @@ def read_candidates(
     fuzzy: bool = False,
     cancel: threading.Event | None = None,
 ) -> Iterator[Candidate]:
+    sql, parameters = candidate_sql(query, fuzzy=fuzzy)
+    with store.connect() as connection:
+        connection.row_factory = None  # Plain tuples; rows are unpacked by position.
+        if cancel is not None:
+            connection.set_progress_handler(cancel.is_set, CANCEL_CHECK_INSTRUCTIONS)
+        yield from _stream_items(connection, sql, parameters, cancel)
+
+
+def candidate_sql(query: SearchQuery, fuzzy: bool = False) -> tuple[str, dict[str, object]]:
+    """Build one candidate pass for either the Python or native SQLite reader."""
     where = _SqlFilter()
     _require_structured_filters(where, query)
     if fuzzy:
@@ -190,11 +200,7 @@ def read_candidates(
     entries = _LEARNED_ENTRIES if query.uses_learned_items_only else _ALL_ENTRIES
     sql = _CANDIDATE_SQL.format(entries=entries, where=where.sql())
     parameters = {"history_key": query.history_key, **where.parameters}
-    with store.connect() as connection:
-        connection.row_factory = None  # Plain tuples; rows are unpacked by position.
-        if cancel is not None:
-            connection.set_progress_handler(cancel.is_set, CANCEL_CHECK_INSTRUCTIONS)
-        yield from _stream_items(connection, sql, parameters, cancel)
+    return sql, parameters
 
 
 def _stream_items(

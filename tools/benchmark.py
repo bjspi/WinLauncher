@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import tempfile
@@ -69,6 +70,8 @@ def time_query(service: SearchService, text: str, settings: Settings) -> dict[st
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--entries", type=int, default=50000)
+    parser.add_argument("--engine", choices=("python", "native"), default="python")
+    parser.add_argument("--phase", choices=("rows", "sqlite"), default="sqlite")
     parser.add_argument(
         "--directories",
         type=int,
@@ -78,6 +81,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.entries < 1 or args.directories < 1:
         parser.error("Entries and directories must be positive.")
+    os.environ["PATHSCOUT_SEARCH_ENGINE"] = args.engine
+    os.environ["PATHSCOUT_NATIVE_PHASE"] = args.phase
     with tempfile.TemporaryDirectory(prefix="pathscout-benchmark-") as temporary:
         root = Path(temporary)
         for index in range(args.directories):
@@ -86,6 +91,8 @@ def main() -> None:
         started = time.perf_counter()
         build_catalog(store, root, args.entries, args.directories)
         result = {
+            "engine": args.engine,
+            "phase": args.phase if args.engine == "native" else None,
             "entries": store.count(),
             "real_directories": args.directories,
             "synthetic_build_seconds": round(time.perf_counter() - started, 3),

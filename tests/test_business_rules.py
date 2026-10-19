@@ -545,6 +545,10 @@ class BusinessRulesTest(unittest.TestCase):
         for index in range(150):
             path = self.file(f"folder-{index:04d}/{index:04d}-Report.txt")
             items.append(CatalogItem(path, ItemKind.FILE))
+        source = CatalogSource(self.root).id
+        with self.store.snapshot() as connection:
+            self.store.stage(connection, ((item, source) for item in items))
+            self.store.publish(connection, active_roots=(source,), preserved_roots=())
         settings = replace(self.settings, max_results=10)
         stat = Path.stat
         calls = []
@@ -553,13 +557,7 @@ class BusinessRulesTest(unittest.TestCase):
             calls.append(path)
             return stat(path, *args, **kwargs)
 
-        with (
-            patch(
-                "pathscout.search.service.read_candidates",
-                return_value=iter(Candidate.from_item(item) for item in items),
-            ),
-            patch.object(Path, "stat", counted),
-        ):
+        with patch.object(Path, "stat", counted):
             self.assertEqual(len(self.hits("report match:keyword", settings)), 10)
         candidate_folders = {path.parent for path in calls if path.parent.parent == self.root}
         self.assertLess(len(candidate_folders), 30)  # Not all 150 candidate folders.
