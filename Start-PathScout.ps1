@@ -1,4 +1,5 @@
 param(
+    [switch]$Show,
     [switch]$Background,
     [switch]$NoHooks,
     [string]$DataDir
@@ -13,6 +14,7 @@ $pythonExecutable = if (Test-Path -LiteralPath $localPython) {
     (Get-Command pythonw.exe -ErrorAction Stop).Source
 }
 $arguments = @('-m', 'pathscout')
+if ($Show) { $arguments += '--show' }
 if ($Background) { $arguments += '--background' }
 if ($NoHooks) { $arguments += '--no-hooks' }
 if ($DataDir) { $arguments += @('--data-dir', ('"' + $DataDir + '"')) }

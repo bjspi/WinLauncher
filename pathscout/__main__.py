@@ -49,7 +49,14 @@ def _parse_arguments() -> argparse.Namespace:
         default=_default_data_directory(),
         help="Directory for settings, catalog and logs",
     )
-    parser.add_argument("--background", action="store_true", help="Start in the system tray")
+    parser.add_argument(
+        "--show", action="store_true", help="Open the search bar right after starting"
+    )
+    parser.add_argument(
+        "--background",
+        action="store_true",
+        help="Start in the tray (the default); a second start then leaves PathScout alone",
+    )
     parser.add_argument(
         "--no-hooks", action="store_true", help="Disable global shortcuts and Explorer typing"
     )
@@ -188,7 +195,8 @@ def main() -> int:
 
     _serve_show_requests(server, controller)
     app.aboutToQuit.connect(controller.close)
-    if not args.background or not QSystemTrayIcon.isSystemTrayAvailable():
+    # PathScout starts quietly in the tray; without a tray it would be unreachable.
+    if args.show or not QSystemTrayIcon.isSystemTrayAvailable():
         controller.window.present()
     try:
         return app.exec()

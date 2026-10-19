@@ -502,8 +502,8 @@ class LauncherController(QObject):
     def restart(self) -> None:
         """Start a replacement that waits for this process's lock, then quit."""
         arguments = ["-m", "pathscout", "--replace", "--data-dir", str(self.data_dir)]
-        if not self.window.isVisible():
-            arguments.append("--background")
+        if self.window.isVisible():
+            arguments.append("--show")
         if not self.hooks_requested:
             arguments.append("--no-hooks")
         self._stop_keyboard()  # Never run two global keyboard hooks at once.

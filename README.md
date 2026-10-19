@@ -55,8 +55,8 @@ python -m venv .venv
 Afterwards, start it without a console window:
 
 ```powershell
-.\Start-PathScout.ps1               # open the search bar
-.\Start-PathScout.ps1 -Background   # start quietly in the tray
+.\Start-PathScout.ps1               # start quietly in the tray
+.\Start-PathScout.ps1 -Show         # start and open the search bar
 ```
 
 PathScout starts with your Desktop, Documents and Downloads plus installed
@@ -169,15 +169,16 @@ the top group; the number fine-tunes the order.
 ## 🛠️ Command line
 
 ```powershell
-python -m pathscout                         # open the search bar
-python -m pathscout --background            # start in the tray
+python -m pathscout                         # start in the tray
+python -m pathscout --show                  # start and open the search bar
 python -m pathscout --no-hooks              # no global shortcuts or Explorer typing
 python -m pathscout --data-dir D:\Temp\Try  # separate settings and catalog
 python -m pathscout --version
 ```
 
-Starting PathScout again shows the running instance. A second `--background`
-start leaves it alone.
+PathScout starts quietly in the tray; press <kbd>Ctrl</kbd> <kbd>Ctrl</kbd> to search.
+Starting it again opens the running instance's search bar, unless the second start
+uses `--background`.
 
 ## 🧩 How it works
 

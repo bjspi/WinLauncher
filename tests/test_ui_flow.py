@@ -481,6 +481,7 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(arguments[:3], ["-m", "pathscout", "--replace"])
         self.assertIn(str(c.data_dir), arguments)
         self.assertIn("--no-hooks", arguments)
+        self.assertIn("--show", arguments)  # The launcher was open, so it reopens.
         application.return_value.quit.assert_called_once()
 
     def test_exclude_picker_adds_the_chosen_parent(self):

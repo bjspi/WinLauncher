@@ -249,5 +249,7 @@ with the edits intact. Changing roots, exclusions, markers, priority rules or
 application indexing restarts folder watching and rescans; changing only the result
 limit, interval or input settings does not rescan and keeps an Explorer scope.
 
-A second start for the same data directory shows the running launcher, unless it was
-started with `--background`, in which case it exits without changing the window.
+PathScout starts in the tray without showing the search bar; `--show` opens it
+right away, and it also opens when no system tray is available. A second start for
+the same data directory shows the running launcher, unless it was started with
+`--background`, in which case it exits without changing the window.
