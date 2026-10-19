@@ -221,7 +221,7 @@ real settings, Startup folder or files.
   autostart use Windows APIs.
 - Indexes by walking folders and watching changes, not by reading the NTFS
   journal; very large drive-wide catalogs build slower, and one-letter searches
-  over tens of thousands of items take around a second.
+  over tens of thousands of items take around half a second.
 - Input methods (IME), Windows 11 tab edge cases, high-DPI multi-monitor setups and
   screen readers still need more real-world testing.
 

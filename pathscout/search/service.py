@@ -1,77 +1,115 @@
-"""Search use case: stream candidates, rank them, keep the best, apply exclusions."""
+"""Search use case: stream candidates, rank them, keep the best, apply exclusions.
+
+Three things keep broad searches cheap without changing their results:
+
+- Candidates are plain catalog rows; `Path` objects and `SearchHit`s are built
+  only for the hits that are finally displayed.
+- Text is compared in the normalized form the catalog stores.
+- Once the result list is full, a candidate whose best possible sort key cannot
+  beat the weakest kept hit is skipped before any text matching.
+"""
 
 from __future__ import annotations
 
 import heapq
 import itertools
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from pathscout.catalog.model import CatalogItem, ItemKind
+from pathscout.catalog.exclusions import ExclusionPolicy
+from pathscout.catalog.model import ItemKind
+from pathscout.catalog.priority import PriorityDecision
 from pathscout.catalog.store import CatalogStore
-from pathscout.search.candidates import read_candidates
+from pathscout.search.candidates import Candidate, read_candidates
 from pathscout.search.query import SearchQuery, SortOrder
-from pathscout.search.ranking import SearchHit, rank
+from pathscout.search.ranking import PriorityBand, Ranker, Ranking, SearchHit
 from pathscout.settings import Settings
 
-SortKey = tuple  # Compared lexicographically; built only by `sort_key_for`.
+SortKey = tuple  # Compared lexicographically; smaller keys rank first.
 
 
-def sort_key_for(order: SortOrder, scope: Path | None = None) -> Callable[[SearchHit], SortKey]:
-    """Smaller keys rank first. Low-priority hits always follow the others.
+class ResultOrder:
+    """Sort keys for one query. Low-priority hits always follow the others.
 
     In a folder scope (an Explorer search), the folder's direct entries come
     before deeper matches; relevance orders hits within each group.
     """
-    if order == SortOrder.NAME:
-        return lambda hit: (hit.low_priority, hit.item.name.casefold(), str(hit.item.path))
-    if order == SortOrder.MODIFIED:
-        return lambda hit: (hit.low_priority, -hit.item.modified, str(hit.item.path))
-    return lambda hit: (
-        hit.band,
-        _depth_group(hit, scope),
-        -hit.score,
-        hit.item.name.casefold(),
-        str(hit.item.path),
-    )
+
+    def __init__(self, query: SearchQuery, ranker: Ranker):
+        self.order = query.sort
+        self.ranker = ranker
+        self.scope_key = ranker.filters.scope_key
+
+    def key(self, candidate: Candidate, ranking: Ranking) -> SortKey:
+        if self.order == SortOrder.SCORE:
+            return (*self._groups(candidate, ranking.band), -ranking.score, *_ties(candidate))
+        return self._unscored_key(candidate, ranking.band)
+
+    def best_possible_key(self, candidate: Candidate, priority: PriorityDecision) -> SortKey:
+        """A key no worse than the candidate's real key, computed without matching text."""
+        band = self.ranker.band(priority)
+        if self.order == SortOrder.SCORE:
+            bound = self.ranker.best_possible_score(candidate, priority)
+            return (*self._groups(candidate, band), -bound)
+        return self._unscored_key(candidate, band)
+
+    def _groups(self, candidate: Candidate, band: PriorityBand) -> tuple[int, int]:
+        return band, 0 if self._is_direct_entry(candidate) else 1
+
+    def _unscored_key(self, candidate: Candidate, band: PriorityBand) -> SortKey:
+        low = band == PriorityBand.FALLBACK
+        if self.order == SortOrder.NAME:
+            return low, *_ties(candidate)
+        return low, -candidate.modified, candidate.path_text
+
+    def _is_direct_entry(self, candidate: Candidate) -> bool:
+        if self.scope_key is None:
+            return True
+        parent_key = candidate.identity[:-1].rpartition("/")[0] + "/"
+        return parent_key == self.scope_key
 
 
-def _depth_group(hit: SearchHit, scope: Path | None) -> int:
-    if scope is None or hit.item.path.parent == scope:
-        return 0
-    return 1
+def _ties(candidate: Candidate) -> tuple[str, str]:
+    return candidate.name.casefold(), candidate.path_text
 
 
 @dataclass(slots=True)
-class _Ranked:
+class _Kept:
     key: SortKey
-    hit: SearchHit
+    candidate: Candidate
+    ranking: Ranking
 
-    def __lt__(self, other: _Ranked) -> bool:
-        # Reversed, so the heap root is the weakest retained hit.
+    def __lt__(self, other: _Kept) -> bool:
+        # Reversed, so the heap root is the weakest kept hit.
         return self.key > other.key
 
 
 class _BestHits:
-    """Keeps the best `limit` hits in O(limit) memory while candidates stream in."""
+    """Keeps the best `limit` candidates in O(limit) memory while they stream in."""
 
     def __init__(self, limit: int):
         self.limit = limit
-        self._heap: list[_Ranked] = []
+        self._heap: list[_Kept] = []
+
+    def could_keep(self, best_possible_key: SortKey) -> bool:
+        """False only if even the best possible key loses to the weakest kept one."""
+        return len(self._heap) < self.limit or not best_possible_key > self._heap[0].key
 
     def would_keep(self, key: SortKey) -> bool:
         return len(self._heap) < self.limit or key < self._heap[0].key
 
-    def add(self, key: SortKey, hit: SearchHit) -> None:
+    def add(self, key: SortKey, candidate: Candidate, ranking: Ranking) -> None:
+        kept = _Kept(key, candidate, ranking)
         if len(self._heap) < self.limit:
-            heapq.heappush(self._heap, _Ranked(key, hit))
+            heapq.heappush(self._heap, kept)
         else:
-            heapq.heapreplace(self._heap, _Ranked(key, hit))
+            heapq.heapreplace(self._heap, kept)
 
-    def ordered(self) -> list[SearchHit]:
-        return [ranked.hit for ranked in sorted(self._heap, key=lambda ranked: ranked.key)]
+    def hits(self) -> list[SearchHit]:
+        ordered = sorted(self._heap, key=lambda kept: kept.key)
+        return [kept.ranking.hit(kept.candidate.to_item()) for kept in ordered]
 
 
 class SearchService:
@@ -83,23 +121,29 @@ class SearchService:
     ) -> list[SearchHit]:
         exclusions = settings.exclusions()
         priorities = settings.priorities()
-        sort_key = sort_key_for(query.sort, query.scope)
+        ranker = Ranker(query)
+        order = ResultOrder(query, ranker)
         best = _BestHits(settings.max_results)
-        for item in self._candidates(query, cancel):
-            hit = rank(item, query, priorities.evaluate(item))
-            if hit is None:
+        for candidate in self._candidates(query, cancel):
+            priority = priorities.evaluate(candidate)
+            if not ranker.eligible(candidate, priority):
                 continue
-            key = sort_key(hit)
+            if not best.could_keep(order.best_possible_key(candidate, priority)):
+                continue
+            ranking = ranker.rank(candidate, priority)
+            if ranking is None:
+                continue
+            key = order.key(candidate, ranking)
             # Marker probes touch the disk, so only hits that would be kept pay for them.
-            if best.would_keep(key) and exclusions.allows(item.path, directory=_is_folder(item)):
-                best.add(key, hit)
+            if best.would_keep(key) and _allowed(exclusions, candidate):
+                best.add(key, candidate, ranking)
         if cancel is not None and cancel.is_set():
             return []
-        return _hide_fallbacks_unless_needed(best.ordered(), query)
+        return _hide_fallbacks_unless_needed(best.hits(), query)
 
     def _candidates(
         self, query: SearchQuery, cancel: threading.Event | None
-    ) -> Iterator[CatalogItem]:
+    ) -> Iterator[Candidate]:
         literal = read_candidates(self.store, query, cancel=cancel)
         if not query.uses_fuzzy_pass:
             return literal
@@ -107,8 +151,9 @@ class SearchService:
         return itertools.chain(literal, fuzzy)
 
 
-def _is_folder(item: CatalogItem) -> bool:
-    return item.kind == ItemKind.FOLDER
+def _allowed(exclusions: ExclusionPolicy, candidate: Candidate) -> bool:
+    directory = candidate.kind == ItemKind.FOLDER
+    return exclusions.allows(Path(candidate.path_text), directory=directory)
 
 
 def _hide_fallbacks_unless_needed(hits: list[SearchHit], query: SearchQuery) -> list[SearchHit]:

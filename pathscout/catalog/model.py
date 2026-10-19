@@ -67,6 +67,20 @@ class CatalogItem:
     def name(self) -> str:
         return self.path.stem if self.kind == ItemKind.APP else self.path.name
 
+    # The attributes below match the search's `Candidate`, so priority rules accept both.
+
+    @property
+    def identity(self) -> str:
+        return path_key(self.path)
+
+    @property
+    def file_name(self) -> str:
+        return self.path.name
+
+    @property
+    def extension(self) -> str:
+        return normalize_extension(self.path.suffix)
+
 
 @dataclass(frozen=True, slots=True)
 class CatalogSource:

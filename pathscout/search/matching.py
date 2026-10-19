@@ -10,7 +10,6 @@ import math
 import re
 from dataclasses import dataclass
 from functools import cached_property
-from pathlib import Path
 
 from pathscout.catalog.model import normalize
 
@@ -51,9 +50,10 @@ class NameForms:
     cheaper exact or prefix checks.
     """
 
-    def __init__(self, original: str):
+    def __init__(self, original: str, normalized: str | None = None):
+        """`normalized` may come from the catalog, which stores it already."""
         self.original = original
-        self.normalized = normalize(original)
+        self.normalized = normalize(original) if normalized is None else normalized
         self.without_extension = self.normalized.rsplit(".", 1)[0]
 
     @cached_property
@@ -66,8 +66,8 @@ class NameForms:
         return "".join(word[0] for word in self.words)
 
 
-def match_term(term: str, name: NameForms, path: Path | None, fuzzy: bool) -> TextMatch | None:
-    """Score `term` against a name and, unless `path` is None, the item's full path."""
+def match_term(term: str, name: NameForms, path: str | None, fuzzy: bool) -> TextMatch | None:
+    """Score `term` against a name and, unless `path` is None, the normalized full path."""
     if term in (name.normalized, name.without_extension):
         return TextMatch(EXACT_NAME_SCORE, "Exact name")
     if name.normalized.startswith(term):
@@ -81,11 +81,20 @@ def match_term(term: str, name: NameForms, path: Path | None, fuzzy: bool) -> Te
     fuzzy_term = fuzzy and len(term) >= MIN_FUZZY_TERM_LENGTH
     if fuzzy_term and name.initials.startswith(term):
         return TextMatch(ABBREVIATION_SCORE, "Abbreviation")
-    if path is not None and term in normalize(str(path)):
+    if path is not None and term in path:
         return TextMatch(PATH_CONTAINS_SCORE, "Path contains query")
     if fuzzy_term and (score := fuzzy_score(term, name.original)) is not None:
         return TextMatch(score, "Fuzzy match")
     return None
+
+
+def best_possible_score(term: str, normalized_name: str) -> float:
+    """No match quality for `term` can score higher; used to skip hopeless candidates.
+
+    Exact and prefix matches need the name to start with the term. Every other
+    quality scores at most a word prefix.
+    """
+    return EXACT_NAME_SCORE if normalized_name.startswith(term) else WORD_PREFIX_SCORE
 
 
 def matches_folder_order(parts: tuple[str, ...], folders: tuple[str, ...], fuzzy: bool) -> bool:

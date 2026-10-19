@@ -103,9 +103,13 @@ supersets of the domain matcher; `rank` makes the final decision:
 3. Combined scoring adds bounded personalization and configured priority.
 4. The priority band (promoted, normal, fallback) and an explanation are attached.
 
-Ranking weights are named module constants. `SearchService` streams every
-candidate into a bounded heap; disk-based marker checks run only for hits that
-would be kept. Empty default queries (optionally with a type filter) read only
+Ranking weights are named module constants. A `Ranker` prepares one query
+(filters, scope identity, timestamp) and ranks many candidates. Candidates are
+plain catalog rows with the stored normalized text; `Path` objects and hits are
+created only for displayed results. `SearchService` streams candidates into a
+bounded heap; once it is full, a candidate whose best possible sort key cannot
+beat the weakest kept hit is skipped before text matching, and disk-based marker
+checks run only for hits that would be kept. Empty default queries (optionally with a type filter) read only
 learned items through the path identity index.
 
 ## Threads, scheduling and cancellation

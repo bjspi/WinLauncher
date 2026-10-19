@@ -1,8 +1,12 @@
-"""Translate a query into SQL that streams candidate items from the catalog.
+"""Translate a query into SQL that streams candidate rows from the catalog.
 
-SQL only narrows the candidates; `ranking.rank` makes the final decision. Fuzzy
-search runs two passes: the literal pass first, then a subsequence pass that
-skips everything the literal pass already returned.
+SQL only narrows the candidates; ranking makes the final decision. Fuzzy search
+runs two passes: the literal pass first, then a subsequence pass that skips
+everything the literal pass already returned.
+
+Candidates carry the catalog's stored, already-normalized text and no `Path`
+object: most candidates never reach the result list, so building paths and
+normalizing text for each of them would be wasted work.
 """
 
 from __future__ import annotations
@@ -10,17 +14,27 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
-from pathscout.catalog.model import CatalogItem, ItemKind, path_range
+from pathscout.catalog.model import (
+    CatalogItem,
+    ItemKind,
+    normalize,
+    normalize_extension,
+    path_key,
+    path_range,
+)
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.query import SearchQuery
 
 MIN_TRIGRAM_TERM_LENGTH = 3  # FTS5 trigram indexes cannot match shorter terms.
 CANCEL_CHECK_INSTRUCTIONS = 1000
 
+# Column order must match `_candidate_from_row`.
 _CANDIDATE_SQL = """
-    SELECT e.path, e.kind, e.size, e.modified, e.attributes,
+    SELECT e.path, e.path_key, e.kind, e.name, e.search_path, e.extension,
+        e.size, e.modified, e.attributes,
         coalesce(u.launches, 0) AS launches,
         coalesce(u.last_used, 0) AS last_used,
         coalesce(q.launches, 0) AS query_launches,
@@ -35,6 +49,80 @@ _CANDIDATE_SQL = """
 _LEARNED_ENTRIES = "entries e INDEXED BY entries_scope"
 _ALL_ENTRIES = "entries e"
 _LEARNED_ONLY = "e.path_key IN (SELECT path_key FROM usage UNION SELECT path_key FROM favorites)"
+
+
+def _file_name(path_text: str) -> str:
+    """The last path component; stored paths are absolute Windows paths."""
+    separator = max(path_text.rfind("\\"), path_text.rfind("/"))
+    return path_text[separator + 1 :]
+
+
+def _pathlib_stem(file_name: str) -> str:
+    """`PurePath.stem` without building a path: a leading or trailing dot is no suffix."""
+    dot = file_name.rfind(".")
+    return file_name[:dot] if 0 < dot < len(file_name) - 1 else file_name
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """One catalog row as stored: search-normalized text, no `Path` object yet."""
+
+    path_text: str
+    identity: str  # `path_key` of the path.
+    file_name: str
+    kind: ItemKind
+    search_name: str  # Normalized display name.
+    search_path: str  # Normalized full path.
+    extension: str  # Normalized, without the dot.
+    size: int = 0
+    modified: float = 0
+    attributes: int = 0
+    launches: int = 0
+    last_used: float = 0
+    query_launches: int = 0
+    pinned: bool = False
+
+    @property
+    def stem(self) -> str:
+        return _pathlib_stem(self.file_name)
+
+    @property
+    def name(self) -> str:
+        """The display name, as `CatalogItem.name`: applications omit their extension."""
+        return self.stem if self.kind == ItemKind.APP else self.file_name
+
+    def to_item(self) -> CatalogItem:
+        return CatalogItem(
+            Path(self.path_text),
+            self.kind,
+            self.size,
+            self.modified,
+            self.launches,
+            self.last_used,
+            self.query_launches,
+            self.pinned,
+            self.attributes,
+        )
+
+    @classmethod
+    def from_item(cls, item: CatalogItem) -> Candidate:
+        """Normalize like the catalog does when it stages an item."""
+        return cls(
+            str(item.path),
+            path_key(item.path),
+            item.path.name,
+            item.kind,
+            normalize(item.name),
+            normalize(str(item.path)),
+            normalize_extension(item.path.suffix),
+            item.size,
+            item.modified,
+            item.attributes,
+            item.launches,
+            item.last_used,
+            item.query_launches,
+            item.pinned,
+        )
 
 
 class _SqlFilter:
@@ -92,7 +180,7 @@ def read_candidates(
     *,
     fuzzy: bool = False,
     cancel: threading.Event | None = None,
-) -> Iterator[CatalogItem]:
+) -> Iterator[Candidate]:
     where = _SqlFilter()
     _require_structured_filters(where, query)
     if fuzzy:
@@ -103,6 +191,7 @@ def read_candidates(
     sql = _CANDIDATE_SQL.format(entries=entries, where=where.sql())
     parameters = {"history_key": query.history_key, **where.parameters}
     with store.connect() as connection:
+        connection.row_factory = None  # Plain tuples; rows are unpacked by position.
         if cancel is not None:
             connection.set_progress_handler(cancel.is_set, CANCEL_CHECK_INSTRUCTIONS)
         yield from _stream_items(connection, sql, parameters, cancel)
@@ -113,29 +202,49 @@ def _stream_items(
     sql: str,
     parameters: dict[str, object],
     cancel: threading.Event | None,
-) -> Iterator[CatalogItem]:
+) -> Iterator[Candidate]:
     try:
         for row in connection.execute(sql, parameters):
             if cancel is not None and cancel.is_set():
                 return
-            yield _item_from_row(row)
+            yield _candidate_from_row(row)
     except sqlite3.OperationalError:
         # The progress handler interrupts a cancelled statement with this error.
         if cancel is None or not cancel.is_set():
             raise
 
 
-def _item_from_row(row: sqlite3.Row) -> CatalogItem:
-    return CatalogItem(
-        Path(row["path"]),
-        ItemKind(row["kind"]),
-        row["size"],
-        row["modified"],
-        row["launches"],
-        row["last_used"],
-        row["query_launches"],
-        bool(row["pinned"]),
-        row["attributes"],
+def _candidate_from_row(row: tuple) -> Candidate:
+    (
+        path_text,
+        identity,
+        kind,
+        search_name,
+        search_path,
+        extension,
+        size,
+        modified,
+        attributes,
+        launches,
+        last_used,
+        query_launches,
+        pinned,
+    ) = row
+    return Candidate(
+        path_text,
+        identity,
+        _file_name(path_text),
+        ItemKind(kind),
+        search_name,
+        search_path,
+        extension,
+        size,
+        modified,
+        attributes,
+        launches,
+        last_used,
+        query_launches,
+        bool(pinned),
     )
 
 

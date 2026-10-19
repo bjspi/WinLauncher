@@ -33,6 +33,7 @@ from pathscout.catalog.priority import (
 )
 from pathscout.catalog.store import CatalogStore
 from pathscout.platform.gesture import DoubleCtrlGesture
+from pathscout.search.candidates import Candidate
 from pathscout.search.matching import fuzzy_score
 from pathscout.search.query import MatchMode
 from pathscout.search.query_parser import parse_query
@@ -484,6 +485,61 @@ class BusinessRulesTest(unittest.TestCase):
         unscoped = [hit.item.path for hit in self.hits("report")]
         self.assertEqual(unscoped[0], deep)
 
+    def test_skipping_hopeless_candidates_never_changes_results(self):
+        names = [
+            "Report",
+            "report-draft",
+            "Quarterly Report",
+            "rep notes",
+            "Prepare",
+            "Super Report Archive",
+            "RePort.bak",
+            "reporting",
+            "trip report",
+            "rpt",
+        ]
+        for index in range(60):
+            folder = ("archive", "work", "deep/er/path")[index % 3]
+            self.file(f"{folder}/{names[index % len(names)]} {index:02d}.txt")
+        self.file("work/Report Tool.lnk")
+        self.scan()
+        favorite = self.root / "archive/Prepare 04.txt"
+        self.store.set_favorite(favorite, True)
+        self.store.record_launch(self.root / "deep/er/path/rep notes 03.txt", "rep")
+        settings = replace(
+            self.settings,
+            folder_priorities=(FolderPriority(str(self.root / "work"), 15),),
+            extension_priorities=(ExtensionPriority("bak", -5, "low"),),
+            name_priorities=(NamePriority("draft", 10, "high"),),
+        )
+        texts = ("rep", "report", "r", "rpt sort:name", "report sort:modified", "p score:match")
+        scopes = (None, self.root / "work")
+        for text in texts:
+            for scope in scopes:
+                with self.subTest(text=text, scope=scope):
+                    query = parse_query(text, scope=scope)
+                    limited = self.search.search(query, replace(settings, max_results=10))
+                    complete = self.search.search(query, replace(settings, max_results=200))
+                    self.assertEqual(
+                        [(h.item.path, round(h.score, 6)) for h in limited],
+                        [(h.item.path, round(h.score, 6)) for h in complete][: len(limited)],
+                    )
+
+    def test_candidate_rows_name_items_like_catalog_items(self):
+        for relative, kind in (
+            ("archive.tar.gz", ItemKind.FILE),
+            ("file.", ItemKind.FILE),
+            (".hidden", ItemKind.FILE),
+            ("Tool.lnk", ItemKind.APP),
+            ("Folder.With.Dots", ItemKind.FOLDER),
+        ):
+            item = CatalogItem(self.root / relative, kind)
+            candidate = Candidate.from_item(item)
+            with self.subTest(relative=relative):
+                self.assertEqual(candidate.name, item.name)
+                self.assertEqual(candidate.stem, item.path.stem)
+                self.assertEqual(candidate.to_item(), item)
+
     def test_losing_candidates_do_not_probe_every_directory(self):
         items = []
         for index in range(150):
@@ -498,7 +554,10 @@ class BusinessRulesTest(unittest.TestCase):
             return stat(path, *args, **kwargs)
 
         with (
-            patch("pathscout.search.service.read_candidates", return_value=iter(items)),
+            patch(
+                "pathscout.search.service.read_candidates",
+                return_value=iter(Candidate.from_item(item) for item in items),
+            ),
             patch.object(Path, "stat", counted),
         ):
             self.assertEqual(len(self.hits("report match:keyword", settings)), 10)

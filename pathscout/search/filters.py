@@ -6,36 +6,42 @@ override a structured filter.
 
 from __future__ import annotations
 
-from pathscout.catalog.model import CatalogItem, is_within, normalize, normalize_extension
+from pathscout.catalog.model import path_key
+from pathscout.search.candidates import Candidate
 from pathscout.search.query import SearchQuery
 
 
-def passes_structured_filters(query: SearchQuery, item: CatalogItem) -> bool:
-    return (
-        _matches_type(query, item) and _matches_location(query, item) and _matches_date(query, item)
-    )
+class StructuredFilters:
+    """The query's structured filters, prepared once per search."""
 
+    def __init__(self, query: SearchQuery):
+        self.query = query
+        self.scope_key = path_key(query.scope) if query.scope is not None else None
 
-def _matches_type(query: SearchQuery, item: CatalogItem) -> bool:
-    if query.kind is not None and query.kind != item.kind:
-        return False
-    if not query.extensions:
-        return True
-    return normalize_extension(item.path.suffix) in query.extensions
+    def accepts(self, candidate: Candidate) -> bool:
+        return (
+            self._matches_type(candidate)
+            and self._matches_location(candidate)
+            and self._matches_date(candidate)
+        )
 
-
-def _matches_location(query: SearchQuery, item: CatalogItem) -> bool:
-    """A scope returns its descendants, not the scope folder itself."""
-    if query.scope is not None:
-        if item.path == query.scope or not is_within(item.path, query.scope):
+    def _matches_type(self, candidate: Candidate) -> bool:
+        if self.query.kind is not None and self.query.kind != candidate.kind:
             return False
-    path = normalize(str(item.path))
-    return not any(term in path for term in query.excluded_terms)
+        return not self.query.extensions or candidate.extension in self.query.extensions
 
+    def _matches_location(self, candidate: Candidate) -> bool:
+        """A scope returns its descendants, not the scope folder itself."""
+        if self.scope_key is not None:
+            identity = candidate.identity
+            if identity == self.scope_key or not identity.startswith(self.scope_key):
+                return False
+        return not any(term in candidate.search_path for term in self.query.excluded_terms)
 
-def _matches_date(query: SearchQuery, item: CatalogItem) -> bool:
-    if query.modified_after is not None and item.modified < query.modified_after:
-        return False
-    if query.modified_before is not None and item.modified >= query.modified_before:
-        return False
-    return True
+    def _matches_date(self, candidate: Candidate) -> bool:
+        after, before = self.query.modified_after, self.query.modified_before
+        if after is not None and candidate.modified < after:
+            return False
+        if before is not None and candidate.modified >= before:
+            return False
+        return True
