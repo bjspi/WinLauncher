@@ -1,4 +1,4 @@
-"""Directory exclusion rules shared by indexing, change monitoring and search."""
+"""Exclusion rules shared by indexing, change monitoring and search."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ _GLOB_CHARACTERS = frozenset("*?[")
 
 @dataclass(slots=True)
 class ExclusionPolicy:
-    """Excluded paths, folder name patterns and marker files.
+    """Excluded paths, file/folder name patterns and marker files.
 
     A marker file excludes its directory and the entire subtree. Marker probes
     are cached per policy instance, so create a fresh policy per scan, search or
@@ -57,6 +57,8 @@ class ExclusionPolicy:
 
     def allows(self, path: Path, *, directory: bool = False) -> bool:
         if self._excluded_keys and path_key(path).startswith(self._excluded_keys):
+            return False
+        if not directory and self._matches_pattern(path):
             return False
         return self._allows_directory(path if directory else path.parent)
 

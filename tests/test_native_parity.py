@@ -32,7 +32,7 @@ from pathscout.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
 from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import Ranker
 from pathscout.search.service import ResultOrder, SearchService, _BestHits
-from pathscout.settings import Settings
+from pathscout.settings import Settings, settings_from_json
 
 try:
     NATIVE = importlib.import_module("pathscout_native")
@@ -527,6 +527,25 @@ class NativeParityTest(unittest.TestCase):
 
 
 class NativeAdapterFallbackTest(unittest.TestCase):
+    def test_saved_backend_selection_and_environment_override(self):
+        self.assertEqual(settings_from_json({"roots": []}).search_backend, "rust")
+        for value in ("auto", "native", "unknown", 1, None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                settings_from_json({"roots": [], "search_backend": value})
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(native_engine, "load_native", return_value=object()) as load,
+        ):
+            self.assertIsNone(native_engine.select_native("python"))
+            load.assert_not_called()
+            self.assertIsNotNone(native_engine.select_native("rust"))
+            with patch.object(native_engine, "load_native", return_value=None):
+                self.assertIsNone(native_engine.select_native("rust"))
+            with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"):
+                self.assertIsNone(native_engine.select_native("rust"))
+            with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"):
+                self.assertIsNotNone(native_engine.select_native("python"))
+
     def test_python_selection_does_not_import_the_optional_module(self):
         with (
             patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"),

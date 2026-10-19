@@ -10,10 +10,14 @@ import argparse
 import hashlib
 import logging
 import os
+import queue
+import shutil
+import sqlite3
 import sys
 import threading
 import time
-from logging.handlers import RotatingFileHandler
+from contextlib import closing
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 
 from PySide6.QtCore import QLockFile
@@ -32,13 +36,54 @@ REPLACE_WAIT_MS = 15_000  # A restarting instance releases the lock while quitti
 CONNECT_TIMEOUT_MS = 200
 WRITE_TIMEOUT_MS = 500
 RETRY_PAUSE_SECONDS = 0.05
-LOG_BYTES = 1_000_000
-LOG_BACKUPS = 2
+LOG_BYTES = 5_000_000
+LOG_BACKUPS = 5
 
 
 def _default_data_directory() -> Path:
+    return Path.home() / ".PathScout"
+
+
+def _legacy_data_directory() -> Path:
     base = os.environ.get("LOCALAPPDATA", str(Path.home() / ".local/share"))
     return Path(base) / "PathScout"
+
+
+def _migrate_legacy_data(data_dir: Path, *, wait_ms: int = 0) -> None:
+    """Copy existing settings and SQLite state once; retain the original files."""
+    if data_dir != _default_data_directory().resolve():
+        return
+    legacy = _legacy_data_directory()
+    missing = [
+        name
+        for name in ("settings.json", "catalog.sqlite3")
+        if (legacy / name).is_file() and not (data_dir / name).exists()
+    ]
+    if not missing or legacy.resolve() == data_dir:
+        return
+    ownership = QLockFile(str(legacy / "instance.lock"))
+    ownership.setStaleLockTime(0)
+    if not ownership.tryLock(wait_ms):
+        raise OSError("Close the PathScout instance using the old data directory before migrating.")
+    try:
+        for name in missing:
+            source, destination = legacy / name, data_dir / name
+            temporary = destination.with_suffix(".migrating")
+            try:
+                if name == "catalog.sqlite3":
+                    with closing(
+                        sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)
+                    ) as old:
+                        with closing(sqlite3.connect(temporary)) as new:
+                            old.backup(new)
+                else:
+                    shutil.copyfile(source, temporary)
+                temporary.replace(destination)
+                logging.info("Migrated %s from the previous data directory", name)
+            finally:
+                temporary.unlink(missing_ok=True)
+    finally:
+        ownership.unlock()
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -80,16 +125,25 @@ def _create_application() -> QApplication:
     return app
 
 
-def _configure_logging(data_dir: Path) -> None:
+def _configure_logging(data_dir: Path) -> QueueListener:
     data_dir.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(
         data_dir / "pathscout.log", maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
     )
+    messages = queue.SimpleQueue()
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s [%(process)d:%(threadName)s] %(name)s: %(message)s"
+        )
+    )
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[handler],
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[QueueHandler(messages)],
+        force=True,
     )
+    listener = QueueListener(messages, handler)
+    listener.start()
+    return listener
 
 
 def _log_uncaught_exceptions() -> None:
@@ -136,6 +190,7 @@ def _send_request(instance: str, request: bytes) -> bool:
 def _serve_show_requests(server: QLocalServer, controller: LauncherController) -> None:
     def receive(client: QLocalSocket) -> None:
         if bytes(client.readAll()) == SHOW_REQUEST:
+            logging.info("Show requested by a second process")
             controller.window.present()
         client.disconnectFromServer()
 
@@ -154,13 +209,14 @@ def main() -> int:
     args = _parse_arguments()
     app = _create_application()
     data_dir = args.data_dir.expanduser().resolve()
+    # Existing Startup shortcuts and restarts explicitly name the former default.
+    if data_dir == _legacy_data_directory().resolve():
+        data_dir = _default_data_directory().resolve()
     try:
-        _configure_logging(data_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         QMessageBox.critical(None, "PathScout cannot start", str(exc))
         return 1
-    _log_uncaught_exceptions()
-
     instance = _instance_name(data_dir)
     ownership = QLockFile(str(data_dir / "instance.lock"))
     ownership.setStaleLockTime(0)  # Only a dead owner process releases the lock.
@@ -181,27 +237,41 @@ def main() -> int:
         return 1
 
     server = QLocalServer()
-    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
-    if not server.listen(instance):
-        QMessageBox.critical(None, "PathScout is already starting", server.errorString())
-        return 1
+    listener = None
     try:
+        # Only the elected owner writes logs, so a second start cannot race rotation.
+        listener = _configure_logging(data_dir)
+        _log_uncaught_exceptions()
+        _migrate_legacy_data(data_dir, wait_ms=REPLACE_WAIT_MS if args.replace else 0)
+        logging.info(
+            "PathScout %s starting: Python=%s data_dir=%s hooks=%s",
+            __version__,
+            sys.version.split()[0],
+            data_dir,
+            not args.no_hooks,
+        )
+        server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+        if not server.listen(instance):
+            raise OSError(server.errorString())
         controller = LauncherController(data_dir, hooks=not args.no_hooks)
+        _serve_show_requests(server, controller)
+        app.aboutToQuit.connect(controller.close)
+        # PathScout starts quietly in the tray; without a tray it would be unreachable.
+        if args.show or not QSystemTrayIcon.isSystemTrayAvailable():
+            controller.window.present()
+        return app.exec()
     except Exception as exc:
         logging.exception("Startup failed")
         settings_path = data_dir / "settings.json"
         QMessageBox.critical(None, "PathScout cannot start", f"{exc}\n\nSettings: {settings_path}")
         return 1
-
-    _serve_show_requests(server, controller)
-    app.aboutToQuit.connect(controller.close)
-    # PathScout starts quietly in the tray; without a tray it would be unreachable.
-    if args.show or not QSystemTrayIcon.isSystemTrayAvailable():
-        controller.window.present()
-    try:
-        return app.exec()
     finally:
         server.close()
+        if listener is not None:
+            logging.info("PathScout stopping")
+            listener.stop()
+            for handler in listener.handlers:
+                handler.close()
         ownership.unlock()
 
 

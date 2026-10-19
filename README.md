@@ -35,7 +35,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
 | ⌨️ **Keyboard first** | <kbd>Enter</kbd> opens, <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> opens a numbered result, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> shows it in its folder. |
-| 🔒 **Private** | No telemetry, no network service, no file contents read. Everything stays in `%LOCALAPPDATA%\PathScout`. |
+| 🔒 **Private** | No telemetry, no network service, no file contents read. Everything stays in `%USERPROFILE%\.PathScout`. |
 | ⬆️ **Self-updating** | Running from a git checkout? PathScout notices new commits and updates with one click. |
 
 <div align="center">
@@ -107,6 +107,10 @@ report after:2025-06-01 before:2025-06-30 sort:modified
 report !archive                         exclude paths containing "archive"
 report match:keyword score:match        no fuzzy matching, text relevance only
 report low:true                         include low-priority results
+%TEMP%                                 open the Windows temporary directory
+%LOCALAPPDATA%                         open local application data
+~/                                     list the user directory's direct children
+~/.myagents                            open this folder even outside indexed roots
 ```
 
 | Filter | Meaning |
@@ -127,20 +131,29 @@ Quoted text keeps spaces, apostrophes are literal and Windows paths such as
 `C:\Work` stay ordinary search text. The full contract is in the
 [behavior specification](docs/specification.md).
 
+Start with `%` to suggest known Windows directory variables (`%APPDATA%`,
+`%USERPROFILE%` and others). A trailing `/` or `\` lists direct children;
+`~/Doc` completes names below your user directory. These shortcuts work without
+indexing that folder, run in the background and honor exclusions and markers.
+`in:%USERPROFILE%` also expands variables when filtering the existing catalog.
+
 ## 🎛️ Exclusions and priorities
 
-**Settings → Exclusions** takes absolute folders (drag & drop works), folder-name
+**Settings → Exclusions** takes absolute folders (drag & drop works), file/folder-name
 patterns with `*`, `?` and `[…]` wildcards, and marker file names. Defaults:
 
 - **Markers:** `.nobackup`, `.no-backup`, `pyvenv.cfg` (Python environments) and
   `conda-meta` (Conda environments) exclude their folder and everything below it.
+- **Windows shortcuts:** `*.lnk` excludes shortcuts, including existing catalog results.
 - **Folder names:** `.git*`, `.svn`, `.hg`, `__pycache__`, `.venv`, `venv`,
-  `.ruff_cache`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.nox`, `.hypothesis`,
+  `.ruff_cache`, `.mypy_cache`, `.dmypy_cache`, `.pytype`, `.pyre`, `.pyright`,
+  `.basedpyright`, `.pylint.d`, `.pylint_cache`, `.lint_cache`, `.pytest_cache`,
+  `pytest-cache-files-*`, `.tox`, `.nox`, `.hypothesis`,
   `.ipynb_checkpoints`, `.eggs`, `*.egg-info`, `node_modules`, `.next`,
   `.parcel-cache`, `build`, `dist`, `.gradle`, `.cxx`, `.externalNativeBuild`,
   `.vs`, `.idea`, `$Recycle.Bin`, `System Volume Information`.
 
-Patterns match whole folder names, so `buildings` stays searchable.
+Patterns match whole names, so `buildings` stays searchable.
 
 **Settings → Ranking** boosts or demotes folders, one rule per line:
 
@@ -162,7 +175,12 @@ the top group; the number fine-tunes the order.
 
 - 🏠 Runs entirely on your computer. No account, telemetry or cloud service.
 - 📄 Indexes names and metadata only — never file contents.
-- 🗂️ Settings, catalog, favorites, history and logs live in `%LOCALAPPDATA%\PathScout`
+- 🗂️ Settings, catalog, favorites, history and logs live in `%USERPROFILE%\.PathScout`
+- 📝 `settings.json` holds user preferences. `pathscout.log` rotates at 5 MB with five backups.
+  Diagnostics record search timing, UI stalls, shortcut dispatch and focus owners
+  (process names/PIDs, without query text or window titles). Log writes run in the background.
+  Existing settings, favorites and history from `%LOCALAPPDATA%\PathScout` are copied
+  on first start; originals are retained. Close an older running instance first.
   and contain your paths and queries; treat that folder like other personal data.
 - 🧹 **Clear search history** in the tray forgets launches but keeps favorites.
 
@@ -204,6 +222,10 @@ The separate `pathscout-native` package accelerates matching, ranking and SQLite
 candidate reads. The normal Python installation needs no Rust dependencies and
 continues to work when the extension is absent or incompatible.
 
+Choose **Rust** (default, with Python fallback) or **Python** in
+**Settings → Search & indexing → Search backend**. Save applies the choice to
+the next search without rebuilding the catalog.
+
 Use Python 3.12, Rust stable for `x86_64-pc-windows-msvc`, and Visual Studio Build
 Tools with **Desktop development with C++**:
 
@@ -217,8 +239,9 @@ python -m pip install --force-reinstall ./native
 python -m maturin build --release --locked --manifest-path native/Cargo.toml --out dist
 ```
 
-`PATHSCOUT_SEARCH_ENGINE=auto` selects native when available (the default);
-`python` forces the reference engine; `native` requires a compatible extension.
+For diagnostics, `PATHSCOUT_SEARCH_ENGINE` overrides the saved preference:
+`auto` selects native when available, `python` forces the reference engine,
+and `native` requires a compatible extension.
 Execution errors log once and retry the search in Python. Unicode tables currently
 target Python's Unicode 15.0 (Python 3.12); other Unicode versions use Python.
 Filename regex rules support a checked ASCII subset, including lookarounds and
@@ -236,8 +259,7 @@ cargo test --manifest-path native/Cargo.toml --locked
 ```
 
 `PATHSCOUT_NATIVE_PHASE=rows` keeps SQLite reads in Python; the default `sqlite`
-phase streams candidates in Rust. See [validation](docs/validation.md) for measured
-performance and parity coverage.
+phase streams candidates in Rust.
 
 ```powershell
 python -m unittest discover -s tests -v          # unit, UI and integration tests
@@ -250,10 +272,23 @@ python -m ruff format --check pathscout tests tools
 Tests use temporary catalogs, folders and git repositories; they never touch your
 real settings, Startup folder or files.
 
+### GitHub builds and releases
+
+[CI](https://github.com/bjspi/PathScout/actions/workflows/ci.yml) runs on pushes to
+`main`, pull requests and manual dispatch. It checks Python style, Rust formatting
+and Clippy, runs Windows tests without the extension and with both backends,
+checks the Qt/keyboard flow, and builds the Python wheel/source distribution and
+Windows x64 Rust wheel. Download them from the run's `pathscout-windows-packages` artifact.
+
+Pushing a `v*` tag runs the same checks and publishes a GitHub Release only after
+they pass, attaching those packages and a clean source ZIP. The tag must match
+`pathscout/__init__.py`, `pyproject.toml`, `native/pyproject.toml` and
+`native/Cargo.toml` (for example `v0.1.0`). Install both wheels from a release
+with `python -m pip install <python-wheel> <native-wheel>` to enable Rust without
+installing a compiler. Source ZIPs retain `native/` for local builds.
+
 📚 [Architecture](docs/architecture.md) ·
 [Specification](docs/specification.md) ·
-[Validation](docs/validation.md) ·
-[Engineering review](docs/review.md) ·
 [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## ⚠️ Limitations
@@ -263,7 +298,7 @@ real settings, Startup folder or files.
 - Indexes by walking folders and watching changes, not by reading the NTFS
   journal; very large drive-wide catalogs build slower. The Python engine takes
   around half a second for broad one-letter searches over 50,000 entries; optional
-  native acceleration reduces that substantially (see validation).
+  native acceleration reduces that substantially.
 - Input methods (IME), Windows 11 tab edge cases, high-DPI multi-monitor setups and
   screen readers still need more real-world testing.
 

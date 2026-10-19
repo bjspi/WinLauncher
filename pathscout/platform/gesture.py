@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # VK_CONTROL and the left/right specific codes the low-level hook reports.
@@ -12,6 +13,9 @@ CONTROL_KEYS = frozenset({0x11, 0xA2, 0xA3})
 @dataclass(frozen=True, slots=True)
 class ShowRequested:
     """Double Ctrl or Ctrl+Alt+Space."""
+
+    source: str = "shortcut"
+    requested_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True, slots=True)

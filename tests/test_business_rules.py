@@ -182,11 +182,30 @@ class BusinessRulesTest(unittest.TestCase):
 
     def test_abbreviations_camel_case_and_keyword_mode(self):
         self.file("VisualStudioCode.exe")
-        self.file("Visual Studio Code.lnk")
+        self.file("Visual Studio Code.url")
         self.scan()
         self.assertEqual(len(self.hits("vsc")), 2)
         self.assertFalse(self.hits("vsc match:keyword"))
         self.assertEqual(parse_query("match:keyword").match_mode, MatchMode.KEYWORD)
+
+    def test_default_link_exclusion_hides_old_rows_and_prunes_on_refresh(self):
+        links = {self.file("Report Tool.lnk"), self.file("work/Report.LNK")}
+        kept = self.file("Report.txt")
+        self.settings = replace(
+            self.settings,
+            excluded_patterns=tuple(p for p in self.settings.excluded_patterns if p != "*.lnk"),
+        )
+        self.scan()
+        self.assertEqual({hit.item.path for hit in self.hits("report")}, links | {kept})
+        self.settings = replace(
+            self.settings, excluded_patterns=(*self.settings.excluded_patterns, "*.lnk")
+        )
+        self.assertEqual([hit.item.path for hit in self.hits("report")], [kept])
+        self.scan()
+        with self.store.connect() as connection:
+            paths = {Path(row[0]) for row in connection.execute("SELECT path FROM entries")}
+        self.assertTrue(links.isdisjoint(paths))
+        self.assertIn(kept, paths)
 
     def test_learning_favorites_and_folder_boost_change_order(self):
         first = self.file("a/Report.txt")

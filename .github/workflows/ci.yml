@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install ruff
+      - run: python -m ruff check pathscout tests tools native/tools
+      - run: python -m ruff format --check pathscout tests tools native/tools
+
+  windows:
+    name: Windows tests and packages
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: python -m pip install -e . maturin build
+      - name: Test without the optional extension
+        run: python -m unittest discover -s tests -v
+        env:
+          PATHSCOUT_SEARCH_ENGINE: auto
+      - run: cargo fmt --manifest-path native/Cargo.toml --check
+      - run: cargo test --manifest-path native/Cargo.toml --locked
+      - run: cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings
+      - name: Build and install Rust wheel
+        run: |
+          python -m maturin build --release --locked --manifest-path native/Cargo.toml --out dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install (Get-ChildItem dist/pathscout_native-*.whl).FullName
+      - name: Test Python backend
+        run: python -m unittest discover -s tests -v
+        env:
+          PATHSCOUT_SEARCH_ENGINE: python
+      - name: Test Rust backend and parity
+        run: python -m unittest discover -s tests -v
+        env:
+          PATHSCOUT_SEARCH_ENGINE: native
+      - name: Qt and Windows keyboard smoke test
+        run: python tools/smoke_test.py --native
+        env:
+          PATHSCOUT_SEARCH_ENGINE: native
+      - name: Build and verify Python wheel and source distribution
+        run: |
+          python -m build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/verify_packages.py
+      - name: Install built Python wheel
+        run: python -m pip install --force-reinstall --no-deps (Get-ChildItem dist/pathscout-*.whl).FullName
+      - name: Import installed packages outside the checkout
+        working-directory: ${{ runner.temp }}
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          python -c "from PySide6.QtWidgets import QApplication; from pathscout.settings import Settings;
+          from pathscout.ui.settings import SettingsDialog; from pathscout.ui.theme import app_icon;
+          from pathscout.search.native_engine import select_native;
+          app = QApplication([]); dialog = SettingsDialog(Settings());
+          assert dialog.backend.currentData() == 'rust'; assert not app_icon().isNull();
+          assert select_native() is not None; print('Installed Python and Rust wheels imported successfully')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pathscout-windows-packages
+          path: dist/*
+          if-no-files-found: error

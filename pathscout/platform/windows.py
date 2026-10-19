@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ctypes
+import logging
+import os
 from ctypes import wintypes
 from dataclasses import dataclass
 
@@ -93,6 +95,7 @@ _bind(user32, "CallNextHookEx", [wintypes.HHOOK, _INT, wintypes.WPARAM, wintypes
 _bind(user32, "UnhookWindowsHookEx", [wintypes.HHOOK], wintypes.BOOL)
 _bind(user32, "GetForegroundWindow", [], _HWND)
 _bind(user32, "SetForegroundWindow", [_HWND], wintypes.BOOL)
+_bind(user32, "AttachThreadInput", [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL], wintypes.BOOL)
 _bind(user32, "GetParent", [_HWND], _HWND)
 _bind(user32, "GetClassNameW", [_HWND, wintypes.LPWSTR, _INT], _INT)
 _bind(user32, "GetGUIThreadInfo", [wintypes.DWORD, ctypes.POINTER(GuiThreadInfo)], wintypes.BOOL)
@@ -130,10 +133,60 @@ _bind(
 )
 _bind(kernel32, "GetModuleHandleW", [wintypes.LPCWSTR], wintypes.HMODULE)
 _bind(kernel32, "GetCurrentThreadId", [], wintypes.DWORD)
+_bind(kernel32, "OpenProcess", [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE)
+_bind(
+    kernel32,
+    "QueryFullProcessImageNameW",
+    [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)],
+    wintypes.BOOL,
+)
+_bind(kernel32, "CloseHandle", [wintypes.HANDLE], wintypes.BOOL)
 
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUNDSMALL = 3
+logger = logging.getLogger(__name__)
+
+
+def foreground_details() -> str:
+    """Identify focus owners without recording window titles or typed text."""
+    hwnd = user32.GetForegroundWindow()
+    process_id = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+    name = "unknown"
+    handle = kernel32.OpenProcess(0x1000, False, process_id.value)  # QUERY_LIMITED_INFORMATION
+    if handle:
+        try:
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = wintypes.DWORD(len(buffer))
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(length)):
+                name = os.path.basename(buffer.value)
+        finally:
+            kernel32.CloseHandle(handle)
+    return f"hwnd={hwnd or 0:#x} pid={process_id.value} process={name} class={class_name(hwnd)}"
+
+
+def activate_window(hwnd: int) -> bool:
+    """Retry a denied foreground request using the current foreground input queue."""
+    foreground = user32.GetForegroundWindow()
+    user32.SetForegroundWindow(hwnd)
+    if user32.GetForegroundWindow() == hwnd:
+        return True
+    # Do not chase a different app that gained focus during our request.
+    if foreground and user32.GetForegroundWindow() == foreground:
+        current = kernel32.GetCurrentThreadId()
+        other = user32.GetWindowThreadProcessId(foreground, None)
+        if other and other != current and user32.AttachThreadInput(current, other, True):
+            try:
+                user32.SetForegroundWindow(hwnd)
+            finally:
+                user32.AttachThreadInput(current, other, False)
+    active = user32.GetForegroundWindow() == hwnd
+    if not active:
+        logger.warning(
+            "Foreground request denied: target=%#x foreground=%s", hwnd, foreground_details()
+        )
+    return active
 
 
 def round_corners(hwnd: int) -> None:

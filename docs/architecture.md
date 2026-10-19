@@ -32,7 +32,7 @@ flowchart TD
 | Module | Responsibility |
 | --- | --- |
 | `catalog/model.py` | Catalog values, `CatalogSource`, path identity (`path_key`) versus search normalization (`normalize`) |
-| `catalog/exclusions.py` | Excluded paths, folder patterns and marker files, cached per operation |
+| `catalog/exclusions.py` | Excluded paths, file/folder patterns and marker files, cached per operation |
 | `catalog/priority.py` | Search classes (ignored/low/normal/high) and numeric boosts |
 | `catalog/sources.py` | Which trees the catalog owns and which source owns a path |
 | `catalog/indexer.py` | Scan policy, traversal, staging, reporting and publication decisions |
@@ -114,8 +114,17 @@ learned items through the path identity index.
 
 ## Optional Rust search engine
 
-`search/native_engine.py` selects `auto`, `python` or `native` through
-`PATHSCOUT_SEARCH_ENGINE`. It checks `API_VERSION` and `UNICODE_VERSION`, prepares
+Explicit environment/home shortcuts are handled first by `search/navigation.py`:
+one directory is enumerated on the search worker, with existing exclusions,
+priority/ranking rules and result limits. No catalog or Rust candidate read is
+needed. Known directory variables are suggested without exposing arbitrary
+environment values; `in:` expands variables for catalog queries as well.
+
+`Settings.search_backend` persists `rust` or `python`; the Settings dialog applies
+it to the next search without indexing or keyboard restarts. Rust prefers the
+optional extension and safely falls back to Python. `search/native_engine.py`
+allows `PATHSCOUT_SEARCH_ENGINE=auto|python|native` to override that preference
+for diagnostics. It checks `API_VERSION` and `UNICODE_VERSION`, prepares
 one query/priority specification from the Python domain objects, and reconstructs
 only the kept `Candidate`/`Ranking` objects. The Python loop remains the reference
 and fallback. Missing or stale extensions and execution failures are logged once;
@@ -194,7 +203,31 @@ apartment is uninitialized.
 A per-data-directory `QLockFile` elects one primary process before it opens a
 user-restricted local server. A second foreground start asks the primary to show
 the launcher; a second `--background` start only confirms it is running.
-Unhandled exceptions in Qt slots and threads are written to `pathscout.log`.
+The default data directory is `Path.home() / ".PathScout"`. Startup copies existing
+settings and catalog/history/favorites from the former LocalAppData directory
+without removing the originals or replacing existing new files. SQLite's backup
+API includes WAL data; a legacy instance lock prevents copying during an active
+session. Old Startup shortcuts naming the former default are redirected to the
+new directory. Other explicit `--data-dir` paths remain isolated.
+
+Only the instance-lock owner opens `pathscout.log`. A standard-library
+`QueueHandler`/`QueueListener` writes UTF-8 logs outside the GUI/keyboard threads,
+rotating at 5 MB and keeping five backups. Startup, search backend/timing,
+shortcut dispatch delay, settings changes, focus transitions and event-loop gaps
+over 250 ms are recorded, along with unhandled exceptions. Focus logs identify
+the foreground executable/PID/class without window titles or query text.
+
+Shell icon queries run on one daemon worker and return `QImage`s through a queued
+Qt signal; only the GUI thread creates pixmaps. Painting uses a generic icon until
+the cached shell icon arrives, so a slow shell extension cannot block input or
+shutdown. Hiding the launcher cancels pending and active searches. Windows focus
+requests are verified; a denied request gets one attempt with the foreground input
+queue temporarily attached, always detached in `finally`. A later focus change is
+logged without repeatedly pulling focus away from another application.
+
+The updater's post-fetch revision count also runs through QProcess, keeping
+periodic Git work off the GUI thread. `GCM_INTERACTIVE=Never` and
+`GIT_TERMINAL_PROMPT=0` prevent background credential dialogs/prompts.
 
 ## Operational choices
 

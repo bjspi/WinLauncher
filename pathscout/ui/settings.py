@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -283,6 +284,13 @@ class SettingsDialog(QDialog):
         form.addRow("Double-Ctrl interval", self.ctrl_interval)
         form.addRow("Refresh catalog every", self.scan_interval)
         form.addRow("Maximum results", self.limit)
+        self.backend = QComboBox()
+        self.backend.addItem("Rust", "rust")
+        self.backend.addItem("Python", "python")
+        self.backend.setCurrentIndex(self.backend.findData(settings.search_backend))
+        self.backend.setAccessibleName("Search backend")
+        form.addRow("Search backend", self.backend)
+        form.addRow(_note("Rust uses Python when unavailable or a search rule requires it."))
         form.addRow(
             _note("Other changes apply on Save. File names and paths stay on this computer.")
         )
@@ -293,12 +301,12 @@ class SettingsDialog(QDialog):
         form = QFormLayout(page)
         self.excluded = PathList(settings.excluded_paths, "Excluded directories")
         self.patterns = QPlainTextEdit("\n".join(settings.excluded_patterns))
-        self.patterns.setAccessibleName("Excluded folder patterns, one per line")
+        self.patterns.setAccessibleName("Excluded file and folder patterns, one per line")
         self.patterns.setMaximumHeight(130)
         self.markers = QLineEdit(", ".join(settings.marker_files))
         self.markers.setAccessibleName("Marker file names, comma-separated")
         form.addRow("Excluded directories", self.excluded)
-        form.addRow("Folder names / glob patterns\n(one per line)", self.patterns)
+        form.addRow("File / folder glob patterns\n(one per line)", self.patterns)
         form.addRow("Marker file names\n(comma-separated)", self.markers)
         form.addRow(
             _note(
@@ -376,6 +384,7 @@ class SettingsDialog(QDialog):
             double_ctrl_ms=self.ctrl_interval.value(),
             rescan_seconds=self.scan_interval.value(),
             max_results=self.limit.value(),
+            search_backend=self.backend.currentData(),
         )
 
     def accept(self) -> None:

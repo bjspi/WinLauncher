@@ -8,6 +8,7 @@ colon-containing token (for example `C:\\Work`) is ordinary search text.
 
 from __future__ import annotations
 
+import ntpath
 import shlex
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
@@ -30,6 +31,9 @@ FILTER_NAMES = frozenset(
 def parse_query(text: str, scope: Path | None = None) -> SearchQuery:
     """Raise ValueError with a user-facing message for invalid input."""
     _check_raw_text(text)
+    stripped = text.strip()
+    if stripped.startswith(("%", "~/", "~\\")) or stripped == "~":
+        return SearchQuery(navigation=stripped)
     draft = _QueryDraft(scope=scope)
     for token in _split_tokens(text):
         draft.add(token)
@@ -153,7 +157,7 @@ def _parse_extensions(value: str) -> list[str]:
 
 
 def _parse_scope(value: str) -> Path:
-    path = Path(value).expanduser()
+    path = Path(ntpath.expandvars(value)).expanduser()
     if not path.is_absolute():
         raise ValueError("in: expects an absolute directory path.")
     return path

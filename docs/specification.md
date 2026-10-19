@@ -45,11 +45,11 @@ normalization. Alternate Windows casing retains favorites and usage; Unicode nam
 that merely share search normalization remain separate identities. Case-sensitive
 NTFS directory namespaces are not supported.
 
-Patterns without a separator match directory names; `*`, `?` and bracket patterns
+Patterns without a separator match file and directory names; `*`, `?` and bracket patterns
 use Python fnmatch semantics. Patterns with `/` or `\` match the full normalized
-absolute directory path using `/` separators. Patterns target directories, not
-arbitrary filename extensions. Use a filename/extension priority rule with
-`search_priority: "ignored"` to exclude files by name or type.
+absolute path using `/` separators. Matching directories exclude their subtree.
+For example, `*.lnk` excludes Windows shortcuts by default. Filename/extension
+priority rules with `search_priority: "ignored"` can also exclude files by name or type.
 
 A configured marker name found in any ancestor directory excludes that directory
 and its descendants, including when the ancestor is above a scan root. A marker
@@ -100,6 +100,16 @@ An Explorer session supplies the default folder scope. An explicit `in:` overrid
 it. The scope directory itself is excluded from its descendant results. Folder-path
 matching uses the selected keyword/fuzzy matcher on each parent component. Unknown
 prefixes remain literal text, which allows ordinary paths containing colons.
+
+Leading `%VARIABLE%` and `~`/`~/`/`~\` enter direct path navigation. An exact
+existing path returns the file/folder; a trailing separator lists its direct
+children, and an incomplete last component completes names by prefix. `%` and
+incomplete variable names suggest known Windows directory variables, deduplicating
+aliases with the same target. Unknown completed variables and relative expansion
+values report an error. Resolution and enumeration run on a search worker, obey
+type, priority and exclusion rules, support cancellation and the result limit,
+and do not recursively scan or add entries to the catalog. Filesystem reads are
+skipped for excluded subtrees. `in:` also expands environment/home variables.
 
 ## Search classes and boosts
 
@@ -247,7 +257,16 @@ the same name is never replaced or deleted.
 All other settings apply on Save. Validation or save errors keep the dialog open
 with the edits intact. Changing roots, exclusions, markers, priority rules or
 application indexing restarts folder watching and rescans; changing only the result
-limit, interval or input settings does not rescan and keeps an Explorer scope.
+limit, interval, backend or input settings does not rescan and keeps an Explorer scope.
+The search backend selector offers Rust (default, with Python fallback) and Python.
+The diagnostic environment override takes precedence over the stored choice.
+
+User configuration (`settings.json`), catalog/history/favorites and diagnostics
+live under `%USERPROFILE%\.PathScout` by default; `--data-dir` selects an isolated
+directory. Existing LocalAppData settings and SQLite state are copied once, with
+the originals retained. Logs rotate at 5 MB with five backups. Search timing,
+shortcut dispatch, focus-owner changes and UI pauses are logged without recording
+query text or window titles. Shell icon retrieval must not block the GUI thread.
 
 PathScout starts in the tray without showing the search bar; `--show` opens it
 right away, and it also opens when no system tray is available. A second start for

@@ -6,6 +6,7 @@ query's results are not displayed yet, opening waits for them.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -23,6 +24,7 @@ from pathscout.ui.tasks import BackgroundTasks, TaskCategory
 from pathscout.ui.window import LauncherWindow
 
 DEBOUNCE_MS = 70
+logger = logging.getLogger(__name__)
 
 
 class SearchSession(QObject):
@@ -104,6 +106,8 @@ class SearchSession(QObject):
 
     def window_hidden(self) -> None:
         self.open_pending = False
+        self.debounce.stop()
+        self._abandon_running()
 
     def close(self) -> None:
         self.debounce.stop()
@@ -125,7 +129,15 @@ class SearchSession(QObject):
     ) -> tuple[list[SearchHit], float]:
         started = time.perf_counter()
         hits = self.service.search(query, settings, cancel=cancel)
-        return hits, (time.perf_counter() - started) * 1000
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "Search finished: requested_backend=%s elapsed_ms=%.1f hits=%d cancelled=%s",
+            settings.search_backend,
+            elapsed_ms,
+            len(hits),
+            cancel.is_set(),
+        )
+        return hits, elapsed_ms
 
     def _completed(
         self, cancel: threading.Event, query: SearchQuery, result: tuple[list[SearchHit], float]

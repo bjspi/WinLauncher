@@ -13,7 +13,6 @@ from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signa
 
 from pathscout.platform.git import (
     checkout_root,
-    commits_behind_upstream,
     current_head,
     git_available,
 )
@@ -77,6 +76,7 @@ class GitUpdater(QObject):
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("GIT_TERMINAL_PROMPT", "0")
+        environment.insert("GCM_INTERACTIVE", "Never")
         process.setProcessEnvironment(environment)
         process.finished.connect(lambda code, _status: on_done(code, _read_output(process)))
         process.errorOccurred.connect(lambda error: _report_start_failure(process, error))
@@ -85,6 +85,7 @@ class GitUpdater(QObject):
         watchdog.timeout.connect(process.kill)
         watchdog.start(GIT_TIMEOUT_MS)
         process.start("git", arguments)
+        logger.info("Background git started: operation=%s", arguments[0])
         return process
 
     def _fetch_done(self, exit_code: int, output: str) -> None:
@@ -92,8 +93,11 @@ class GitUpdater(QObject):
         if exit_code != 0:
             logger.debug("Update check failed and will be retried: %s", output)
             return
-        behind = commits_behind_upstream(self.root)
-        if behind:
+        self._fetch = self._start_git(["rev-list", "--count", "HEAD..@{u}"], self._behind_done)
+
+    def _behind_done(self, exit_code: int, output: str) -> None:
+        self._fetch = None
+        if exit_code == 0 and output.isdigit() and int(output) > 0:
             self._set_available(True)
 
     def _pull_done(self, exit_code: int, output: str) -> None:

@@ -5,6 +5,7 @@ Widgets emit intents and never access the catalog.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -80,6 +81,7 @@ FILTERS = (
     ("Folders", ItemKind.FOLDER),
 )
 NO_MATCHES = "No matches. Try a shorter name, another spelling or fewer filters."
+logger = logging.getLogger(__name__)
 
 
 class ResultDelegate(QStyledItemDelegate):
@@ -87,7 +89,8 @@ class ResultDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: QListWidget):
         super().__init__(parent)
-        self.icons = ResultIcons()
+        self.icons = ResultIcons(self)
+        self.icons.changed.connect(parent.viewport().update)
         self.terms: tuple[str, ...] = ()
         self.rows = LAUNCHER_ROWS
         self.scope: Path | None = None
@@ -304,7 +307,7 @@ class LauncherWindow(QWidget):
         row.setSpacing(8)
         self.query = QLineEdit()
         self.query.setObjectName("query")
-        self.query.setPlaceholderText("Search apps, files and folders")
+        self.query.setPlaceholderText("Search apps, files, %TEMP% or ~/")
         self.query.setAccessibleName("Search query")
         self.query.textChanged.connect(self.query_changed)
         self.query.installEventFilter(self)
@@ -402,6 +405,21 @@ class LauncherWindow(QWidget):
         if event.type() == QEvent.Type.KeyPress and self._handle_key(watched, event):
             return True
         return super().eventFilter(watched, event)
+
+    def event(self, event: QEvent) -> bool:
+        handled = super().event(event)
+        if (
+            event.type() in (QEvent.Type.WindowActivate, QEvent.Type.WindowDeactivate)
+            and self._native_focus()
+        ):
+            from pathscout.platform.windows import foreground_details
+
+            logger.info("Launcher %s; foreground=%s", event.type().name, foreground_details())
+        return handled
+
+    @staticmethod
+    def _native_focus() -> bool:
+        return os.name == "nt" and QApplication.platformName() == "windows"
 
     def _handle_key(self, watched: QObject, event: QKeyEvent) -> bool:
         modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
@@ -559,12 +577,29 @@ class LauncherWindow(QWidget):
         self.show()
         self.raise_()
         self.activateWindow()
-        self.query.setFocus()
-        if os.name == "nt":
-            from pathscout.platform.windows import user32
+        if self._native_focus():
+            from pathscout.platform.windows import activate_window
 
-            user32.SetForegroundWindow(int(self.winId()))
+            active = activate_window(int(self.winId()))
+            logger.info(
+                "Launcher presented: foreground_granted=%s scoped=%s", active, scope is not None
+            )
+            QTimer.singleShot(100, self._check_activation)
+        self.query.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
         self.query_changed.emit()
+
+    def _check_activation(self) -> None:
+        if self.isVisible() and self._native_focus():
+            from pathscout.platform.windows import foreground_details, user32
+
+            active = user32.GetForegroundWindow() == int(self.winId())
+            log = logger.info if active and self.query.hasFocus() else logger.warning
+            log(
+                "Launcher focus check: foreground=%s query_focus=%s owner=%s",
+                active,
+                self.query.hasFocus(),
+                foreground_details(),
+            )
 
     def _bar_width(self) -> int:
         if self.explorer_mode:

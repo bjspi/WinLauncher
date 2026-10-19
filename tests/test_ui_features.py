@@ -109,6 +109,7 @@ class GitUpdaterTest(unittest.TestCase):
         updater = GitUpdater()
         updater.root = self.checkout
         updater._fetch_in_background()
+        self.assertEqual(updater._fetch.processEnvironment().value("GCM_INTERACTIVE"), "Never")
         self.wait_for(lambda: updater.available)
         results = []
         updater.pull_finished.connect(lambda *result: results.append(result))

@@ -16,7 +16,7 @@ PRIVATE_FOLDERS = {".analysis", ".git", ".venv", "__pycache__", ".runtime"}
 PRIVATE_NAMES = {".nobackup", ".no-backup"}
 PRIVATE_SUFFIXES = {".exe", ".dll", ".gzf", ".pyc", ".sqlite3", ".log", ".png"}
 REQUIRED_NAMES = {"LICENSE", "THIRD_PARTY_NOTICES.md"}
-SDIST_SAMPLES = ("docs/architecture.md", "docs/review.md", "tests/test_ui_flow.py")
+SDIST_SAMPLES = ("docs/architecture.md", "docs/specification.md", "tests/test_ui_flow.py")
 
 
 def wheel_files(archive: Path) -> dict[str, bytes]:

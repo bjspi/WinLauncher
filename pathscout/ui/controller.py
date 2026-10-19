@@ -10,6 +10,7 @@ import logging
 import os
 import queue
 import sys
+import time
 from collections.abc import Iterator
 from dataclasses import replace
 from functools import partial
@@ -74,6 +75,8 @@ class LauncherController(QObject):
         self.hooks_requested = hooks
         self.settings_file = SettingsFile(data_dir / "settings.json")
         self.settings = self.settings_file.load()
+        if not self.settings_file.path.exists():
+            self.settings_file.save(self.settings)
         self.store = CatalogStore(data_dir / "catalog.sqlite3")
         self.actions = ItemActions(self.store)
         self.startup = StartupShortcut(data_dir)
@@ -109,6 +112,8 @@ class LauncherController(QObject):
         self._connect_indexing()
         self.keyboard_timer = self._poll(self._drain_keyboard, KEYBOARD_POLL_MS)
         self.watch_timer = self._poll(self._drain_watch_events, WATCH_POLL_MS)
+        self._ui_tick = time.monotonic()
+        self.ui_timer = self._poll(self._check_ui_delay, 100)
         self.tray.show()
         self._start_keyboard()
         self._start_monitor()
@@ -194,11 +199,30 @@ class LauncherController(QObject):
     def _drain_keyboard(self) -> None:
         for intent in _drain(self.keyboard_events):
             if isinstance(intent, ShowRequested):
+                logger.info(
+                    "Show requested: source=%s dispatch_ms=%.1f visible=%s active=%s",
+                    intent.source,
+                    (time.monotonic() - intent.requested_at) * 1000,
+                    self.window.isVisible(),
+                    self.window.isActiveWindow(),
+                )
                 self._toggle_launcher()
             elif isinstance(intent, ExplorerTyping):
                 self._search_from_explorer(intent)
             elif isinstance(intent, InputUnavailable):
                 self.status.show_problem(ProblemTopic.KEYBOARD, intent.message, intent.message)
+
+    def _check_ui_delay(self) -> None:
+        now = time.monotonic()
+        elapsed_ms = (now - self._ui_tick) * 1000
+        self._ui_tick = now
+        if elapsed_ms > 250:
+            logger.warning(
+                "UI event loop delayed: %.0f ms search_running=%s indexing=%s",
+                elapsed_ms,
+                self.search.running is not None,
+                self.indexing.busy,
+            )
 
     def _toggle_launcher(self) -> None:
         if self.window.isVisible() and self.window.isActiveWindow():
@@ -398,6 +422,12 @@ class LauncherController(QObject):
         """
         self.settings_file.save(settings)
         previous, self.settings = self.settings, settings
+        logger.info(
+            "Settings saved: search_backend=%s indexing_changed=%s input_changed=%s",
+            settings.search_backend,
+            previous.indexing_key != settings.indexing_key,
+            previous.input_key != settings.input_key,
+        )
         try:
             self._apply_changes(previous, settings)
         except Exception as exc:
@@ -519,11 +549,13 @@ class LauncherController(QObject):
         self._closed = True
         self.keyboard_timer.stop()
         self.watch_timer.stop()
+        self.ui_timer.stop()
         self.search.close()
         self.indexing.close()
         self._stop_keyboard()
         self._stop_monitor()
         self.updater.stop()
         self.tasks.close()
+        self.window.delegate.icons.close()
         self.tray.hide()
         self.window.hide()

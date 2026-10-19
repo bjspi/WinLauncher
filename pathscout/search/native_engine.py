@@ -66,8 +66,9 @@ def load_native() -> ModuleType | None:
     return native
 
 
-def select_native() -> ModuleType | None:
-    engine = os.environ.get("PATHSCOUT_SEARCH_ENGINE", "auto").strip().lower()
+def select_native(backend: str = "rust") -> ModuleType | None:
+    default = "auto" if backend == "rust" else "python"
+    engine = os.environ.get("PATHSCOUT_SEARCH_ENGINE", default).strip().lower()
     if engine not in ("auto", "python", "native"):
         raise ValueError("PATHSCOUT_SEARCH_ENGINE must be auto, python or native.")
     if engine == "python":

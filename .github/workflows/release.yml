@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish GitHub Release
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify tag and package versions
+        shell: python
+        run: |
+          import ast
+          import os
+          import pathlib
+          import tomllib
+          version = ast.literal_eval(pathlib.Path('pathscout/__init__.py').read_text().split('__version__ = ')[1].splitlines()[0])
+          for file, section in [('pyproject.toml', 'project'), ('native/pyproject.toml', 'project'), ('native/Cargo.toml', 'package')]:
+              package = tomllib.loads(pathlib.Path(file).read_text())[section]['version']
+              assert package == version, f'{file}: {package} != {version}'
+          assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag does not match package version'
+      - uses: actions/download-artifact@v4
+        with:
+          name: pathscout-windows-packages
+          path: dist
+      - name: Build source ZIP
+        run: git archive --format=zip --prefix PathScout/ -o "dist/PathScout-${GITHUB_REF_NAME}.zip" "${GITHUB_REF_NAME}"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --title "PathScout ${GITHUB_REF_NAME}" \
+            --generate-notes --verify-tag dist/*

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import heapq
 import itertools
+import logging
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -24,11 +25,13 @@ from pathscout.catalog.priority import PriorityDecision
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.candidates import Candidate, read_candidates
 from pathscout.search.native_engine import log_native_failure, rank_with_native, select_native
+from pathscout.search.navigation import search_paths
 from pathscout.search.query import SearchQuery, SortOrder
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking, SearchHit
 from pathscout.settings import Settings
 
 SortKey = tuple  # Compared lexicographically; smaller keys rank first.
+logger = logging.getLogger(__name__)
 
 
 class ResultOrder:
@@ -120,10 +123,20 @@ class SearchService:
     def search(
         self, query: SearchQuery, settings: Settings, *, cancel: threading.Event | None = None
     ) -> list[SearchHit]:
+        if query.navigation is not None:
+            logger.info("Search started: engine=path_navigation")
+            return _hide_fallbacks_unless_needed(
+                search_paths(query, settings, cancel, self.store), query
+            )
         exclusions = settings.exclusions()
         priorities = settings.priorities()
         ranker = Ranker(query)
-        native = select_native()
+        native = select_native(settings.search_backend)
+        logger.info(
+            "Search started: requested_backend=%s engine=%s",
+            settings.search_backend,
+            "rust" if native is not None else "python",
+        )
         if native is not None:
             try:
                 kept = rank_with_native(

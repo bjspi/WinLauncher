@@ -434,6 +434,51 @@ class UiFlowTest(unittest.TestCase):
         monitor.assert_called_once()
         self.assertEqual(self.tasks.count(TaskCategory.INDEX), before + 1)
 
+    def test_backend_selection_saves_and_refreshes_without_reindexing(self):
+        c = self.controller
+        self.window.set_scope(self.root)
+        indexed = self.tasks.count(TaskCategory.INDEX)
+        for backend in ("python", "rust"):
+            with self.subTest(backend=backend):
+                dialog = SettingsDialog(c.settings, save=c.apply_settings)
+                self.assertEqual(dialog.backend.currentData(), c.settings.search_backend)
+                dialog.backend.setCurrentIndex(dialog.backend.findData(backend))
+                c.search.run()
+                previous_cancel = c.search.running
+                with patch.object(c, "_start_monitor") as monitor:
+                    dialog.accept()
+                self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
+                self.assertEqual(c.settings_file.load().search_backend, backend)
+                self.assertTrue(previous_cancel.is_set())
+                self.assertEqual(self.tasks.count(TaskCategory.INDEX), indexed)
+                self.assertEqual(self.window.scope, self.root)
+                monitor.assert_not_called()
+                with patch("pathscout.search.service.select_native", return_value=None) as select:
+                    self.tasks.finish(TaskCategory.SEARCH)
+                select.assert_called_once_with(backend)
+                dialog.deleteLater()
+
+    def test_hiding_cancels_running_and_debounced_searches(self):
+        self.controller.search.run()
+        running = self.controller.search.running
+        self.controller.search.debounce.start()
+        self.window.hide()
+        self.assertTrue(running.is_set())
+        self.assertIsNone(self.controller.search.running)
+        self.assertFalse(self.controller.search.debounce.isActive())
+
+    def test_home_shortcut_opens_an_unindexed_folder(self):
+        folder = self.root.parent / ".myagents"
+        folder.mkdir()
+        with patch.dict(os.environ, USERPROFILE=str(self.root.parent), HOME=str(self.root.parent)):
+            self.window.query.setText("~/.myagents")
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.window.selected_hit().item.path, folder)
+            self.window.open_selected()
+            self.tasks.finish(TaskCategory.ACTION)
+        self.launch.assert_called_once_with(folder, "navigate:~/.myagents")
+
     def test_settings_save_failure_keeps_dialog_and_edits(self):
         save = Mock(side_effect=OSError("Disk unavailable"))
         dialog = SettingsDialog(self.controller.settings, save=save)

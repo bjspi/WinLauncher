@@ -23,7 +23,7 @@ DOUBLE_CTRL_RANGE_MS = (150, 800)
 RESCAN_RANGE_SECONDS = (30, 86400)
 RESULT_LIMIT_RANGE = (10, 200)
 BOOST_RANGE = (-100, 100)
-# Folder names whose whole subtree is generated, cached or managed by tools.
+# Excluded names; matching directories also exclude their whole subtree.
 DEFAULT_EXCLUDED_PATTERNS = (
     # Version control, including copies such as .git_old (and .github)
     ".git*",
@@ -35,7 +35,16 @@ DEFAULT_EXCLUDED_PATTERNS = (
     "venv",
     ".ruff_cache",
     ".mypy_cache",
+    ".dmypy_cache",
+    ".pytype",
+    ".pyre",
+    ".pyright",
+    ".basedpyright",
+    ".pylint.d",
+    ".pylint_cache",
+    ".lint_cache",
     ".pytest_cache",
+    "pytest-cache-files-*",
     ".tox",
     ".nox",
     ".hypothesis",
@@ -56,6 +65,7 @@ DEFAULT_EXCLUDED_PATTERNS = (
     ".vs",
     ".idea",
     # Windows
+    "*.lnk",
     "$Recycle.Bin",
     "System Volume Information",
 )
@@ -112,6 +122,7 @@ class Settings:
     double_ctrl_ms: int = DEFAULT_DOUBLE_CTRL_MS
     rescan_seconds: int = 300
     max_results: int = 60
+    search_backend: str = "rust"
 
     def __post_init__(self) -> None:
         self._validate_limits()
@@ -153,6 +164,8 @@ class Settings:
         )
 
     def _validate_limits(self) -> None:
+        if self.search_backend not in ("rust", "python"):
+            raise ValueError("Search backend must be rust or python.")
         _require_range(
             self.double_ctrl_ms,
             DOUBLE_CTRL_RANGE_MS,

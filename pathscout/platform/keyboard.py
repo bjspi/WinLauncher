@@ -106,6 +106,12 @@ class KeyboardListener(threading.Thread):
             self._report("Ctrl+Alt+Space is already registered by another application.")
         if self.explorer_typing:
             self.tracker.start()
+        logger.info(
+            "Keyboard ready: hook=%s hotkey=%s double_ctrl_ms=%.0f",
+            bool(self._hook),
+            self._hotkey_registered,
+            self.gesture.interval * 1000,
+        )
 
     def _uninstall(self) -> None:
         self.tracker.stop()
@@ -122,11 +128,12 @@ class KeyboardListener(threading.Thread):
             if user32.GetMessageW(ctypes.byref(message), None, 0, 0) <= 0:
                 return  # WM_QUIT or error.
             if message.message == WM_HOTKEY:
-                self.events.put(ShowRequested())
+                self.events.put(ShowRequested(source="ctrl_alt_space"))
             user32.TranslateMessage(ctypes.byref(message))
             user32.DispatchMessageW(ctypes.byref(message))
 
     def _report(self, message: str) -> None:
+        logger.warning("%s", message)
         self.events.put(InputUnavailable(message))
 
     def _on_key(self, code: int, message: int, pointer: int) -> int:
@@ -146,7 +153,7 @@ class KeyboardListener(threading.Thread):
         if data.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED):
             return False  # Ignore synthetic input, including our own.
         if self.gesture.feed(data.vkCode, pressed, time.monotonic()):
-            self.events.put(ShowRequested())
+            self.events.put(ShowRequested(source="double_ctrl"))
         if not pressed:
             return self._release_swallowed_key(data.vkCode)
         return self._capture_explorer_typing(data)

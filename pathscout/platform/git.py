@@ -38,15 +38,9 @@ def remote_url(root: Path) -> str | None:
     return _git_output(root, "remote", "get-url", "origin")
 
 
-def commits_behind_upstream(root: Path) -> int | None:
-    """Commits on the fetched upstream branch that HEAD lacks; None without an upstream."""
-    count = _git_output(root, "rev-list", "--count", "HEAD..@{u}")
-    return int(count) if count is not None and count.isdigit() else None
-
-
 def git_environment() -> dict[str, str]:
     """Git must never wait for a password on a hidden console."""
-    return {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"}
 
 
 def _git_output(root: Path, *arguments: str) -> str | None:

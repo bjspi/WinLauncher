@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from pathscout.catalog.model import ItemKind
+from pathscout.catalog.model import ItemKind, normalize
 from pathscout.search.matching import MIN_FUZZY_TERM_LENGTH
 
 
@@ -43,6 +43,7 @@ class SearchQuery:
     modified_after: float | None = None
     modified_before: float | None = None
     score_mode: ScoreMode = ScoreMode.COMBINED
+    navigation: str | None = None  # Explicit environment/home path; resolved on a worker.
 
     @property
     def uses_learned_items_only(self) -> bool:
@@ -62,6 +63,8 @@ class SearchQuery:
     @property
     def history_key(self) -> str:
         """Launches are learned per query text and type/extension/path filters."""
+        if self.navigation is not None:
+            return "navigate:" + normalize(self.navigation)
         parts = list(self.terms)
         if self.kind:
             parts.append("type:" + self.kind)
