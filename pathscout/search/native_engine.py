@@ -25,7 +25,7 @@ from pathscout.search.candidates import (
 from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking
 
-API_VERSION = 4
+API_VERSION = 7
 _LOGGER = logging.getLogger(__name__)
 _LOGGED: set[str] = set()
 _LOG_LOCK = threading.Lock()
@@ -81,7 +81,9 @@ def select_native(backend: str = "rust") -> ModuleType | None:
     return native
 
 
-def query_spec(query: SearchQuery, ranker: Ranker, limit: int) -> dict[str, object]:
+def query_spec(
+    query: SearchQuery, ranker: Ranker, limit: int, content_search_threads: int = 4
+) -> dict[str, object]:
     return {
         "terms": list(query.terms),
         "folder_parts": list(query.folder_parts),
@@ -94,6 +96,8 @@ def query_spec(query: SearchQuery, ranker: Ranker, limit: int) -> dict[str, obje
         "min_size": query.min_size,
         "max_size": query.max_size,
         "content_text": query.content_text,
+        "content_search_threads": content_search_threads,
+        "explorer": query.explorer,
         "basename_only": query.basename_only,
         "fuzzy": ranker.fuzzy,
         "combined": ranker.combined,
@@ -172,31 +176,23 @@ def rank_with_native(
     allows: Callable[[str, bool], bool],
     *,
     cancel: threading.Event | None = None,
+    content_search_threads: int = 4,
+    candidates: list[Candidate] | None = None,
 ) -> list[tuple[Candidate, Ranking]]:
     phase = os.environ.get("PATHSCOUT_NATIVE_PHASE", "sqlite").strip().lower()
     if phase not in ("rows", "sqlite"):
         raise ValueError("PATHSCOUT_NATIVE_PHASE must be rows or sqlite.")
-    spec = query_spec(query, ranker, limit)
+    spec = query_spec(query, ranker, limit, content_search_threads)
     rules = priority_spec(priorities)
     sql, parameters = _search_sql(query)
     with _cancel_flag(native, cancel) as flag:
-        if phase == "sqlite":
+        if phase == "sqlite" and candidates is None:
             kept = native.rank_sqlite(str(store.path), sql, parameters, spec, rules, allows, flag)
         else:
-            with store.connect() as connection:
-                connection.row_factory = None
-                if cancel is not None:
-                    connection.set_progress_handler(cancel.is_set, CANCEL_CHECK_INSTRUCTIONS)
-                try:
-                    rows = []
-                    for row in connection.execute(sql, parameters):
-                        if flag.is_set():
-                            return []
-                        rows.append(row)
-                except sqlite3.OperationalError:
-                    if cancel is not None and cancel.is_set():
-                        return []
-                    raise
+            if candidates is not None:
+                rows = [candidate.to_row() for candidate in candidates]
+            else:
+                rows = _candidate_rows(store, sql, parameters, cancel, flag)
             kept = [
                 (rows[index], score, band, reasons)
                 for index, score, band, reasons in native.rank_rows(spec, rules, rows, allows, flag)
@@ -205,6 +201,24 @@ def rank_with_native(
         (_candidate_from_row(row), Ranking(score, PriorityBand(band), tuple(reasons)))
         for row, score, band, reasons in kept
     ]
+
+
+def _candidate_rows(store, sql, parameters, cancel, flag) -> list[tuple]:
+    with store.connect() as connection:
+        connection.row_factory = None
+        if cancel is not None:
+            connection.set_progress_handler(cancel.is_set, CANCEL_CHECK_INSTRUCTIONS)
+        try:
+            rows = []
+            for row in connection.execute(sql, parameters):
+                if flag.is_set():
+                    return []
+                rows.append(row)
+        except sqlite3.OperationalError:
+            if cancel is not None and cancel.is_set():
+                return []
+            raise
+    return rows
 
 
 def log_native_failure(exc: Exception) -> None:

@@ -11,7 +11,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from pathscout.actions import ItemActions
 from pathscout.catalog.exclusions import ExclusionPolicy
@@ -369,6 +369,39 @@ class BusinessRulesTest(unittest.TestCase):
                     {h.item.path for h in self.hits(text)}, {paths[name] for name in expected}
                 )
 
+    def test_extension_patterns_and_lists_match_whole_extensions(self):
+        names = (
+            "report.doc",
+            "report.docx",
+            "report.docm",
+            "report.docxx",
+            "report.txt",
+            "image.JPG",
+            "image.png",
+            "image.xjpg",
+            "sample.döc",
+            "literal.100%_ext",
+            "other.100xxext",
+        )
+        paths = {name: self.file(name) for name in names}
+        self.scan()
+        for text, expected in (
+            ("ext:doc,docx", {"report.doc", "report.docx"}),
+            ("ext:(doc,docx)", {"report.doc", "report.docx"}),
+            ("ext:doc*", {"report.doc", "report.docx", "report.docm", "report.docxx"}),
+            ("ext:doc?", {"report.docx", "report.docm"}),
+            ("ext:doc[!x]", {"report.docm"}),
+            ("ext:d?c", {"report.doc", "sample.döc"}),
+            ("ext:(jpg, png)", {"image.JPG", "image.png"}),
+            ("ext:(doc?,p*)", {"report.docx", "report.docm", "image.png"}),
+            ("ext:doc ext:txt", {"report.doc", "report.txt"}),
+            ("ext:100%_*", {"literal.100%_ext"}),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    {hit.item.path for hit in self.hits(text)}, {paths[name] for name in expected}
+                )
+
     def test_size_and_partial_date_filters_include_only_matching_files(self):
         paths = {}
         for name, size, modified in (
@@ -590,6 +623,101 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertIn(deep, paths)
         unscoped = [hit.item.path for hit in self.hits("report")]
         self.assertEqual(unscoped[0], deep)
+
+    def test_explorer_live_folder_names_override_markers_without_indexing_contents(self):
+        self.file("ghidra-mcp/.nobackup", "")
+        self.file("ghidra-mcp/secret-document.txt")
+        self.file("ghidra-second/.no-backup", "")
+        direct_file = self.file("ghidra.txt")
+        deep = self.file("archive/ghidra.txt")
+        self.scan()
+        count = self.store.count()
+        for sort in ("score", "name", "modified"):
+            with self.subTest(sort=sort):
+                query = replace(parse_query(f"ghidra sort:{sort}", scope=self.root), explorer=True)
+                hits = self.search.search(query, self.settings)
+                self.assertEqual(
+                    {hit.item.path for hit in hits[:2]},
+                    {self.root / "ghidra-mcp", self.root / "ghidra-second"},
+                )
+                self.assertEqual(hits[2].item.path, direct_file)
+                self.assertNotIn(deep, [hit.item.path for hit in hits])
+        # A directory created after indexing also participates immediately.
+        fresh = self.root / "new-folder"
+        fresh.mkdir()
+        query = replace(parse_query("new-folder", scope=self.root), explorer=True)
+        self.assertEqual(self.search.search(query, self.settings)[0].item.path, fresh)
+        self.assertEqual(self.store.count(), count)
+        self.assertFalse(self.hits("ghidra-mcp"))
+        query = replace(parse_query("secret-document", scope=self.root), explorer=True)
+        self.assertFalse(self.search.search(query, self.settings))
+
+    def test_explorer_uses_recursive_catalog_only_after_direct_names_do_not_match(self):
+        nested = self.file("archive/unique-target.txt")
+        self.file("other.txt")
+        self.scan()
+        query = replace(parse_query("unique-target", scope=self.root), explorer=True)
+        self.assertEqual(
+            [hit.item.path for hit in self.search.search(query, self.settings)], [nested]
+        )
+        # The common scope path must not make every direct item a name match.
+        query = replace(parse_query("library", scope=self.root), explorer=True)
+        self.assertFalse(self.search.search(query, self.settings))
+        cancel = threading.Event()
+        cancel.set()
+        self.assertFalse(self.search.search(query, self.settings, cancel=cancel))
+
+    @unittest.skipUnless(os.name == "nt", "Windows Explorer adapter")
+    def test_explorer_navigation_uses_captured_tab_and_refuses_stale_targets(self):
+        from pathscout.platform.explorer import navigate_to
+
+        first, selected = Mock(), Mock()
+        destination = self.root / "folder, with spaces"
+        with (
+            patch("win32com.client.Dispatch") as dispatch,
+            patch("pathscout.platform.explorer._window_folder") as folder,
+            patch("pathscout.platform.explorer.active_tab", return_value=22) as active_tab,
+            patch("pathscout.platform.explorer.activate_window") as activate,
+        ):
+            dispatch.return_value.Windows.return_value = [first, selected]
+            folder.side_effect = [(self.root, False), (self.root, True)]
+            navigate_to(destination, 11, 22, self.root)
+            selected.Navigate2.assert_called_once_with(str(destination), 0)
+            first.Navigate2.assert_not_called()
+            activate.assert_called_once_with(11)
+            selected.reset_mock()
+            for matches in (
+                [(self.root / "changed", True), (None, False)],
+                [(self.root, False), (self.root, False)],
+            ):
+                folder.side_effect = matches
+                with self.assertRaises(OSError):
+                    navigate_to(destination, 11, 22, self.root)
+                selected.Navigate2.assert_not_called()
+            active_tab.return_value = 33
+            with self.assertRaises(OSError):
+                navigate_to(destination, 11, 22, self.root)
+
+    @unittest.skipUnless(os.name == "nt", "Windows Explorer adapter")
+    def test_explorer_folder_action_records_only_successful_navigation(self):
+        destination = self.root / "target"
+        destination.mkdir()
+        action = ItemActions(self.store)
+        with (
+            patch("pathscout.platform.explorer.navigate_to") as navigate,
+            patch("pathscout.platform.shell.open_path") as launch,
+            patch.object(self.store, "record_launch") as record,
+        ):
+            action.open(destination, "target", explorer=(11, 22, self.root))
+            navigate.assert_called_once_with(destination, 11, 22, self.root)
+            launch.assert_not_called()
+            record.assert_called_once_with(destination, "target")
+            record.reset_mock()
+            navigate.side_effect = OSError("Original tab closed")
+            with self.assertRaises(OSError):
+                action.open(destination, "target", explorer=(11, 22, self.root))
+            record.assert_not_called()
+            launch.assert_not_called()
 
     def test_skipping_hopeless_candidates_never_changes_results(self):
         names = [

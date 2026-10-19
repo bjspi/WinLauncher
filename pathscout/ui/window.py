@@ -56,7 +56,7 @@ from pathscout.ui.theme import Palette, app_icon
 
 COMPACT_WIDTH = 640
 EXPANDED_WIDTH = 900
-EXPLORER_WIDTH = 520
+EXPLORER_WIDTH = 440
 EXPANDED_ROWS = 14
 SHADOW_MARGIN = 14
 EXPLORER_BOTTOM_GAP = 56  # Keep Explorer's status bar visible below the bar.
@@ -74,7 +74,7 @@ class RowLayout:
 
 
 LAUNCHER_ROWS = RowLayout(height=52, icon=32, name_points=11, two_lines=True, visible_rows=9)
-EXPLORER_ROWS = RowLayout(height=34, icon=20, name_points=10, two_lines=False, visible_rows=8)
+EXPLORER_ROWS = RowLayout(height=28, icon=16, name_points=9, two_lines=False, visible_rows=6)
 NUMBERED_ROWS = 9  # Ctrl+1 … Ctrl+9 open these rows.
 FILTERS = (
     ("All", None),
@@ -179,14 +179,13 @@ class ResultDelegate(QStyledItemDelegate):
         text = QFontMetrics(font).elidedText(folder, Qt.TextElideMode.ElideMiddle, area.width())
         painter.drawText(area.left(), baseline, text)
 
-    @staticmethod
-    def _paint_shortcut(painter: QPainter, row: QRect, number: int, pinned: bool) -> int:
+    def _paint_shortcut(self, painter: QPainter, row: QRect, number: int, pinned: bool) -> int:
         """Draw `Ctrl+N` and the favorite star at the right; return the width used."""
         shortcut = f"Ctrl+{number + 1}" if number < NUMBERED_ROWS else ""
         label = f"★  {shortcut}".strip() if pinned else shortcut
         if not label:
             return 0
-        font = QFont("Segoe UI", 10)
+        font = QFont("Segoe UI", 10 if self.rows.two_lines else 8)
         painter.setFont(font)
         painter.setPen(QColor(Palette.SHORTCUT))
         width = QFontMetrics(font).horizontalAdvance(label) + 24
@@ -289,6 +288,7 @@ class LauncherWindow(QWidget):
         self.expanded = False
         self.catalog_count = 0
         self.explorer_mode = False  # Compact bar next to the Explorer window.
+        self.explorer_view: tuple[int, int] | None = None
         self._bottom_anchor: int | None = None
         self._resize_pending = False
         self.setObjectName("launcher")
@@ -315,6 +315,7 @@ class LauncherWindow(QWidget):
         layout.addWidget(self._build_results())
         self.detail = self._label("detail")
         self.status = self._label("status")
+        self.status.setWordWrap(False)
         self.activity = self._label("activity")
         layout.addWidget(self.detail)
         layout.addWidget(self._build_footer())
@@ -389,7 +390,12 @@ class LauncherWindow(QWidget):
         self.results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.results.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results.customContextMenuRequested.connect(self.context_menu)
-        self.results.itemDoubleClicked.connect(self.open_selected)
+        self.results.itemDoubleClicked.connect(
+            lambda _item: self.open_selected() if not self.explorer_mode else None
+        )
+        self.results.itemClicked.connect(
+            lambda _item: self.open_selected() if self.explorer_mode else None
+        )
         self.results.currentItemChanged.connect(self.update_detail)
         self.results.installEventFilter(self)
         return self.results
@@ -399,7 +405,8 @@ class LauncherWindow(QWidget):
         row = QHBoxLayout(self.footer)
         row.setContentsMargins(22, 2, 14, 2)
         row.setSpacing(4)
-        row.addWidget(self.status, 1)
+        row.addWidget(self.status)
+        row.addStretch(1)
         self.kind_buttons: dict[ItemKind, QToolButton] = {}
         for number, (kind, label, icon) in enumerate(
             (
@@ -530,7 +537,9 @@ class LauncherWindow(QWidget):
         # An empty query without history stays a bare search bar.
         self.empty.setText(NO_MATCHES)
         self.empty.setVisible(not hits and bool(self.query.text().strip()))
-        status = f"{len(hits)} results  ·  {elapsed_ms:.0f} ms  ·  {self.catalog_count:,} indexed"
+        status = f"{len(hits)} results  ·  {elapsed_ms:.0f} ms"
+        if not self.explorer_mode:
+            status += f"  ·  {self.catalog_count:,} indexed"
         self.status.setText(status if hits else "")
         self.status.setVisible(bool(hits))
         self._show_results_area(bool(hits))
@@ -559,7 +568,7 @@ class LauncherWindow(QWidget):
 
     def _show_results_area(self, has_results: bool) -> None:
         self.results.setVisible(has_results)
-        self.detail.setVisible(has_results and self.expanded)
+        self.detail.setVisible(has_results and self.expanded and not self.explorer_mode)
         self._fit_height()
 
     def _fit_height(self) -> None:
@@ -606,6 +615,10 @@ class LauncherWindow(QWidget):
             button.setChecked(button_kind == kind)
 
     def set_scope(self, folder: Path | None) -> None:
+        if folder is None and self.explorer_mode:
+            self.explorer_view = None
+            self._set_explorer_mode(False, None)
+            self._place_on_cursor_screen()
         self._show_scope(folder)
         self.query_changed.emit()
         self.query.setFocus()
@@ -615,7 +628,12 @@ class LauncherWindow(QWidget):
         if folder is None:
             self.clear_scope.hide()
             return
-        self.clear_scope.setText(f"in {folder.name or folder}   ✕")
+        name = self.clear_scope.fontMetrics().elidedText(
+            folder.name or str(folder),
+            Qt.TextElideMode.ElideMiddle,
+            110 if self.explorer_mode else 220,
+        )
+        self.clear_scope.setText(f"in {name}   ✕")
         self.clear_scope.setToolTip(f"Searching in {folder}. Click to search everywhere.")
         self.clear_scope.show()
 
@@ -627,6 +645,7 @@ class LauncherWindow(QWidget):
         text: str = "",
         scope: Path | None = None,
         near: tuple[int, int, int, int] | None = None,
+        explorer_view: tuple[int, int] | None = None,
     ) -> None:
         """Show with `text` typed below `scope`.
 
@@ -635,10 +654,11 @@ class LauncherWindow(QWidget):
         the cursor's screen.
         """
         self._show_scope(scope)
+        self.explorer_view = explorer_view
         self.query.blockSignals(True)
         self.query.setText(text)
         self.query.blockSignals(False)
-        self._set_explorer_mode(near is not None, scope)
+        self._set_explorer_mode(near is not None or explorer_view is not None, scope)
         anchor = _logical_rect(near) if near is not None else None
         if anchor is not None:
             self._place_in(anchor)
@@ -681,14 +701,26 @@ class LauncherWindow(QWidget):
         self.delegate.rows = EXPLORER_ROWS if enabled else LAUNCHER_ROWS
         self.delegate.scope = scope if enabled else None
         self.results.doItemsLayout()
-        self.query.setProperty("explorer", enabled)
-        self.query.style().unpolish(self.query)
-        self.query.style().polish(self.query)
+        for widget in (
+            self.query,
+            self.clear_scope,
+            self.menu_button,
+            self.empty,
+            *self.kind_buttons.values(),
+        ):
+            widget.setProperty("explorer", enabled)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
         if enabled:
-            self.search_bar.setContentsMargins(16, 6, 8, 6)
+            self.search_bar.setContentsMargins(10, 4, 6, 4)
+            self.footer.layout().setContentsMargins(10, 0, 8, 0)
         else:
             self.search_bar.setContentsMargins(22, 12, 12, 10)
-        self.menu_button.setIconSize(QSize(20, 20) if enabled else QSize(28, 28))
+            self.footer.layout().setContentsMargins(22, 2, 14, 2)
+        for button in self.kind_buttons.values():
+            button.setIconSize(QSize(14, 14) if enabled else QSize(16, 16))
+        self.menu_button.setIconSize(QSize(16, 16) if enabled else QSize(28, 28))
+        self._show_scope(scope)
 
     def _place_on_cursor_screen(self) -> None:
         self._bottom_anchor = None

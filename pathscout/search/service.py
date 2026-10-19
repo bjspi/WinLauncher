@@ -24,6 +24,7 @@ from pathscout.catalog.model import ItemKind
 from pathscout.catalog.priority import PriorityDecision
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.candidates import Candidate, read_candidates
+from pathscout.search.explorer import directory_candidates
 from pathscout.search.native_engine import log_native_failure, rank_with_native, select_native
 from pathscout.search.navigation import search_paths
 from pathscout.search.query import SearchQuery, SortOrder
@@ -45,6 +46,7 @@ class ResultOrder:
         self.order = query.sort
         self.ranker = ranker
         self.scope_key = ranker.filters.scope_key
+        self.explorer = query.explorer
 
     def key(self, candidate: Candidate, ranking: Ranking) -> SortKey:
         if self.order == SortOrder.SCORE:
@@ -59,14 +61,16 @@ class ResultOrder:
             return (*self._groups(candidate, band), -bound)
         return self._unscored_key(candidate, band)
 
-    def _groups(self, candidate: Candidate, band: PriorityBand) -> tuple[int, int]:
-        return band, 0 if self._is_direct_entry(candidate) else 1
+    def _groups(self, candidate: Candidate, band: PriorityBand) -> tuple:
+        folder = (candidate.kind != ItemKind.FOLDER,) if self.explorer else ()
+        return (*folder, band, 0 if self._is_direct_entry(candidate) else 1)
 
     def _unscored_key(self, candidate: Candidate, band: PriorityBand) -> SortKey:
         low = band == PriorityBand.FALLBACK
+        folder = (candidate.kind != ItemKind.FOLDER,) if self.explorer else ()
         if self.order == SortOrder.NAME:
-            return low, *_ties(candidate)
-        return low, -candidate.modified, candidate.path_text
+            return *folder, low, *_ties(candidate)
+        return *folder, low, -candidate.modified, candidate.path_text
 
     def _is_direct_entry(self, candidate: Candidate) -> bool:
         if self.scope_key is None:
@@ -128,6 +132,22 @@ class SearchService:
             return _hide_fallbacks_unless_needed(
                 search_paths(query, settings, cancel, self.store), query
             )
+        if query.explorer and query.scope is not None:
+            candidates = list(directory_candidates(query.scope, cancel))
+            hits = self._rank(query, settings, cancel, candidates)
+            logger.info("Explorer direct search: entries=%d hits=%d", len(candidates), len(hits))
+            if hits or (cancel is not None and cancel.is_set()):
+                return hits
+        return self._rank(query, settings, cancel)
+
+    def _rank(
+        self,
+        query: SearchQuery,
+        settings: Settings,
+        cancel: threading.Event | None,
+        candidates: list[Candidate] | None = None,
+    ) -> list[SearchHit]:
+        direct = query.explorer and candidates is not None
         exclusions = settings.exclusions()
         priorities = settings.priorities()
         ranker = Ranker(query)
@@ -137,10 +157,11 @@ class SearchService:
                 "contains: requires the Rust backend. Select Rust in Settings and install its current extension."
             )
         logger.info(
-            "Search started: requested_backend=%s engine=%s content_filter=%s",
+            "Search started: requested_backend=%s engine=%s content_filter=%s content_threads=%s",
             settings.search_backend,
             "rust" if native is not None else "python",
             query.content_text is not None,
+            settings.content_search_threads if query.content_text is not None else 0,
         )
         if native is not None:
             try:
@@ -151,8 +172,12 @@ class SearchService:
                     priorities,
                     ranker,
                     settings.max_results,
-                    lambda path, directory: exclusions.allows(Path(path), directory=directory),
+                    lambda path, directory: (
+                        (direct and directory) or exclusions.allows(Path(path), directory=directory)
+                    ),
                     cancel=cancel,
+                    content_search_threads=settings.content_search_threads,
+                    candidates=candidates,
                 )
                 if cancel is not None and cancel.is_set():
                     return []
@@ -167,7 +192,9 @@ class SearchService:
                 log_native_failure(exc)
         order = ResultOrder(query, ranker)
         best = _BestHits(settings.max_results)
-        for candidate in self._candidates(query, cancel):
+        for candidate in candidates if candidates is not None else self._candidates(query, cancel):
+            if cancel is not None and cancel.is_set():
+                return []
             priority = priorities.evaluate(candidate)
             if not ranker.eligible(candidate, priority):
                 continue
@@ -178,7 +205,9 @@ class SearchService:
                 continue
             key = order.key(candidate, ranking)
             # Marker probes touch the disk, so only hits that would be kept pay for them.
-            if best.would_keep(key) and _allowed(exclusions, candidate):
+            if best.would_keep(key) and (
+                (direct and candidate.kind == ItemKind.FOLDER) or _allowed(exclusions, candidate)
+            ):
                 best.add(key, candidate, ranking)
         if cancel is not None and cancel.is_set():
             return []

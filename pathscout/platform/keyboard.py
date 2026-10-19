@@ -179,6 +179,10 @@ class KeyboardListener(threading.Thread):
             return False
         if not key.text:
             return False
-        self.events.put(ExplorerTyping(key.text, context.folder, window_rect(context.hwnd)))
+        self.events.put(
+            ExplorerTyping(
+                key.text, context.folder, window_rect(context.hwnd), (context.hwnd, context.tab)
+            )
+        )
         self._swallowed_keys.add(data.vkCode)
         return True

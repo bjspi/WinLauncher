@@ -8,6 +8,27 @@ from pathscout.search.query_parser import parse_query, without_type_filter
 
 
 class QueryFiltersTest(unittest.TestCase):
+    def test_extension_lists_patterns_and_history_are_normalized(self):
+        for text, expected in (
+            ("ext:doc,docx", ("doc", "docx")),
+            ("ext:(doc,docx)", ("doc", "docx")),
+            ("EXT:( .JPG, PNG ) ext:.jpg", ("jpg", "png")),
+            ("ext:doc*", ("doc*",)),
+            ("ext:(doc?,[jp]pg,p[!d]f)", ("doc?", "[jp]pg", "p[!d]f")),
+            ("ext:(.doc*, pdf) ext:txt", ("doc*", "pdf", "txt")),
+        ):
+            with self.subTest(text=text):
+                query = parse_query("report " + text)
+                self.assertEqual(query.extensions, expected)
+                self.assertEqual(query.terms, ("report",))
+        self.assertEqual(
+            parse_query("ext:(jpg, png)").history_key,
+            parse_query("ext:png,jpg").history_key,
+        )
+        for text in ("ext:", "ext:()", "ext:( )", "ext:(jpg,png"):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "ext:"):
+                parse_query(text)
+
     def test_type_aliases_share_kind_history_and_ui_replacement(self):
         for prefix in ("type", "t", "T"):
             for value, canonical in (

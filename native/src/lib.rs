@@ -1,6 +1,7 @@
 //! Optional search acceleration. Python owns SQL, exclusions and hit construction.
 
 mod content;
+mod content_workers;
 mod fuzzy;
 mod heap;
 mod matching;
@@ -20,6 +21,7 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, OpenFlags};
 
 use content::ContentFilter;
+use content_workers::ContentWorkers;
 use heap::{BestHits, Kept};
 use priority::Policy;
 use query::{Candidate, Query};
@@ -56,7 +58,7 @@ struct Search<'a> {
     allows: &'a Py<PyAny>,
     cancel: &'a CancelFlag,
     best: BestHits,
-    content: Option<ContentFilter>,
+    content: Option<ContentWorkers>,
 }
 
 impl<'a> Search<'a> {
@@ -71,7 +73,9 @@ impl<'a> Search<'a> {
             .as_deref()
             .map(ContentFilter::new)
             .transpose()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(|err| PyValueError::new_err(err.to_string()))?
+            .map(|filter| ContentWorkers::new(filter, query.content_search_threads, cancel))
+            .transpose()?;
         Ok(Self {
             query,
             priorities,
@@ -93,7 +97,7 @@ impl<'a> Search<'a> {
         {
             return Ok(());
         }
-        let Some(mut ranking) = rank::rank(self.query, &row, &priority) else {
+        let Some(ranking) = rank::rank(self.query, &row, &priority) else {
             return Ok(());
         };
         let key = heap::key(self.query, &row, &ranking);
@@ -106,31 +110,42 @@ impl<'a> Search<'a> {
                 .extract::<bool>(py)
         })?;
         if allowed {
-            if self
-                .content
-                .as_mut()
-                .is_some_and(|content| !content.matches(&row, self.cancel))
-            {
-                return Ok(());
-            }
-            if self.content.is_some() {
-                ranking.reasons.push("Content contains query".into());
-            }
-            self.best.add(Kept {
+            let hit = Kept {
                 key,
                 index,
                 row,
                 ranking,
-            });
+            };
+            if let Some(content) = &mut self.content {
+                if let Some(ready) = content.submit(hit)? {
+                    self.keep(ready);
+                }
+            } else {
+                self.best.add(hit);
+            }
         }
         Ok(())
     }
 
-    fn finish(self) -> Vec<Kept> {
+    fn keep(&mut self, hit: Kept) {
+        if self.best.would_keep(&hit.key) {
+            self.best.add(hit);
+        }
+    }
+
+    fn finish(mut self) -> PyResult<Vec<Kept>> {
+        while let Some(content) = &mut self.content {
+            if content.is_empty() || self.cancel.is_set() {
+                break;
+            }
+            if let Some(ready) = content.next()? {
+                self.keep(ready);
+            }
+        }
         if self.cancel.is_set() {
-            Vec::new()
+            Ok(Vec::new())
         } else {
-            self.best.ordered()
+            Ok(self.best.ordered())
         }
     }
 }
@@ -173,7 +188,7 @@ fn rank_rows(
             }
             search.consider(index, candidate)?;
         }
-        Ok::<_, PyErr>(search.finish())
+        search.finish()
     })?;
     Ok(kept
         .into_iter()
@@ -314,7 +329,7 @@ fn search_sqlite(
             Err(error) => return Err(sql_error(error)),
         }
     }
-    Ok(search.finish())
+    search.finish()
 }
 
 #[pyfunction]
@@ -358,7 +373,7 @@ fn rank_sqlite(
 
 #[pymodule]
 fn pathscout_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add("API_VERSION", 4)?;
+    module.add("API_VERSION", 7)?;
     module.add("UNICODE_VERSION", unicode::UNICODE_VERSION)?;
     module.add_class::<CancelFlag>()?;
     module.add_function(wrap_pyfunction!(rank_rows, module)?)?;

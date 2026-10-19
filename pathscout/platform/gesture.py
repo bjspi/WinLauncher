@@ -29,6 +29,7 @@ class ExplorerTyping:
     text: str
     folder: Path
     window: tuple[int, int, int, int] | None = None
+    view: tuple[int, int] | None = None  # Originating Explorer window and tab handles.
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,6 +42,7 @@ from pathscout.catalog.priority import (
     SearchPriority,
 )
 from pathscout.settings import (
+    CONTENT_SEARCH_THREADS_RANGE,
     DOUBLE_CTRL_RANGE_MS,
     RESCAN_RANGE_SECONDS,
     RESULT_LIMIT_RANGE,
@@ -290,6 +291,15 @@ class SettingsDialog(QDialog):
         self.backend.setCurrentIndex(self.backend.findData(settings.search_backend))
         self.backend.setAccessibleName("Search backend")
         form.addRow("Search backend", self.backend)
+        self.content_threads = _spin_box(
+            CONTENT_SEARCH_THREADS_RANGE, settings.content_search_threads
+        )
+        self.content_threads.setAccessibleName("Content search threads")
+        self.content_threads.setToolTip(
+            "1–16 parallel file scans for contains:, content: and rg: (Rust only). "
+            "More threads can increase disk activity and memory use."
+        )
+        form.addRow("Content search threads (Rust)", self.content_threads)
         form.addRow(_note("Rust uses Python when unavailable or a search rule requires it."))
         form.addRow(
             _note("Other changes apply on Save. File names and paths stay on this computer.")
@@ -385,6 +395,7 @@ class SettingsDialog(QDialog):
             rescan_seconds=self.scan_interval.value(),
             max_results=self.limit.value(),
             search_backend=self.backend.currentData(),
+            content_search_threads=self.content_threads.value(),
         )
 
     def accept(self) -> None:

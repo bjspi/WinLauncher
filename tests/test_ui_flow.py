@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
 
 from pathscout.catalog.model import CatalogItem, ItemKind
 from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
-from pathscout.platform.gesture import InputUnavailable
+from pathscout.platform.gesture import ExplorerTyping, InputUnavailable
 from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import SearchHit
 from pathscout.settings import Settings, SettingsFile
@@ -502,12 +502,15 @@ class UiFlowTest(unittest.TestCase):
                 dialog = SettingsDialog(c.settings, save=c.apply_settings)
                 self.assertEqual(dialog.backend.currentData(), c.settings.search_backend)
                 dialog.backend.setCurrentIndex(dialog.backend.findData(backend))
+                threads = 1 if backend == "python" else 8
+                dialog.content_threads.setValue(threads)
                 c.search.run()
                 previous_cancel = c.search.running
                 with patch.object(c, "_start_monitor") as monitor:
                     dialog.accept()
                 self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
                 self.assertEqual(c.settings_file.load().search_backend, backend)
+                self.assertEqual(c.settings_file.load().content_search_threads, threads)
                 self.assertTrue(previous_cancel.is_set())
                 self.assertEqual(self.tasks.count(TaskCategory.INDEX), indexed)
                 self.assertEqual(self.window.scope, self.root)
@@ -537,6 +540,35 @@ class UiFlowTest(unittest.TestCase):
             self.window.open_selected()
             self.tasks.finish(TaskCategory.ACTION)
         self.launch.assert_called_once_with(folder, "navigate:~/.myagents")
+
+    def test_explorer_typing_opens_live_folder_in_original_window_on_one_click(self):
+        self.window.hide()
+        folder = self.root / "ghidra-mcp"
+        folder.mkdir()
+        (folder / ".nobackup").touch()
+        intent = ExplorerTyping("ghidra", self.root, (0, 0, 1000, 800), (11, 22))
+        self.controller._search_from_explorer(intent)
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.assertTrue(self.controller.search.current_query().explorer)
+        self.assertEqual(self.window.selected_hit().item.path, folder)
+        self.assertLessEqual(self.window.delegate.rows.height, 28)
+        self.assertLess(self.window.width(), 520)
+        self.window.results.itemClicked.emit(self.window.results.item(0))
+        self.assertFalse(self.window.isVisible())
+        self.tasks.finish(TaskCategory.ACTION)
+        self.launch.assert_called_once_with(folder, "ghidra", explorer=(11, 22, self.root))
+        self.window.present(text="ghidra")
+        self.assertFalse(self.window.explorer_mode)
+        self.assertIsNone(self.window.explorer_view)
+        self.assertFalse(self.controller.search.current_query().explorer)
+
+    def test_clearing_explorer_scope_restores_global_launcher(self):
+        self.window.present(scope=self.root, near=(0, 0, 1000, 800), explorer_view=(11, 22))
+        self.window.set_scope(None)
+        self.assertFalse(self.window.explorer_mode)
+        self.assertIsNone(self.window.explorer_view)
+        self.assertFalse(self.controller.search.current_query().explorer)
 
     def test_settings_save_failure_keeps_dialog_and_edits(self):
         save = Mock(side_effect=OSError("Disk unavailable"))

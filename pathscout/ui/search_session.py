@@ -51,6 +51,8 @@ class SearchSession(QObject):
     def current_query(self) -> SearchQuery:
         """The query as typed, with the filter buttons applied unless `type:` was typed."""
         query = parse_query(self.window.query.text(), self.window.scope)
+        if self.window.explorer_mode and query.scope == self.window.scope:
+            query = replace(query, explorer=True)
         if query.kind is None:
             query = replace(query, kind=self.window.kind)
         self.window.show_kind(query.kind)

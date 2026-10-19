@@ -33,6 +33,13 @@ impl Term {
         };
         Ok(Self { text, pattern })
     }
+
+    pub fn matches(&self, text: &str) -> bool {
+        match &self.pattern {
+            Some(pattern) => pattern.is_match(text),
+            None => self.text == text,
+        }
+    }
 }
 
 pub struct NameForms<'a> {

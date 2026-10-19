@@ -42,6 +42,14 @@ or searches the folder you are in when you simply start typing in Explorer.
 <img src="docs/images/explorer-search.png" width="440" alt="Searching inside an Explorer folder">
 </div>
 
+Typing in Explorer opens a compact completion bar. Matching direct folders come
+first, followed by direct files; only when there are no direct matches does it
+search the catalog below that folder. Direct folder names are read live, including
+folders containing `.nobackup` or `.no-backup`; their contents stay excluded from
+indexing and recursive search. Clicking a folder or pressing Enter navigates the
+original Explorer tab, without opening another window. Clearing the scope returns
+to the global launcher.
+
 ## 🚀 Quick start
 
 ```powershell
@@ -78,7 +86,7 @@ sign-in. It manages only its own shortcut in your Startup folder.
 | --- | --- |
 | <kbd>Ctrl</kbd> <kbd>Ctrl</kbd> | Show or hide the search bar |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> | Alternative global shortcut |
-| Typing in Explorer | Search the current folder and everything below it |
+| Typing in Explorer | Complete direct folder/file names; search below only without a direct match |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Select a result |
 | <kbd>Enter</kbd> | Open the selected result |
 | <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>Ctrl</kbd>+<kbd>9</kbd> | Open the numbered result |
@@ -109,6 +117,9 @@ vsc type:app                            initials of an application
 *.json                                 shell-style filename wildcard
 report[0-9].json                        one digit in the filename
 report ext:pdf,docx                     only these extensions
+ext:doc,docx                           Word document extensions
+ext:doc*                               any extension starting with doc
+ext:(jpg,png)                          either extension; parentheses are optional
 budget in:"D:\Work Projects"            inside this folder
 path:projects/reports name:annual       ordered parent folders, name only
 report after:2025-06-01 before:2025-06-30 sort:modified
@@ -117,6 +128,7 @@ report after:2026-02* before:2026-02*   reports modified during February 2026
 report !archive                         exclude paths containing "archive"
 report contains:"invoice number"        filter matching text files by their contents (Rust)
 *.json contains:gsk_*                   fnmatch pattern within text contents (Rust)
+*.json rg:gsk_*                         content: and rg: are aliases for contains:
 report match:keyword score:match        no fuzzy matching, text relevance only
 report low:true                         include low-priority results
 %TEMP%                                 open the Windows temporary directory
@@ -128,7 +140,7 @@ report low:true                         include low-priority results
 | Filter | Meaning |
 | --- | --- |
 | `type:file` · `type:folder` · `type:dir` · `type:app` | Item kind; `t:` is shorthand for `type:` |
-| `ext:pdf,txt` | Extensions (repeatable) |
+| `ext:pdf,txt` · `ext:(jpg,png)` · `ext:doc*` | Extensions/patterns, combined with OR (repeatable) |
 | `in:"C:\Folder"` | Descendants of an absolute folder |
 | `path:a/b` | Parent folders in this order (repeatable) |
 | `name:text` | Match the file name without extension |
@@ -141,6 +153,7 @@ report low:true                         include low-priority results
 | `before:2026-` · `before:2026-02*` | Through the end of 2026 or February 2026 |
 | `size:>5kb` · `size:<2mb` | File/application size; also `>=` and `<=` |
 | `contains:"some text"` · `contains:gsk_*` | Case-insensitive text/fnmatch content filter; Rust backend required |
+| `content:text` · `rg:text` | Aliases for `contains:`, with identical fnmatch behavior |
 | `low:true` | Show low-priority results alongside the others |
 
 Quoted text keeps spaces, apostrophes are literal and Windows paths such as
@@ -152,6 +165,11 @@ Patterns match the whole filename, including its extension; `name:` matches the
 stem instead. Use `[[]` for a literal opening bracket. Patterns work inside
 quotes, alongside ordinary fuzzy terms and with filters. `path:` accepts the
 same patterns for individual parent folders; `!text` remains a literal exclusion.
+
+Extension filters also accept fnmatch patterns. `ext:doc,docx` finds exactly those
+extensions; `ext:doc*` also includes `docm` and other extensions starting with
+`doc`. Lists accept optional parentheses and spaces inside them, such as
+`ext:(jpg, png)` or `ext:(doc*, pdf)`. Repeated `ext:` filters add alternatives.
 
 Size units are case-insensitive: `b`/`byte`, `kb`/`kbyte`/`KiB`, `mb`/`mbyte`,
 `gb`/`gbyte` and `tb`/`tbyte` (plural `bytes` forms also work). Each step is 1024;
@@ -172,6 +190,13 @@ Binary data, Office documents, PDFs, offline files and files over 64 MiB are
 skipped; unreadable or deleted files also do not match. PDFs with a text layer
 would require a separate text extractor; image-only PDFs would additionally need
 OCR. Narrow the filename, extension or folder first for large collections.
+
+**Settings → Search & indexing → Content search threads (Rust)** sets how many
+files are scanned concurrently (1–16, default 4). This applies to `contains:`,
+`content:` and `rg:`; filename search still uses the catalog. The backend uses
+ripgrep libraries directly, with reusable workers and no per-file processes.
+Higher values can increase disk activity and memory use. Save applies the change
+to the next search without rebuilding the catalog.
 
 Content patterns match anywhere within a line and support `*`, `?`, `[0-9]` and
 `[!0-9]`. They do not span lines. Regex punctuation such as `.` and `+` stays
@@ -330,15 +355,15 @@ Windows x64 Rust wheel. Download them from the run's `pathscout-windows-packages
 Pushing a `v*` tag runs the same checks and publishes a GitHub Release only after
 they pass, attaching those packages and a clean source ZIP. The tag must match
 `pathscout/__init__.py`, `pyproject.toml`, `native/pyproject.toml` and
-`native/Cargo.toml` (for example `v0.1.0`). Install both wheels from a release
+`native/Cargo.toml` (for example `v0.2.0`). Install both wheels from a release
 with `python -m pip install <python-wheel> <native-wheel>` to enable Rust without
 installing a compiler. Source ZIPs retain `native/` for local builds.
 
-For example, publish version 0.1.0 from a clean, committed checkout with:
+For example, publish version 0.2.0 from a clean, committed checkout with:
 
 ```powershell
-git tag -a v0.1.0 -m "PathScout 0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "PathScout 0.2.0"
+git push origin v0.2.0
 ```
 
 The finished release appears under [Releases](https://github.com/bjspi/PathScout/releases).

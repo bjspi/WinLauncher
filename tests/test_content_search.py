@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +19,7 @@ from pathscout.search.native_engine import API_VERSION, priority_spec, query_spe
 from pathscout.search.query_parser import parse_query, without_type_filter
 from pathscout.search.ranking import Ranker
 from pathscout.search.service import SearchService
-from pathscout.settings import Settings
+from pathscout.settings import Settings, settings_from_json
 
 try:
     NATIVE = importlib.import_module("pathscout_native")
@@ -27,6 +28,19 @@ except ImportError:
 
 
 class ContentQueryTest(unittest.TestCase):
+    def test_content_thread_setting_defaults_validates_and_does_not_change_indexing(self):
+        settings = Settings(roots=())
+        self.assertEqual(settings_from_json({"roots": []}).content_search_threads, 4)
+        for threads in (1, 4, 16):
+            updated = settings_from_json({"roots": [], "content_search_threads": threads})
+            self.assertEqual(updated.content_search_threads, threads)
+            self.assertEqual(updated.indexing_key, settings.indexing_key)
+        for invalid in (0, -1, 17, True, 2.5, "4"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                settings_from_json({"roots": [], "content_search_threads": invalid})
+            with self.assertRaises(ValueError):
+                replace(settings, content_search_threads=invalid)
+
     def test_content_query_validation_history_and_type_replacement(self):
         query = parse_query('*.json contains:"API_KEY=[ok]*" type:file')
         self.assertEqual(query.content_text, "API_KEY=[ok]*")
@@ -38,9 +52,20 @@ class ContentQueryTest(unittest.TestCase):
             parse_query(without_type_filter('*.json type:app contains:"API_KEY=[ok]*"')),
             parse_query('*.json contains:"API_KEY=[ok]*"'),
         )
-        for text in ("contains:", 'contains:" "', "contains:" + "a" * 129):
-            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "contains"):
-                parse_query(text)
+        for alias in ("contains", "content", "rg"):
+            with self.subTest(alias=alias):
+                aliased = parse_query(f'*.json {alias}:"API_KEY=[ok]*" type:file')
+                self.assertEqual(aliased, query)
+                self.assertEqual(aliased.history_key, query.history_key)
+            for value in ("", '" "', "a" * 129):
+                with (
+                    self.subTest(alias=alias, value=value),
+                    self.assertRaisesRegex(ValueError, alias),
+                ):
+                    parse_query(f"{alias}:{value}")
+        self.assertEqual(
+            parse_query("contains:first rg:second content:third").content_text, "third"
+        )
 
     def test_unavailable_native_backend_never_drops_the_content_filter(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -81,9 +106,71 @@ class NativeContentTest(unittest.TestCase):
             self.store.stage(connection, ((item, source) for item in items))
             self.store.publish(connection, active_roots=(source,), preserved_roots=())
 
-    def search(self, text, phase):
+    def search(self, text, phase, threads=4):
         with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native", PATHSCOUT_NATIVE_PHASE=phase):
-            return self.service.search(parse_query(text), self.settings)
+            return self.service.search(
+                parse_query(text), replace(self.settings, content_search_threads=threads)
+            )
+
+    def test_parallel_content_scans_preserve_ranking_limits_and_exclusions(self):
+        items = []
+        for index in range(70):
+            folder = self.root / f"folder{index % 3}"
+            folder.mkdir(exist_ok=True)
+            path = folder / f"report{index:02}.txt"
+            # Different read lengths allow workers to finish in a different order.
+            path.write_text("x" * (index % 7 * 10000) + ("needle" if index >= 30 else ""))
+            items.append(CatalogItem(path, ItemKind.FILE, modified=index))
+        excluded = self.root / "folder0" / "~$report.txt"
+        excluded.write_text("needle")
+        self.publish([CatalogItem(excluded, ItemKind.FILE), *reversed(items)])
+        for sort in ("name", "modified", "score"):
+            query = f"report contains:needle sort:{sort}"
+            baseline = self.search(query, "rows", threads=1)
+            self.assertEqual(len(baseline), 10)
+            self.assertNotIn(excluded, [hit.item.path for hit in baseline])
+            for phase in ("rows", "sqlite"):
+                for threads in (1, 4, 16):
+                    entrypoint = "rank_rows" if phase == "rows" else "rank_sqlite"
+                    with (
+                        self.subTest(sort=sort, phase=phase, threads=threads),
+                        patch.object(NATIVE, entrypoint, wraps=getattr(NATIVE, entrypoint)) as call,
+                    ):
+                        self.assertEqual(self.search(query, phase, threads), baseline)
+                        spec = call.call_args.args[0 if phase == "rows" else 3]
+                        self.assertEqual(spec["content_search_threads"], threads)
+
+    def test_native_rejects_invalid_content_thread_counts(self):
+        query = parse_query("contains:needle")
+        spec = query_spec(query, Ranker(query), 10)
+        for invalid in (0, 17, -1, 2.5, "4"):
+            with (
+                self.subTest(invalid=invalid),
+                self.assertRaises((ValueError, TypeError, OverflowError)),
+            ):
+                NATIVE.rank_rows(
+                    {**spec, "content_search_threads": invalid},
+                    priority_spec(PriorityPolicy()),
+                    [],
+                    lambda *_: True,
+                    NATIVE.CancelFlag(),
+                )
+
+    def test_explorer_content_filter_can_check_live_files_without_indexing_marked_contents(self):
+        path = self.root / "fresh.json"
+        path.write_text("needle")
+        private = self.root / "private"
+        private.mkdir()
+        (private / ".nobackup").touch()
+        (private / "secret.json").write_text("needle")
+        query = replace(parse_query("contains:needle", scope=self.root), explorer=True)
+        with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"):
+            self.assertEqual(
+                [hit.item.path for hit in self.service.search(query, self.settings)], [path]
+            )
+            path.unlink()
+            self.assertFalse(self.service.search(query, self.settings))
+        self.assertEqual(self.store.count(), 0)
 
     def test_streams_supported_text_types_after_name_filters_before_the_limit(self):
         phrase = "API_KEY=(ok)+.{}"
@@ -162,16 +249,22 @@ class NativeContentTest(unittest.TestCase):
                 ("gsk_[[]1][*]", {"d.txt"}),
                 ("gsk_*end", set()),
             ):
-                with self.subTest(phase=phase, pattern=pattern):
-                    hits = self.search(f"contains:{pattern}", phase)
-                    self.assertEqual({hit.item.path.name for hit in hits}, expected)
+                for alias in ("contains", "content", "rg"):
+                    with self.subTest(phase=phase, pattern=pattern, alias=alias):
+                        hits = self.search(f"ext:(t?t,md) {alias}:{pattern}", phase)
+                        self.assertEqual({hit.item.path.name for hit in hits}, expected)
 
     def test_content_scan_releases_gil_and_cancels_between_read_chunks(self):
+        for threads in (1, 4, 16):
+            with self.subTest(threads=threads):
+                self.check_content_cancellation(threads)
+
+    def check_content_cancellation(self, threads):
         path = self.root / "report.txt"
         path.write_bytes(b"x" * (8 * 1024 * 1024))
         self.publish([CatalogItem(path, ItemKind.FILE)])
         query = parse_query("report contains:missing")
-        spec = query_spec(query, Ranker(query), 10)
+        spec = query_spec(query, Ranker(query), 10, threads)
         flag = NATIVE.CancelFlag()
         entered = threading.Event()
         cancelled_at = []

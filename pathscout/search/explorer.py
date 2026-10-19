@@ -1,0 +1,34 @@
+"""Current directory entries for Explorer completion, without indexing their contents."""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+from collections.abc import Iterator
+from pathlib import Path
+
+from pathscout.catalog.indexer import _catalog_item, _classify_kind
+from pathscout.search.candidates import Candidate
+
+logger = logging.getLogger(__name__)
+
+
+def directory_candidates(folder: Path, cancel: threading.Event | None) -> Iterator[Candidate]:
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if cancel is not None and cancel.is_set():
+                    return
+                try:
+                    path = Path(entry.path)
+                    item = _catalog_item(
+                        path,
+                        entry.stat(follow_symlinks=False),
+                        _classify_kind(path, entry.is_dir()),
+                    )
+                    yield Candidate.from_item(item)
+                except OSError:
+                    logger.debug("Explorer entry unavailable: %s", entry.path, exc_info=True)
+    except OSError:
+        logger.warning("Explorer directory unavailable: %s", folder, exc_info=True)

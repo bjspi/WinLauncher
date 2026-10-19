@@ -231,10 +231,17 @@ class LauncherController(QObject):
             self.window.present()
 
     def _search_from_explorer(self, typing: ExplorerTyping) -> None:
-        if self.window.isVisible() and self.window.scope == typing.folder:
+        if (
+            self.window.isVisible()
+            and self.window.explorer_mode
+            and self.window.scope == typing.folder
+            and self.window.explorer_view == typing.view
+        ):
             self.window.query.insert(typing.text)
             return
-        self.window.present(text=typing.text, scope=typing.folder, near=typing.window)
+        self.window.present(
+            text=typing.text, scope=typing.folder, near=typing.window, explorer_view=typing.view
+        )
         self.indexing.request_folder(typing.folder)
 
     # Folder watching ----------------------------------------------------------
@@ -344,8 +351,16 @@ class LauncherController(QObject):
     # Item actions -------------------------------------------------------------
 
     def open_item(self, hit: SearchHit, history_key: str) -> None:
+        action = partial(self.actions.open, hit.item.path, history_key)
+        if self.window.explorer_view is not None and self.window.scope is not None:
+            action = partial(
+                self.actions.open,
+                hit.item.path,
+                history_key,
+                explorer=(*self.window.explorer_view, self.window.scope),
+            )
         self.window.hide()
-        self._run_action(partial(self.actions.open, hit.item.path, history_key))
+        self._run_action(action)
 
     def reveal_item(self, hit: SearchHit) -> None:
         self.window.hide()

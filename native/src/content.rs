@@ -70,6 +70,7 @@ const TEXT_EXTENSIONS: &[&str] = &[
     "cmd",
 ];
 
+#[derive(Clone)]
 pub struct ContentFilter {
     matcher: RegexMatcher,
     searcher: Searcher,

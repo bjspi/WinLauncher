@@ -28,7 +28,7 @@ QDialog { background: #f6f7f9; }
 QFrame#surface { background: #f7f8fa; border: 1px solid #d5dae1; border-radius: 10px; }
 QFrame#divider { background: #e3e6ea; border: 0; margin: 0 16px; }
 QLineEdit#query { background: transparent; border: 0; padding: 4px 0; font-size: 18pt; color: #1f2329; selection-background-color: #bcd5f5; selection-color: #1f2329; }
-QLineEdit#query[explorer="true"] { font-size: 12pt; padding: 2px 0; }
+QLineEdit#query[explorer="true"] { font-size: 10pt; padding: 1px 0; }
 QToolButton#menuButton { background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 3px; }
 QToolButton#menuButton:hover { background: #e9edf2; }
 QToolButton#menuButton:focus { border-color: #2f7de1; }
@@ -36,12 +36,15 @@ QToolButton#menuButton::menu-indicator { image: none; width: 0; }
 QToolButton#scope { background: #e6eef9; color: #2a5da8; border: 1px solid transparent; border-radius: 11px; padding: 3px 10px; font-size: 9pt; }
 QToolButton#scope:hover { background: #d8e6f7; }
 QToolButton#scope:focus { border-color: #2f7de1; }
+QToolButton#scope[explorer="true"] { padding: 2px 6px; font-size: 8pt; }
 QToolButton#kindFilter { background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 4px 7px; }
 QToolButton#kindFilter:hover { background: #e9edf2; }
 QToolButton#kindFilter:checked { background: #dbe8f8; border-color: #9bbce8; }
 QToolButton#kindFilter:focus { border-color: #2f7de1; }
+QToolButton#kindFilter[explorer="true"] { padding: 2px 4px; }
 QListWidget#results { background: transparent; border: 0; outline: none; padding: 0; }
 QLabel#message { color: #5f6670; padding: 14px 22px; }
+QLabel#message[explorer="true"] { font-size: 9pt; padding: 8px 10px; }
 QLabel#detail { color: #5f6670; font-size: 9pt; padding: 6px 22px 0 22px; }
 QLabel#status { color: #9aa0a8; font-size: 8pt; padding: 0; }
 QLabel#activity { color: #a15c00; font-size: 8pt; padding: 4px 22px 0 22px; }

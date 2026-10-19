@@ -12,8 +12,15 @@ class ItemActions:
     def __init__(self, store: CatalogStore):
         self.store = store
 
-    def open(self, path: Path, query_key: str) -> None:
-        shell.open_path(path)
+    def open(
+        self, path: Path, query_key: str, *, explorer: tuple[int, int, Path] | None = None
+    ) -> None:
+        if explorer is not None and path.is_dir():
+            from pathscout.platform.explorer import navigate_to
+
+            navigate_to(path, *explorer)
+        else:
+            shell.open_path(path)
         # Only successful shell invocations count as usage.
         self.store.record_launch(path, query_key)
 

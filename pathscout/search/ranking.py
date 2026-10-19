@@ -134,7 +134,8 @@ class Ranker:
         if query.basename_only:
             name, path = NameForms(candidate.stem), None
         else:
-            name, path = NameForms(candidate.name, candidate.search_name), candidate.search_path
+            name = NameForms(candidate.name, candidate.search_name)
+            path = None if query.explorer else candidate.search_path
         points, reasons = 0.0, []
         for term in query.terms:
             match = match_term(term, name, path, self.fuzzy)

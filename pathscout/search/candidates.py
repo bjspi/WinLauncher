@@ -105,6 +105,24 @@ class Candidate:
             self.attributes,
         )
 
+    def to_row(self) -> tuple:
+        """The native adapter uses the same 13-column layout as candidate SQL."""
+        return (
+            self.path_text,
+            self.identity,
+            str(self.kind),
+            self.search_name,
+            self.search_path,
+            self.extension,
+            self.size,
+            self.modified,
+            self.attributes,
+            self.launches,
+            self.last_used,
+            self.query_launches,
+            self.pinned,
+        )
+
     @classmethod
     def from_item(cls, item: CatalogItem) -> Candidate:
         """Normalize like the catalog does when it stages an item."""
@@ -279,8 +297,16 @@ def _require_structured_filters(where: _SqlFilter, query: SearchQuery) -> None:
     if query.content_text is not None:
         where.require("e.kind = 'file'")
     if query.extensions:
-        placeholders = ",".join("?" for _ in query.extensions)
-        where.require(f"e.extension IN ({placeholders})", *query.extensions)
+        if any(is_wildcard(extension) for extension in query.extensions):
+            predicates = ["e.extension LIKE ? ESCAPE '\\'" for _ in query.extensions]
+            # Anchor the suffix; fnmatch decides character classes after SQL narrows candidates.
+            where.require(
+                "(" + " OR ".join(predicates) + ")",
+                *(_contains(extension)[1:-1] for extension in query.extensions),
+            )
+        else:
+            placeholders = ",".join("?" for _ in query.extensions)
+            where.require(f"e.extension IN ({placeholders})", *query.extensions)
     if query.modified_after is not None:
         where.require("e.modified >= ?", query.modified_after)
     if query.modified_before is not None:

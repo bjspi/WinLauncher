@@ -110,7 +110,7 @@ pub(crate) fn rank(query: &Query, row: &Candidate, priority: &Decision) -> Optio
         (
             row.name(),
             Some(row.search_name.as_str()),
-            Some(row.search_path.as_str()),
+            (!query.explorer).then_some(row.search_path.as_str()),
         )
     };
     let name = NameForms::new(original, normalized);

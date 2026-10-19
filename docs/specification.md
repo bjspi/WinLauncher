@@ -81,7 +81,7 @@ backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 | `"annual report"` | One term containing a space |
 | `*.json`, `report?.json`, `report[0-9].json` | Whole-filename fnmatch patterns, including the extension |
 | `type:file`, `type:folder`, `type:dir`, `type:app` | Restrict item kind; overrides the UI kind button. `t:` is shorthand for `type:` |
-| `ext:pdf,txt` | Any listed extension, case-insensitive, optional leading dots |
+| `ext:pdf,txt`, `ext:(jpg,png)`, `ext:doc*` | Any listed extension/fnmatch pattern, case-insensitive, optional leading dots and list parentheses |
 | `in:"D:\Work Projects"` | Restrict to descendants of this absolute folder |
 | `path:projects/reports` | Match parent folder components in that order; intervening components allowed |
 | `name:annual` | Match the stem only, excluding the extension and parent path |
@@ -99,6 +99,7 @@ backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 | `before:2026-`, `before:2026-02*` | Through the last day of the specified local year/month |
 | `size:>5kb`, `size:<2mb` | Strict file/application size comparison; `>=` and `<=` include the boundary |
 | `contains:"invoice number"`, `contains:gsk_*` | Case-insensitive text/fnmatch content filter; Rust backend required |
+| `content:text`, `rg:text` | Aliases for `contains:`, including its fnmatch semantics |
 | `low:true` | Include low results even when ordinary/high results exist |
 
 An Explorer session supplies the default folder scope. An explicit `in:` overrides
@@ -137,7 +138,7 @@ and accessible text. Painting performs no filesystem metadata reads. Creation
 timestamps are not stored or used by the modification date filters.
 
 Content search uses ripgrep's `grep-regex` and `grep-searcher` crates, with one
-fnmatch matcher compiled per query and a reusable streaming buffer. It applies
+fnmatch matcher compiled per query and a reusable streaming buffer per worker. It applies
 after ordinary ranking and exclusion checks, before a candidate enters the result
 heap. Candidates beyond the result limit remain eligible, so an early set of
 content mismatches cannot hide later matches. Contents are read afresh without a
@@ -147,12 +148,31 @@ and at most 64 MiB according to current filesystem metadata. BOM-marked UTF-16 i
 decoded automatically; NUL detection skips binary input. Office/PDF/media and
 executables are not parsed. Unreadable, deleted or unsupported files do not match.
 Read chunks check cancellation, and scanning runs with the Python GIL released.
+`content_search_threads` selects 1–16 parallel file scans (default 4), exposed in
+Search & indexing settings. It changes no catalog membership and needs no rescan.
+Only candidates that pass ranking and exclusions enter a bounded queue (at most
+twice the worker count in flight). Results enter the heap in candidate order,
+preserving ranking, ties and result limits. Workers are joined when the search
+finishes or is cancelled; ordinary filename searches start no content workers.
+Each worker uses the ripgrep crates directly, without launching a process.
+Increasing parallelism can increase disk activity and buffer memory use.
 `contains:` requires nonblank text of at most 128 characters. Fnmatch patterns
 (`*`, `?`, `[0-9]`, `[!0-9]`) match substrings within individual lines, without
 spanning line boundaries. Regex punctuation remains literal; `[*]`, `[?]` and
 `[[]` escape wildcard characters. Repeated filters keep the last value. Python mode
 or an incompatible extension reports a clear error; it never silently drops the
 content constraint.
+
+`contains:`, `content:` and `rg:` share validation, matching and the canonical
+`contains:` history key. Mixed repeated aliases keep the last value. They all use
+fnmatch syntax, with identical behavior for regex punctuation.
+
+Extension lists are OR alternatives, also across repeated `ext:` filters.
+Optional parentheses may contain spaces, for example `ext:(jpg, png)`. Each
+extension/pattern is normalized without its leading dot and matched in full;
+`ext:doc*` includes `doc`, `docx` and `docm`, while `ext:doc,docx` includes only the
+two named extensions. SQL narrows wildcard candidates conservatively, and both
+backends apply the complete fnmatch pattern before retaining a result.
 
 The footer exposes Files, Folders and Apps toggles, also reachable with Alt+1,
 Alt+2 and Alt+3. Clicking the active toggle again or using Alt+0 restores All.
@@ -279,9 +299,10 @@ present. The bar can be dragged by its empty areas.
 
 Typing in Explorer opens a smaller one-line variant docked near the bottom of that
 Explorer window; it grows upwards and shows each result's subfolder relative to the
-searched folder. With a folder scope (Explorer or `in:`), the folder's direct
-entries are listed before deeper matches; relevance orders each group, and
-priority classes still come first.
+searched folder. Explorer completion shows matching direct folders and files,
+with recursive results only as a fallback. A regular `in:` query lists direct
+entries before deeper matches; relevance orders each group, and priority classes
+still come first.
 
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
 the result's folder and its parents up to the configured root (or up to, but not
@@ -304,6 +325,20 @@ stopped after two minutes. Installed packages are updated with pip.
 
 Search folders and excluded directories accept folders dragged from Explorer,
 several at once; dropped files are ignored and duplicates are skipped.
+
+Explorer typing uses a 440-pixel-wide surface with 28-pixel one-line rows, 16-pixel
+icons and up to six visible results. The search enumerates only the current
+directory on its background worker and matches entry names, not the common parent
+path. Direct folder names participate even when index exclusions or marker files
+exclude their contents; files still obey exclusions. Folders precede files before
+the result limit. The catalog is consulted recursively only when no direct entry
+matches, with its normal exclusions; the live listing writes nothing to it.
+Content filters keep their Rust requirement and use the same bounded content workers.
+The captured Explorer window and active-tab handles travel with the keyboard
+intent. A single click or Enter on a folder uses that tab's `Navigate2` method;
+stale, changed or ambiguous targets fail instead of opening another window.
+File opening and global launcher actions retain their normal shell behavior.
+Clearing the scope restores the global launcher and drops the Explorer target.
 
 Start with Windows manages only `PathScout.lnk` in the current user's Startup known
 folder; the existence of PathScout's own shortcut is the state shown in both the

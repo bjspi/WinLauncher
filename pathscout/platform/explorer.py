@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from pathscout.platform.windows import explorer_file_view
+from pathscout.platform.windows import activate_window, active_tab, explorer_file_view
 
 logger = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
@@ -51,6 +51,37 @@ def _window_folder(window, hwnd: int, tab: int) -> tuple[Path | None, bool]:
         return folder, int(browser.GetWindow()) == tab
     except (pythoncom.com_error, AttributeError, TypeError, ValueError):
         return None, False
+
+
+def navigate_to(path: Path, hwnd: int, tab: int, original_folder: Path) -> None:
+    """Navigate the captured Explorer tab, refusing stale or ambiguous targets."""
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        if active_tab(hwnd) != tab:
+            raise OSError(
+                "The original Explorer tab is no longer active. Search again in Explorer."
+            )
+        exact, fallback = [], []
+        for window in win32com.client.Dispatch("Shell.Application").Windows():
+            folder, active = _window_folder(window, hwnd, tab)
+            if folder != original_folder:
+                continue
+            fallback.append(window)
+            if active:
+                exact.append(window)
+        choices = exact or fallback
+        if len(choices) != 1:
+            raise OSError(
+                "The original Explorer folder is no longer available. Search again in Explorer."
+            )
+        choices[0].Navigate2(str(path), 0)
+        activate_window(hwnd)
+        logger.info("Explorer navigated: window=%#x tab=%#x path=%s", hwnd, tab, path)
+    finally:
+        pythoncom.CoUninitialize()
 
 
 class ExplorerTracker(threading.Thread):

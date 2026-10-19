@@ -6,6 +6,8 @@ override a structured filter.
 
 from __future__ import annotations
 
+from fnmatch import fnmatchcase
+
 from pathscout.catalog.model import ItemKind, path_key
 from pathscout.search.candidates import Candidate
 from pathscout.search.query import SearchQuery
@@ -29,7 +31,9 @@ class StructuredFilters:
     def _matches_type(self, candidate: Candidate) -> bool:
         if self.query.kind is not None and self.query.kind != candidate.kind:
             return False
-        return not self.query.extensions or candidate.extension in self.query.extensions
+        return not self.query.extensions or any(
+            fnmatchcase(candidate.extension, pattern) for pattern in self.query.extensions
+        )
 
     def _matches_location(self, candidate: Candidate) -> bool:
         """A scope returns its descendants, not the scope folder itself."""

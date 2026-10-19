@@ -43,6 +43,8 @@ FILTER_NAMES = frozenset(
         "before",
         "size",
         "contains",
+        "content",
+        "rg",
     }
 )
 _SIZE_UNITS = {"": 1, "b": 1, "byte": 1, "bytes": 1} | {
@@ -69,6 +71,13 @@ def parse_query(text: str, scope: Path | None = None) -> SearchQuery:
             if value in (">", "<", ">=", "<="):
                 value += next(tokens, "")
             token = "size:" + value
+        elif separator and normalize(name) == "ext" and value.startswith("("):
+            while not value.endswith(")"):
+                continuation = next(tokens, None)
+                if continuation is None:
+                    raise ValueError("Please close the ext: list with a parenthesis.")
+                value += " " + continuation
+            token = "ext:" + value
         draft.add(token)
     return draft.build()
 
@@ -173,9 +182,9 @@ class _QueryDraft:
                 self.min_size = max(self.min_size or 0, lower)
             if upper is not None:
                 self.max_size = upper if self.max_size is None else min(self.max_size, upper)
-        elif name == "contains":
+        elif name in ("contains", "content", "rg"):
             if not value.strip() or len(value) > MAX_TERM_LENGTH:
-                raise ValueError(f"contains: expects 1 to {MAX_TERM_LENGTH} characters of text.")
+                raise ValueError(f"{name}: expects 1 to {MAX_TERM_LENGTH} characters of text.")
             self.content_text = value
         else:
             raise AssertionError(f"FILTER_NAMES lists {name!r} without a parser.")
@@ -229,7 +238,19 @@ def _parse_choice(choices: type[_Choice], name: str, value: str) -> _Choice:
 
 
 def _parse_extensions(value: str) -> list[str]:
-    return [normalize_extension(extension) for extension in value.split(",") if extension]
+    value = value.strip()
+    if value.startswith("("):
+        if not value.endswith(")"):
+            raise ValueError("Please close the ext: list with a parenthesis.")
+        value = value[1:-1]
+    extensions = [
+        normalize_extension(extension.strip())
+        for extension in value.split(",")
+        if extension.strip()
+    ]
+    if not extensions:
+        raise ValueError("ext: expects an extension or list such as doc*, doc,docx or (jpg,png).")
+    return extensions
 
 
 def _parse_scope(value: str) -> Path:

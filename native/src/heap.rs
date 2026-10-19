@@ -39,14 +39,23 @@ fn groups(query: &Query, row: &Candidate, band: u8) -> Vec<Part> {
         let parent = identity.rsplit_once('/').map_or("", |(parent, _)| parent);
         parent.len() + 1 == scope.len() && scope.starts_with(parent)
     });
-    vec![
+    let mut parts = Vec::new();
+    if query.explorer {
+        parts.push(Part::Number(if row.kind == "folder" { 0.0 } else { 1.0 }));
+    }
+    parts.extend([
         Part::Number(band as f64),
         Part::Number(if direct { 0.0 } else { 1.0 }),
-    ]
+    ]);
+    parts
 }
 
 fn unscored_key(query: &Query, row: &Candidate, band: u8) -> Key {
-    let mut parts = vec![Part::Number(if band == 2 { 1.0 } else { 0.0 })];
+    let mut parts = Vec::new();
+    if query.explorer {
+        parts.push(Part::Number(if row.kind == "folder" { 0.0 } else { 1.0 }));
+    }
+    parts.push(Part::Number(if band == 2 { 1.0 } else { 0.0 }));
     if query.sort == "name" {
         parts.push(Part::Text(casefold(row.name())));
     } else {
