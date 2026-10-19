@@ -46,6 +46,7 @@ class SearchQuery:
     navigation: str | None = None  # Explicit environment/home path; resolved on a worker.
     min_size: int | None = None  # Inclusive byte bounds; folders have no searchable size.
     max_size: int | None = None
+    content_text: str | None = None  # Literal, case-insensitive text; native backend only.
 
     @property
     def uses_learned_items_only(self) -> bool:
@@ -74,6 +75,8 @@ class SearchQuery:
             parts.append("ext:" + ",".join(sorted(self.extensions)))
         if self.folder_parts:
             parts.append("path:" + "/".join(self.folder_parts))
+        if self.content_text is not None:
+            parts.append("contains:" + normalize(self.content_text))
         return " ".join(parts)
 
 

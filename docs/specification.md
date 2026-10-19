@@ -98,6 +98,7 @@ backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 | `after:2026-`, `after:2026-02*` | Start of the specified local year/month (January 1 / February 1) |
 | `before:2026-`, `before:2026-02*` | Through the last day of the specified local year/month |
 | `size:>5kb`, `size:<2mb` | Strict file/application size comparison; `>=` and `<=` include the boundary |
+| `contains:"invoice number"` | Literal, case-insensitive text content filter; Rust backend required |
 | `low:true` | Include low results even when ordinary/high results exist |
 
 An Explorer session supplies the default folder scope. An explicit `in:` overrides
@@ -134,6 +135,26 @@ Rows show approximate catalog size when a size filter is active and the local
 modification timestamp when a date filter is active, including in Explorer mode
 and accessible text. Painting performs no filesystem metadata reads. Creation
 timestamps are not stored or used by the modification date filters.
+
+Content search uses ripgrep's `grep-regex` and `grep-searcher` crates, with one
+literal matcher compiled per query and a reusable streaming buffer. It applies
+after ordinary ranking and exclusion checks, before a candidate enters the result
+heap. Candidates beyond the result limit remain eligible, so an early set of
+content mismatches cannot hide later matches. Contents are read afresh without a
+content index. Only allowlisted text/source/configuration extensions and common
+extensionless text names are eligible. Files must be regular, locally available
+and at most 64 MiB according to current filesystem metadata. BOM-marked UTF-16 is
+decoded automatically; NUL detection skips binary input. Office/PDF/media and
+executables are not parsed. Unreadable, deleted or unsupported files do not match.
+Read chunks check cancellation, and scanning runs with the Python GIL released.
+`contains:` requires nonblank text of at most 128 characters; regex/glob operators
+are literal. Repeated filters keep the last value. Python mode or an incompatible
+extension reports a clear error; it never silently drops the content constraint.
+
+The footer exposes Files, Folders and Apps toggles, also reachable with Alt+1,
+Alt+2 and Alt+3. Clicking the active toggle again or using Alt+0 restores All.
+Typed kind filters update toggle/menu state. Selecting a toggle removes typed
+`type:` overrides while preserving other query tokens and quoted values.
 
 Leading `%VARIABLE%` and `~`/`~/`/`~\` enter direct path navigation. An exact
 existing path returns the file/folder; a trailing separator lists its direct

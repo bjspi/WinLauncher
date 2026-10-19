@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 
 from pathscout.catalog.model import ItemKind
 from pathscout.search.query import SearchQuery
+from pathscout.search.query_parser import without_type_filter
 from pathscout.search.ranking import SearchHit
 from pathscout.ui.highlight import matched_positions
 from pathscout.ui.icons import ResultIcons
@@ -315,8 +316,9 @@ class LauncherWindow(QWidget):
         self.detail = self._label("detail")
         self.status = self._label("status")
         self.activity = self._label("activity")
-        for label in (self.detail, self.status, self.activity):
-            layout.addWidget(label)
+        layout.addWidget(self.detail)
+        layout.addWidget(self._build_footer())
+        layout.addWidget(self.activity)
         self._install_shortcuts()
         self._show_scope(None)
         self.resize(COMPACT_WIDTH + 2 * SHADOW_MARGIN, 0)
@@ -391,6 +393,36 @@ class LauncherWindow(QWidget):
         self.results.currentItemChanged.connect(self.update_detail)
         self.results.installEventFilter(self)
         return self.results
+
+    def _build_footer(self) -> QFrame:
+        self.footer = QFrame()
+        row = QHBoxLayout(self.footer)
+        row.setContentsMargins(22, 2, 14, 2)
+        row.setSpacing(4)
+        row.addWidget(self.status, 1)
+        self.kind_buttons: dict[ItemKind, QToolButton] = {}
+        for number, (kind, label, icon) in enumerate(
+            (
+                (ItemKind.FILE, "Files", QStyle.StandardPixmap.SP_FileIcon),
+                (ItemKind.FOLDER, "Folders", QStyle.StandardPixmap.SP_DirIcon),
+                (ItemKind.APP, "Apps", QStyle.StandardPixmap.SP_ComputerIcon),
+            ),
+            1,
+        ):
+            button = QToolButton()
+            button.setObjectName("kindFilter")
+            button.setIcon(self.style().standardIcon(icon))
+            button.setCheckable(True)
+            button.setAccessibleName(f"{label} only")
+            button.setToolTip(f"{label} only (Alt+{number}); click again for All")
+            button.clicked.connect(
+                lambda checked, kind=kind: self.set_kind(kind if checked else None)
+            )
+            row.addWidget(button)
+            self.kind_buttons[kind] = button
+            QShortcut(QKeySequence(f"Alt+{number}"), self).activated.connect(button.click)
+        QShortcut(QKeySequence("Alt+0"), self).activated.connect(lambda: self.set_kind(None))
+        return self.footer
 
     @staticmethod
     def _label(name: str) -> QLabel:
@@ -536,7 +568,7 @@ class LauncherWindow(QWidget):
         limit = EXPANDED_ROWS if self.expanded and not self.explorer_mode else layout.visible_rows
         rows = min(self.results.count(), limit)
         self.results.setFixedHeight(rows * layout.height + 2 * self.results.frameWidth())
-        below_bar = (self.empty, self.results, self.detail, self.status, self.activity)
+        below_bar = (self.empty, self.results, self.detail, self.footer, self.activity)
         self.divider.setVisible(any(not widget.isHidden() for widget in below_bar))
         if not self._resize_pending:
             # Labels are measured correctly only after Qt has polished them.
@@ -555,10 +587,23 @@ class LauncherWindow(QWidget):
 
     def set_kind(self, kind: ItemKind | None) -> None:
         self.kind = kind
-        for action, (_, action_kind) in zip(self.kind_actions, FILTERS, strict=True):
-            action.setChecked(action_kind == kind)
+        try:
+            text = without_type_filter(self.query.text())
+        except ValueError:
+            text = self.query.text()  # Keep an unfinished quoted query editable.
+        self.query.blockSignals(True)
+        self.query.setText(text)
+        self.query.blockSignals(False)
+        self.show_kind(kind)
         self.query_changed.emit()
         self.query.setFocus()
+
+    def show_kind(self, kind: ItemKind | None) -> None:
+        """Reflect the effective query kind without starting another search."""
+        for action, (_, action_kind) in zip(self.kind_actions, FILTERS, strict=True):
+            action.setChecked(action_kind == kind)
+        for button_kind, button in self.kind_buttons.items():
+            button.setChecked(button_kind == kind)
 
     def set_scope(self, folder: Path | None) -> None:
         self._show_scope(folder)

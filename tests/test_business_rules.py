@@ -188,17 +188,23 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertFalse(self.hits("vsc match:keyword"))
         self.assertEqual(parse_query("match:keyword").match_mode, MatchMode.KEYWORD)
 
-    def test_default_link_exclusion_hides_old_rows_and_prunes_on_refresh(self):
-        links = {self.file("Report Tool.lnk"), self.file("work/Report.LNK")}
+    def test_default_link_and_office_exclusions_hide_old_rows_and_prune_on_refresh(self):
+        links = {
+            self.file("Report Tool.lnk"),
+            self.file("work/Report.LNK"),
+            self.file("~$Report.docx"),
+        }
         kept = self.file("Report.txt")
         self.settings = replace(
             self.settings,
-            excluded_patterns=tuple(p for p in self.settings.excluded_patterns if p != "*.lnk"),
+            excluded_patterns=tuple(
+                p for p in self.settings.excluded_patterns if p not in ("*.lnk", "~$*")
+            ),
         )
         self.scan()
         self.assertEqual({hit.item.path for hit in self.hits("report")}, links | {kept})
         self.settings = replace(
-            self.settings, excluded_patterns=(*self.settings.excluded_patterns, "*.lnk")
+            self.settings, excluded_patterns=(*self.settings.excluded_patterns, "*.lnk", "~$*")
         )
         self.assertEqual([hit.item.path for hit in self.hits("report")], [kept])
         self.scan()

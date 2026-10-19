@@ -95,6 +95,11 @@ filters, refresh, an expanded view, settings, About and restart. Right-click a
 result → **Exclude this or a parent folder…** to drop a noisy folder tree; the
 picker shows how many catalog entries each choice removes.
 
+The three icons in the bottom bar restrict results to **Files / Folders / Apps**.
+Click the selected icon again for **All**, or use **Alt+1 / Alt+2 / Alt+3** and
+**Alt+0** for All. Typed `type:file`, `type:folder` and `type:app` filters update
+these buttons; choosing a button replaces any typed kind override.
+
 ## 🔍 Query language
 
 ```text
@@ -109,6 +114,7 @@ report after:2025-06-01 before:2025-06-30 sort:modified
 size:>5mb size:<1gb                    files larger than 5 MB and smaller than 1 GB
 report after:2026-02* before:2026-02*   reports modified during February 2026
 report !archive                         exclude paths containing "archive"
+report contains:"invoice number"        filter matching text files by their contents (Rust)
 report match:keyword score:match        no fuzzy matching, text relevance only
 report low:true                         include low-priority results
 %TEMP%                                 open the Windows temporary directory
@@ -132,6 +138,7 @@ report low:true                         include low-priority results
 | `after:2026-` · `after:2026-02*` | From January 1 or February 1, 2026 |
 | `before:2026-` · `before:2026-02*` | Through the end of 2026 or February 2026 |
 | `size:>5kb` · `size:<2mb` | File/application size; also `>=` and `<=` |
+| `contains:"some text"` | Literal, case-insensitive file contents; Rust backend required |
 | `low:true` | Show low-priority results alongside the others |
 
 Quoted text keeps spaces, apostrophes are literal and Windows paths such as
@@ -155,6 +162,15 @@ Size filters show approximate sizes on each result row; date filters show the
 stored modification date. These labels use catalog metadata without reading
 files while painting the UI.
 
+`contains:` reads supported text files on demand after filename/path filters and
+exclusions, before the final result limit. It builds no content index and runs on
+the search worker with cancellation. JSON, Markdown, TXT, logs, CSV, configuration
+and common source-code files are supported, including UTF-8 and BOM-marked UTF-16.
+Binary data, Office documents, PDFs, offline files and files over 64 MiB are
+skipped; unreadable or deleted files also do not match. PDFs with a text layer
+would require a separate text extractor; image-only PDFs would additionally need
+OCR. Narrow the filename, extension or folder first for large collections.
+
 Start with `%` to suggest known Windows directory variables (`%APPDATA%`,
 `%USERPROFILE%` and others). A trailing `/` or `\` lists direct children;
 `~/Doc` completes names below your user directory. These shortcuts work without
@@ -169,6 +185,7 @@ patterns with `*`, `?` and `[…]` wildcards, and marker file names. Defaults:
 - **Markers:** `.nobackup`, `.no-backup`, `pyvenv.cfg` (Python environments) and
   `conda-meta` (Conda environments) exclude their folder and everything below it.
 - **Windows shortcuts:** `*.lnk` excludes shortcuts, including existing catalog results.
+- **Office temporary files:** `~$*` excludes lock/owner files such as `~$Report.docx`.
 - **Folder names:** `.git*`, `.svn`, `.hg`, `__pycache__`, `.venv`, `venv`,
   `.ruff_cache`, `.mypy_cache`, `.dmypy_cache`, `.pytype`, `.pyre`, `.pyright`,
   `.basedpyright`, `.pylint.d`, `.pylint_cache`, `.lint_cache`, `.pytest_cache`,

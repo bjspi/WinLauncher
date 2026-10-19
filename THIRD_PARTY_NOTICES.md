@@ -32,6 +32,11 @@ cache. The following inventory is from `cargo metadata` for that lockfile:
 | `fancy-regex` 0.14.0 | MIT |
 | `fnmatch-rs` 0.1.0 | MIT |
 | `regex` 1.13.1 | MIT OR Apache-2.0 |
+| `grep-regex` 0.1.14, `grep-searcher` 0.1.17, `grep-matcher` 0.1.9 | Unlicense OR MIT |
+| `encoding_rs` 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
+| `encoding_rs_io` 0.1.8, `bstr` 1.13.1, `memmap2` 0.9.11 | MIT OR Apache-2.0 |
+| `core_detect` 1.0.0, `multiversion_no_op` 1.0.0, `scopeguard` 1.2.0, `simdutf8` 0.1.5 | MIT OR Apache-2.0 |
+| `log` 0.4.34, `serde_core` 1.0.229, `serde_derive` 1.0.229, `syn` 3.0.9 | MIT OR Apache-2.0 |
 | `rusqlite` 0.32.1, `libsqlite3-sys` 0.30.1 | MIT (SQLite itself is public domain) |
 | `unicode-normalization` 0.1.22 | MIT OR Apache-2.0 |
 | `unicode-ident` 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |

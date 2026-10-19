@@ -36,10 +36,14 @@ QToolButton#menuButton::menu-indicator { image: none; width: 0; }
 QToolButton#scope { background: #e6eef9; color: #2a5da8; border: 1px solid transparent; border-radius: 11px; padding: 3px 10px; font-size: 9pt; }
 QToolButton#scope:hover { background: #d8e6f7; }
 QToolButton#scope:focus { border-color: #2f7de1; }
+QToolButton#kindFilter { background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 4px 7px; }
+QToolButton#kindFilter:hover { background: #e9edf2; }
+QToolButton#kindFilter:checked { background: #dbe8f8; border-color: #9bbce8; }
+QToolButton#kindFilter:focus { border-color: #2f7de1; }
 QListWidget#results { background: transparent; border: 0; outline: none; padding: 0; }
 QLabel#message { color: #5f6670; padding: 14px 22px; }
 QLabel#detail { color: #5f6670; font-size: 9pt; padding: 6px 22px 0 22px; }
-QLabel#status { color: #9aa0a8; font-size: 8pt; padding: 4px 22px 0 22px; }
+QLabel#status { color: #9aa0a8; font-size: 8pt; padding: 0; }
 QLabel#activity { color: #a15c00; font-size: 8pt; padding: 4px 22px 0 22px; }
 QLabel#muted { color: #6b727c; font-size: 9pt; }
 QLineEdit, QSpinBox { background: #ffffff; border: 1px solid #cfd5dd; border-radius: 6px; padding: 5px 8px; selection-background-color: #bcd5f5; selection-color: #1f2329; }

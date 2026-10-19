@@ -276,6 +276,8 @@ def _require_structured_filters(where: _SqlFilter, query: SearchQuery) -> None:
         where.require(_LEARNED_ONLY)
     if query.kind:
         where.require("e.kind = ?", str(query.kind))
+    if query.content_text is not None:
+        where.require("e.kind = 'file'")
     if query.extensions:
         placeholders = ",".join("?" for _ in query.extensions)
         where.require(f"e.extension IN ({placeholders})", *query.extensions)

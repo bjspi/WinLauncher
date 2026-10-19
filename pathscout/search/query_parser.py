@@ -41,6 +41,7 @@ FILTER_NAMES = frozenset(
         "after",
         "before",
         "size",
+        "contains",
     }
 )
 _SIZE_UNITS = {"": 1, "b": 1, "byte": 1, "bytes": 1} | {
@@ -76,6 +77,21 @@ def _check_raw_text(text: str) -> None:
         raise ValueError(f"Use at most {MAX_QUERY_LENGTH} characters without control characters.")
 
 
+def without_type_filter(text: str) -> str:
+    """Remove typed kind overrides when a user selects a different UI filter."""
+    tokens = _split_tokens(text)
+    kept = [
+        token
+        for token in tokens
+        if normalize(token.partition(":")[0]) != "type" or ":" not in token
+    ]
+    if len(kept) == len(tokens):
+        return text
+    return " ".join(
+        f'"{token}"' if not token or any(c.isspace() for c in token) else token for token in kept
+    )
+
+
 def _split_tokens(text: str) -> list[str]:
     lexer = shlex.shlex(text, posix=True)
     lexer.whitespace_split = True
@@ -107,6 +123,7 @@ class _QueryDraft:
     modified_before: float | None = None
     min_size: int | None = None
     max_size: int | None = None
+    content_text: str | None = None
 
     def add(self, token: str) -> None:
         if not token:
@@ -151,6 +168,10 @@ class _QueryDraft:
                 self.min_size = max(self.min_size or 0, lower)
             if upper is not None:
                 self.max_size = upper if self.max_size is None else min(self.max_size, upper)
+        elif name == "contains":
+            if not value.strip() or len(value) > MAX_TERM_LENGTH:
+                raise ValueError(f"contains: expects 1 to {MAX_TERM_LENGTH} characters of text.")
+            self.content_text = value
         else:
             raise AssertionError(f"FILTER_NAMES lists {name!r} without a parser.")
 
@@ -171,6 +192,7 @@ class _QueryDraft:
             modified_before=self.modified_before,
             min_size=self.min_size,
             max_size=self.max_size,
+            content_text=self.content_text,
             score_mode=self.score_mode,
         )
 

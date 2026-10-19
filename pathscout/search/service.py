@@ -132,10 +132,15 @@ class SearchService:
         priorities = settings.priorities()
         ranker = Ranker(query)
         native = select_native(settings.search_backend)
+        if query.content_text is not None and native is None:
+            raise ValueError(
+                "contains: requires the Rust backend. Select Rust in Settings and install its current extension."
+            )
         logger.info(
-            "Search started: requested_backend=%s engine=%s",
+            "Search started: requested_backend=%s engine=%s content_filter=%s",
             settings.search_backend,
             "rust" if native is not None else "python",
+            query.content_text is not None,
         )
         if native is not None:
             try:
@@ -154,6 +159,11 @@ class SearchService:
                 hits = [ranking.hit(candidate.to_item()) for candidate, ranking in kept]
                 return _hide_fallbacks_unless_needed(hits, query)
             except Exception as exc:
+                if query.content_text is not None:
+                    logger.exception("Native content search failed")
+                    raise RuntimeError(
+                        f"contains: could not complete the Rust content search: {exc}"
+                    ) from exc
                 log_native_failure(exc)
         order = ResultOrder(query, ranker)
         best = _BestHits(settings.max_results)

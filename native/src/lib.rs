@@ -1,5 +1,6 @@
 //! Optional search acceleration. Python owns SQL, exclusions and hit construction.
 
+mod content;
 mod fuzzy;
 mod heap;
 mod matching;
@@ -18,6 +19,7 @@ use pyo3::types::{PyDict, PyTuple};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OpenFlags};
 
+use content::ContentFilter;
 use heap::{BestHits, Kept};
 use priority::Policy;
 use query::{Candidate, Query};
@@ -54,6 +56,7 @@ struct Search<'a> {
     allows: &'a Py<PyAny>,
     cancel: &'a CancelFlag,
     best: BestHits,
+    content: Option<ContentFilter>,
 }
 
 impl<'a> Search<'a> {
@@ -62,14 +65,21 @@ impl<'a> Search<'a> {
         priorities: &'a Policy,
         allows: &'a Py<PyAny>,
         cancel: &'a CancelFlag,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let content = query
+            .content_text
+            .as_deref()
+            .map(ContentFilter::new)
+            .transpose()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(Self {
             query,
             priorities,
             allows,
             cancel,
             best: BestHits::new(query.limit),
-        }
+            content,
+        })
     }
 
     fn consider(&mut self, index: usize, row: Candidate) -> PyResult<()> {
@@ -83,7 +93,7 @@ impl<'a> Search<'a> {
         {
             return Ok(());
         }
-        let Some(ranking) = rank::rank(self.query, &row, &priority) else {
+        let Some(mut ranking) = rank::rank(self.query, &row, &priority) else {
             return Ok(());
         };
         let key = heap::key(self.query, &row, &ranking);
@@ -96,6 +106,16 @@ impl<'a> Search<'a> {
                 .extract::<bool>(py)
         })?;
         if allowed {
+            if self
+                .content
+                .as_mut()
+                .is_some_and(|content| !content.matches(&row, self.cancel))
+            {
+                return Ok(());
+            }
+            if self.content.is_some() {
+                ranking.reasons.push("Content contains query".into());
+            }
             self.best.add(Kept {
                 key,
                 index,
@@ -146,7 +166,7 @@ fn rank_rows(
                 priorities.validate_candidate(row)?;
             }
         }
-        let mut search = Search::new(&query, &priorities, &allows, &cancel);
+        let mut search = Search::new(&query, &priorities, &allows, &cancel)?;
         for (index, candidate) in candidates.into_iter().enumerate() {
             if cancel.is_set() {
                 return Ok(Vec::new());
@@ -276,7 +296,7 @@ fn search_sqlite(
         }
     }
     let mut rows = statement.raw_query();
-    let mut search = Search::new(query, priorities, allows, cancel);
+    let mut search = Search::new(query, priorities, allows, cancel)?;
     let mut index = 0;
     loop {
         if cancel.is_set() {
@@ -338,7 +358,7 @@ fn rank_sqlite(
 
 #[pymodule]
 fn pathscout_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add("API_VERSION", 2)?;
+    module.add("API_VERSION", 3)?;
     module.add("UNICODE_VERSION", unicode::UNICODE_VERSION)?;
     module.add_class::<CancelFlag>()?;
     module.add_function(wrap_pyfunction!(rank_rows, module)?)?;

@@ -24,6 +24,7 @@ pub(crate) struct Query {
     pub modified_before: Option<f64>,
     pub min_size: Option<i64>,
     pub max_size: Option<i64>,
+    pub content_text: Option<String>,
     pub basename_only: bool,
     pub fuzzy: bool,
     pub combined: bool,
@@ -45,6 +46,7 @@ impl Query {
             modified_before: required(dict, "modified_before")?,
             min_size: required(dict, "min_size")?,
             max_size: required(dict, "max_size")?,
+            content_text: required(dict, "content_text")?,
             basename_only: required(dict, "basename_only")?,
             fuzzy: required(dict, "fuzzy")?,
             combined: required(dict, "combined")?,
@@ -60,6 +62,11 @@ impl Query {
             || query.min_size.is_some_and(|v| v < 0)
             || query.max_size.is_some_and(|v| v < 0)
             || matches!((query.min_size, query.max_size), (Some(lower), Some(upper)) if lower > upper)
+            || query.content_text.as_ref().is_some_and(|text| {
+                text.trim().is_empty()
+                    || text.chars().count() > 128
+                    || text.chars().any(|c| c < ' ')
+            })
         {
             return Err(PyValueError::new_err("Invalid native query"));
         }
@@ -68,6 +75,7 @@ impl Query {
 
     pub fn accepts(&self, row: &Candidate) -> bool {
         if self.kind.as_ref().is_some_and(|kind| *kind != row.kind)
+            || (self.content_text.is_some() && row.kind != "file")
             || (!self.extensions.is_empty() && !self.extensions.contains(&row.extension))
             || self
                 .scope_key

@@ -66,6 +66,7 @@ DEFAULT_EXCLUDED_PATTERNS = (
     ".idea",
     # Windows
     "*.lnk",
+    "~$*",  # Office lock/owner files.
     "$Recycle.Bin",
     "System Volume Information",
 )

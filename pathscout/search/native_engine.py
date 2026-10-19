@@ -25,7 +25,7 @@ from pathscout.search.candidates import (
 from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking
 
-API_VERSION = 2
+API_VERSION = 3
 _LOGGER = logging.getLogger(__name__)
 _LOGGED: set[str] = set()
 _LOG_LOCK = threading.Lock()
@@ -93,6 +93,7 @@ def query_spec(query: SearchQuery, ranker: Ranker, limit: int) -> dict[str, obje
         "modified_before": query.modified_before,
         "min_size": query.min_size,
         "max_size": query.max_size,
+        "content_text": query.content_text,
         "basename_only": query.basename_only,
         "fuzzy": ranker.fuzzy,
         "combined": ranker.combined,

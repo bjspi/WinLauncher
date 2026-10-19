@@ -250,6 +250,40 @@ class UiFlowTest(unittest.TestCase):
         self.window.clear_scope.click()
         self.assertIsNone(self.window.scope)
 
+    def test_footer_type_buttons_shortcuts_and_typed_filters_agree(self):
+        window, search = self.window, self.controller.search
+        window.query.setText('report type:app contains:"API key"')
+        self.assertEqual(search.current_query().kind, ItemKind.APP)
+        self.assertTrue(window.kind_buttons[ItemKind.APP].isChecked())
+        window.kind_buttons[ItemKind.FILE].click()
+        query = search.current_query()
+        self.assertEqual(query.kind, ItemKind.FILE)
+        self.assertEqual(query.content_text, "API key")
+        self.assertEqual(query.terms, ("report",))
+        self.assertNotIn("type:", window.query.text())
+        self.assertIs(window.focusWidget(), window.query)
+        window.kind_buttons[ItemKind.FILE].click()
+        self.assertIsNone(search.current_query().kind)
+        window.activateWindow()
+        QTest.qWait(20)
+        for key, expected in (
+            (Qt.Key.Key_1, ItemKind.FILE),
+            (Qt.Key.Key_2, ItemKind.FOLDER),
+            (Qt.Key.Key_3, ItemKind.APP),
+            (Qt.Key.Key_0, None),
+        ):
+            QTest.keyClick(window.query, key, Qt.KeyboardModifier.AltModifier)
+            self.assertEqual(search.current_query().kind, expected)
+            self.assertEqual(
+                sum(b.isChecked() for b in window.kind_buttons.values()), int(expected is not None)
+            )
+        window.query.setText("report type:folder")
+        self.assertEqual(search.current_query().kind, ItemKind.FOLDER)
+        self.assertTrue(window.kind_buttons[ItemKind.FOLDER].isChecked())
+        window.set_kind(None)
+        self.assertIsNone(search.current_query().kind)
+        self.assertFalse(window.footer.isHidden())
+
     def test_menu_actions_reach_their_intents(self):
         requests = []
         for signal, name in (
