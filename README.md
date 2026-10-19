@@ -45,8 +45,8 @@ or searches the folder you are in when you simply start typing in Explorer.
 ## 🚀 Quick start
 
 ```powershell
-git clone https://github.com/<owner>/pathscout.git
-cd pathscout
+git clone https://github.com/bjspi/PathScout.git
+cd PathScout
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\python.exe -m pathscout

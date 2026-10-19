@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 
 
 class Palette:
@@ -78,23 +78,57 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 def app_icon() -> QIcon:
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 128, 256):
-        icon.addPixmap(_magnifier(size))
+        icon.addPixmap(_folder_scout(size))
     return icon
 
 
-def _magnifier(size: int) -> QPixmap:
-    """PathScout's icon: a magnifier on a rounded square, drawn on a 64-unit grid."""
+def _gradient(start: QPointF, end: QPointF, *stops: tuple[float, str]) -> QLinearGradient:
+    gradient = QLinearGradient(start, end)
+    for position, color in stops:
+        gradient.setColorAt(position, QColor(color))
+    return gradient
+
+
+def _folder_outline() -> QPainterPath:
+    """An open folder outline: left side, tab, top edge, right side, part of the bottom."""
+    path = QPainterPath(QPointF(19, 47))
+    path.lineTo(17, 47)
+    path.quadTo(13, 47, 13, 43)
+    path.lineTo(13, 21)
+    path.quadTo(13, 17, 17, 17)
+    path.lineTo(25, 17)
+    path.quadTo(27, 17, 28.5, 19)
+    path.lineTo(30.5, 22)
+    path.lineTo(47, 22)
+    path.quadTo(51, 22, 51, 26)
+    path.lineTo(51, 41)
+    return path
+
+
+def _folder_scout(size: int) -> QPixmap:
+    """PathScout's icon: a neon folder outline with a magnifier, on a 64-unit grid."""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.scale(size / 64, size / 64)
-    painter.setBrush(QColor("#2f7de1"))
+    background = _gradient(QPointF(0, 0), QPointF(0, 64), (0, "#1b2338"), (1, "#0a0e1a"))
+    painter.setPen(QPen(QColor("#2a3552"), 0.8))
+    painter.setBrush(background)
+    painter.drawRoundedRect(QRectF(2, 2, 60, 60), 15, 15)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawRoundedRect(1, 1, 62, 62, 15, 15)
+    painter.setBrush(QColor("#17213b"))
+    painter.drawRoundedRect(QRectF(17.5, 27, 26, 18), 3, 3)  # Front of the folder.
+    neon = _gradient(
+        QPointF(51, 17), QPointF(13, 47), (0, "#2fe8f0"), (0.5, "#3b8bf6"), (1, "#8b5cf6")
+    )
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(QColor("#ffffff"), 5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-    painter.drawEllipse(15, 13, 27, 27)
-    painter.drawLine(38, 37, 50, 50)
+    painter.setPen(QPen(neon, 3.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    painter.drawPath(_folder_outline())
+    lens = _gradient(QPointF(26, 33), QPointF(46, 54), (0, "#38bdf8"), (1, "#7c5cf6"))
+    pen = QPen(lens, 4.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.drawEllipse(QPointF(34, 41), 8.5, 8.5)
+    painter.drawLine(QPointF(40.5, 47.5), QPointF(47.5, 54.5))
     painter.end()
     return pixmap
