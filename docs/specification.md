@@ -80,7 +80,7 @@ backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 | `annual report` | Every term must match the name or literal full path |
 | `"annual report"` | One term containing a space |
 | `*.json`, `report?.json`, `report[0-9].json` | Whole-filename fnmatch patterns, including the extension |
-| `type:file`, `type:folder`, `type:app` | Restrict item kind; overrides the UI kind button |
+| `type:file`, `type:folder`, `type:dir`, `type:app` | Restrict item kind; overrides the UI kind button. `t:` is shorthand for `type:` |
 | `ext:pdf,txt` | Any listed extension, case-insensitive, optional leading dots |
 | `in:"D:\Work Projects"` | Restrict to descendants of this absolute folder |
 | `path:projects/reports` | Match parent folder components in that order; intervening components allowed |
@@ -154,7 +154,7 @@ extension reports a clear error; it never silently drops the content constraint.
 The footer exposes Files, Folders and Apps toggles, also reachable with Alt+1,
 Alt+2 and Alt+3. Clicking the active toggle again or using Alt+0 restores All.
 Typed kind filters update toggle/menu state. Selecting a toggle removes typed
-`type:` overrides while preserving other query tokens and quoted values.
+`type:`/`t:` overrides while preserving other query tokens and quoted values.
 
 Leading `%VARIABLE%` and `~`/`~/`/`~\` enter direct path navigation. An exact
 existing path returns the file/folder; a trailing separator lists its direct

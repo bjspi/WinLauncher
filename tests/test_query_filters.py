@@ -1,13 +1,42 @@
-"""Size comparisons and partial dates retain precise inclusive byte/day bounds."""
+"""Query aliases and size/date filters keep their canonical meaning and bounds."""
 
 from __future__ import annotations
 
 import unittest
 
-from pathscout.search.query_parser import parse_query
+from pathscout.search.query_parser import parse_query, without_type_filter
 
 
 class QueryFiltersTest(unittest.TestCase):
+    def test_type_aliases_share_kind_history_and_ui_replacement(self):
+        for prefix in ("type", "t", "T"):
+            for value, canonical in (
+                ("file", "file"),
+                ("folder", "folder"),
+                ("dir", "folder"),
+                ("DIR", "folder"),
+                ("app", "app"),
+            ):
+                with self.subTest(prefix=prefix, value=value):
+                    text = f'report {prefix}:{value} contains:"API key"'
+                    query = parse_query(text)
+                    expected = parse_query(f'report type:{canonical} contains:"API key"')
+                    self.assertEqual(query, expected)
+                    self.assertEqual(query.history_key, expected.history_key)
+                    self.assertEqual(
+                        parse_query(without_type_filter(text)),
+                        parse_query('report contains:"API key"'),
+                    )
+        self.assertEqual(parse_query("type:file t:dir"), parse_query("type:folder"))
+        self.assertEqual(parse_query("t:dir type:app"), parse_query("type:app"))
+        self.assertEqual(without_type_filter("t typed:dir"), "t typed:dir")
+        text = r"T:\Work t:dir"
+        self.assertEqual(parse_query(text), parse_query(r"T:\Work type:folder"))
+        self.assertEqual(without_type_filter(text), r"T:\Work")
+        for text in ("t:", "t:unknown"):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "t: expects"):
+                parse_query(text)
+
     def test_size_units_decimals_spacing_and_strict_boundaries(self):
         for text, lower, upper in (
             ("size:>5kb", 5121, None),

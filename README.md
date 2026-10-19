@@ -35,7 +35,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
 | ⌨️ **Keyboard first** | <kbd>Enter</kbd> opens, <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> opens a numbered result, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> shows it in its folder. |
-| 🔒 **Private** | No telemetry, no network service, no file contents read. Everything stays in `%USERPROFILE%\.PathScout`. |
+| 🔒 **Private** | No telemetry or network service. Content searches read files locally on demand. Everything stays in `%USERPROFILE%\.PathScout`. |
 | ⬆️ **Self-updating** | Running from a git checkout? PathScout notices new commits and updates with one click. |
 
 <div align="center">
@@ -97,8 +97,9 @@ picker shows how many catalog entries each choice removes.
 
 The three icons in the bottom bar restrict results to **Files / Folders / Apps**.
 Click the selected icon again for **All**, or use **Alt+1 / Alt+2 / Alt+3** and
-**Alt+0** for All. Typed `type:file`, `type:folder` and `type:app` filters update
+**Alt+0** for All. Typed `type:file`, `type:folder` (or `type:dir`) and `type:app` filters update
 these buttons; choosing a button replaces any typed kind override.
+Use `t:` as shorthand for `type:`, for example `t:dir`, `t:file` or `t:app`.
 
 ## 🔍 Query language
 
@@ -125,7 +126,7 @@ report low:true                         include low-priority results
 
 | Filter | Meaning |
 | --- | --- |
-| `type:file` · `type:folder` · `type:app` | Item kind |
+| `type:file` · `type:folder` · `type:dir` · `type:app` | Item kind; `t:` is shorthand for `type:` |
 | `ext:pdf,txt` | Extensions (repeatable) |
 | `in:"C:\Folder"` | Descendants of an absolute folder |
 | `path:a/b` | Parent folders in this order (repeatable) |
@@ -327,6 +328,15 @@ they pass, attaching those packages and a clean source ZIP. The tag must match
 `native/Cargo.toml` (for example `v0.1.0`). Install both wheels from a release
 with `python -m pip install <python-wheel> <native-wheel>` to enable Rust without
 installing a compiler. Source ZIPs retain `native/` for local builds.
+
+For example, publish version 0.1.0 from a clean, committed checkout with:
+
+```powershell
+git tag -a v0.1.0 -m "PathScout 0.1.0"
+git push origin v0.1.0
+```
+
+The finished release appears under [Releases](https://github.com/bjspi/PathScout/releases).
 
 📚 [Architecture](docs/architecture.md) ·
 [Specification](docs/specification.md) ·

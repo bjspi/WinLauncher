@@ -277,11 +277,12 @@ class UiFlowTest(unittest.TestCase):
             self.assertEqual(
                 sum(b.isChecked() for b in window.kind_buttons.values()), int(expected is not None)
             )
-        window.query.setText("report type:folder")
-        self.assertEqual(search.current_query().kind, ItemKind.FOLDER)
-        self.assertTrue(window.kind_buttons[ItemKind.FOLDER].isChecked())
-        window.set_kind(None)
-        self.assertIsNone(search.current_query().kind)
+        for text in ("report type:folder", "report type:dir", "report t:dir"):
+            window.query.setText(text)
+            self.assertEqual(search.current_query().kind, ItemKind.FOLDER)
+            self.assertTrue(window.kind_buttons[ItemKind.FOLDER].isChecked())
+            window.set_kind(None)
+            self.assertIsNone(search.current_query().kind)
         self.assertFalse(window.footer.isHidden())
 
     def test_menu_actions_reach_their_intents(self):

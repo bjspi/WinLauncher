@@ -30,6 +30,7 @@ _Choice = TypeVar("_Choice", bound=StrEnum)
 FILTER_NAMES = frozenset(
     {
         "type",
+        "t",
         "ext",
         "in",
         "path",
@@ -83,7 +84,9 @@ def without_type_filter(text: str) -> str:
     kept = [
         token
         for token in tokens
-        if normalize(token.partition(":")[0]) != "type" or ":" not in token
+        if normalize(token.partition(":")[0]) not in ("type", "t")
+        or ":" not in token
+        or ntpath.isabs(token)
     ]
     if len(kept) == len(tokens):
         return text
@@ -129,7 +132,7 @@ class _QueryDraft:
         if not token:
             return  # An empty quoted string ("") is not a search term.
         name, separator, value = token.partition(":")
-        if separator and normalize(name) in FILTER_NAMES:
+        if separator and normalize(name) in FILTER_NAMES and not ntpath.isabs(token):
             self._add_filter(normalize(name), value)
         elif token.startswith(EXCLUSION_PREFIX) and len(token) > len(EXCLUSION_PREFIX):
             self.excluded_terms.append(normalize(token[len(EXCLUSION_PREFIX) :]))
@@ -138,8 +141,10 @@ class _QueryDraft:
 
     def _add_filter(self, name: str, value: str) -> None:
         """Each filter is one assignment; repeated list filters accumulate."""
-        if name == "type":
-            self.kind = _parse_choice(ItemKind, name, value)
+        if name in ("type", "t"):
+            self.kind = _parse_choice(
+                ItemKind, name, "folder" if normalize(value) == "dir" else value
+            )
         elif name == "ext":
             self.extensions.extend(_parse_extensions(value))
         elif name == "in":
