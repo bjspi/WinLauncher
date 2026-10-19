@@ -198,6 +198,47 @@ on. Read the [architecture notes](docs/architecture.md) for the details.
 
 ## 🧪 Development
 
+### Optional native acceleration
+
+The separate `pathscout-native` package accelerates matching, ranking and SQLite
+candidate reads. The normal Python installation needs no Rust dependencies and
+continues to work when the extension is absent or incompatible.
+
+Use Python 3.12, Rust stable for `x86_64-pc-windows-msvc`, and Visual Studio Build
+Tools with **Desktop development with C++**:
+
+```powershell
+python -m pip install maturin
+python -m pip install ./native
+python -c "import pathscout_native; print(pathscout_native.API_VERSION)"
+# Rebuild after changing native sources or updating this checkout:
+python -m pip install --force-reinstall ./native
+# Build an abi3 wheel for distribution:
+python -m maturin build --release --locked --manifest-path native/Cargo.toml --out dist
+```
+
+`PATHSCOUT_SEARCH_ENGINE=auto` selects native when available (the default);
+`python` forces the reference engine; `native` requires a compatible extension.
+Execution errors log once and retry the search in Python. Unicode tables currently
+target Python's Unicode 15.0 (Python 3.12); other Unicode versions use Python.
+Filename regex rules support a checked ASCII subset, including lookarounds and
+backreferences. Unsupported regex syntax or applicable non-ASCII filenames also
+use Python for the whole search.
+
+For development in a virtual environment, `cd native; python -m maturin develop
+--release` installs directly into that environment. Compare both native phases:
+
+```powershell
+python tools\benchmark.py --engine python --entries 50000 --directories 1000
+python tools\benchmark.py --engine native --phase rows --entries 50000 --directories 1000
+python tools\benchmark.py --engine native --phase sqlite --entries 50000 --directories 1000
+cargo test --manifest-path native/Cargo.toml --locked
+```
+
+`PATHSCOUT_NATIVE_PHASE=rows` keeps SQLite reads in Python; the default `sqlite`
+phase streams candidates in Rust. See [validation](docs/validation.md) for measured
+performance and parity coverage.
+
 ```powershell
 python -m unittest discover -s tests -v          # unit, UI and integration tests
 python tools\smoke_test.py --native              # real Qt flow + hook attach/detach
@@ -220,8 +261,9 @@ real settings, Startup folder or files.
 - Windows only: the keyboard hook, Explorer integration, folder watching and
   autostart use Windows APIs.
 - Indexes by walking folders and watching changes, not by reading the NTFS
-  journal; very large drive-wide catalogs build slower, and one-letter searches
-  over tens of thousands of items take around half a second.
+  journal; very large drive-wide catalogs build slower. The Python engine takes
+  around half a second for broad one-letter searches over 50,000 entries; optional
+  native acceleration reduces that substantially (see validation).
 - Input methods (IME), Windows 11 tab edge cases, high-DPI multi-monitor setups and
   screen readers still need more real-world testing.
 

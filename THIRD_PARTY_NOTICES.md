@@ -16,3 +16,38 @@ texts and notices, preserve dynamic library replacement/relinking rights require
 by the chosen license, and review the licenses of the exact Qt modules included.
 An MIT license for this project's code does not relicense Qt or other dependencies.
 No frozen executable is currently distributed by this project.
+
+## Optional Rust search extension
+
+`pathscout-native` is a separate optional distribution. Its dependency versions
+are locked in `native/Cargo.lock`. The native wheel contains compiled Rust code
+and bundled SQLite (FTS5 enabled); it does not add dependencies to the Python
+package. Crate source and license texts are available at
+`https://crates.io/crates/<crate>/<version>` and in the corresponding Cargo source
+cache. The following inventory is from `cargo metadata` for that lockfile:
+
+| Crates | License |
+| --- | --- |
+| `pyo3`, `pyo3-build-config`, `pyo3-ffi`, `pyo3-macros`, `pyo3-macros-backend` 0.23.5 | MIT OR Apache-2.0 |
+| `fancy-regex` 0.14.0 | MIT |
+| `rusqlite` 0.32.1, `libsqlite3-sys` 0.30.1 | MIT (SQLite itself is public domain) |
+| `unicode-normalization` 0.1.22 | MIT OR Apache-2.0 |
+| `unicode-ident` 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
+| `ahash` 0.8.12, `autocfg` 1.5.1, `bit-set` 0.8.0, `bit-vec` 0.8.0, `bitflags` 2.13.2 | MIT OR Apache-2.0 |
+| `cc` 1.9.0, `cfg-if` 1.0.5, `find-msvc-tools` 0.1.15, `hashbrown` 0.14.5, `hashlink` 0.9.1 | MIT OR Apache-2.0 |
+| `fallible-iterator` 0.3.0, `fallible-streaming-iterator` 0.1.9, `heck` 0.5.0, `indoc` 2.0.8 | MIT OR Apache-2.0 |
+| `libc` 0.2.191, `once_cell` 1.21.4, `pkg-config` 0.3.34, `portable-atomic` 1.15.0 | MIT OR Apache-2.0 |
+| `proc-macro2` 1.0.107, `quote` 1.0.47, `regex-automata` 0.4.18, `regex-syntax` 0.8.11 | MIT OR Apache-2.0 |
+| `rustversion` 1.0.23, `shlex` 2.0.1, `smallvec` 1.16.3, `syn` 2.0.119 | MIT OR Apache-2.0 |
+| `unindent` 0.2.4, `vcpkg` 0.2.15, `version_check` 0.9.5 | MIT OR Apache-2.0 |
+| `aho-corasick` 1.1.5, `memchr` 2.8.3 | Unlicense OR MIT |
+| `memoffset` 0.9.1 | MIT |
+| `target-lexicon` 0.12.16 | Apache-2.0 WITH LLVM-exception |
+| `tinyvec` 1.13.3 | Zlib OR Apache-2.0 OR MIT |
+| `zerocopy`, `zerocopy-derive` 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT |
+
+The generated Unicode casefold and character-property tables use Python's
+Unicode 15.0 database. Unicode data carries the
+[Unicode data license](https://www.unicode.org/license.txt); Python's interpreter
+and database implementation carry the Python license linked above. Regenerate
+the tables with `native/tools/generate_unicode.py` using Python 3.12.

@@ -112,6 +112,38 @@ beat the weakest kept hit is skipped before text matching, and disk-based marker
 checks run only for hits that would be kept. Empty default queries (optionally with a type filter) read only
 learned items through the path identity index.
 
+## Optional Rust search engine
+
+`search/native_engine.py` selects `auto`, `python` or `native` through
+`PATHSCOUT_SEARCH_ENGINE`. It checks `API_VERSION` and `UNICODE_VERSION`, prepares
+one query/priority specification from the Python domain objects, and reconstructs
+only the kept `Candidate`/`Ranking` objects. The Python loop remains the reference
+and fallback. Missing or stale extensions and execution failures are logged once;
+an explicit native request fails when no compatible module is available.
+
+The separate `native/` maturin distribution exports `rank_rows` (Python-fetched
+rows) and `rank_sqlite` (read-only SQLite, bundled FTS5, WAL, 15-second busy
+timeout). Both share matching, priorities, ranking, bounds and a bounded heap.
+`candidate_sql` remains the sole SQL builder. Literal and fuzzy statements are
+combined with ordered `UNION ALL`, renamed named parameters and one heap; the
+native SQLite reader holds one read transaction. No indexing or UI code moves.
+
+Rust releases the GIL during ranking and SQLite reads. It reacquires it only for
+the exclusion callback, after the same eligibility, bound and heap checks as
+Python. Atomic cancellation is checked on every candidate and SQLite's progress
+handler; a short-lived bridge forwards the existing Python `Event` every 5 ms.
+Phase-one row conversion yields the GIL in batches. Cancellation returns no hits.
+
+Unicode NFC is pinned to Unicode 15.0; generated full-casefold and character-class
+tables come from the reference Python interpreter, with all-scalar checksum tests.
+The Unicode version guard prevents a different interpreter database from silently
+changing behavior. Sorting uses direct full casefold without NFC, as Python does.
+Python-specific filename regex syntax and applicable non-ASCII filenames trigger
+whole-search fallback; supported ASCII regexes use `fancy-regex`. Regex candidates
+are preflighted before any exclusion callback, so fallback does not repeat disk
+probes. Parity tests compare scores, bands, reasons, order and callback sequence
+against the Python loop and exercise both extension entry points.
+
 ## Threads, scheduling and cancellation
 
 Qt widgets live on the GUI thread. `BackgroundTasks` runs work on separate search

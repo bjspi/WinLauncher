@@ -1,0 +1,37 @@
+name: Native search parity
+
+on:
+  push:
+    paths: ['native/**', 'pathscout/search/**', 'tests/test_native_parity.py', '.github/workflows/native.yml']
+  pull_request:
+    paths: ['native/**', 'pathscout/search/**', 'tests/test_native_parity.py', '.github/workflows/native.yml']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install -e . maturin ruff
+      - run: cargo test --manifest-path native/Cargo.toml --locked
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --locked --manifest-path native/Cargo.toml --out dist
+      - run: python -m pip install (Get-ChildItem dist/pathscout_native-*.whl).FullName
+      - run: python -m unittest discover -s tests -v
+        env:
+          PATHSCOUT_SEARCH_ENGINE: auto
+      - run: python -m unittest discover -s tests -v
+        env:
+          PATHSCOUT_SEARCH_ENGINE: python
+      - run: python -m ruff check pathscout tests tools native/tools
+      - run: python -m ruff format --check pathscout tests tools native/tools
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pathscout-native-windows
+          path: dist/pathscout_native-*.whl
