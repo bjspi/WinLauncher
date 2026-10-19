@@ -1,0 +1,11 @@
+.analysis/
+.runtime/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ruff_cache/
+build/
+dist/
+*.sqlite3*
+*.log

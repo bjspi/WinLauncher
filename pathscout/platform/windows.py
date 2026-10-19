@@ -1,0 +1,252 @@
+"""Pointer-safe Win32 bindings shared by the keyboard and Explorer adapters."""
+
+from __future__ import annotations
+
+import ctypes
+from ctypes import wintypes
+from dataclasses import dataclass
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+LRESULT = ctypes.c_ssize_t
+ULONG_PTR = ctypes.c_size_t
+HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+# Hooks and messages
+WH_KEYBOARD_LL = 13
+WM_QUIT = 0x0012
+WM_KEYDOWN = 0x0100
+WM_SYSKEYDOWN = 0x0104
+WM_HOTKEY = 0x0312
+LLKHF_INJECTED = 0x10
+LLKHF_LOWER_IL_INJECTED = 0x02
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_NOREPEAT = 0x4000
+PM_NOREMOVE = 0x0000
+
+# Virtual keys
+VK_SHIFT = 0x10
+VK_CONTROL = 0x11
+VK_MENU = 0x12
+VK_CAPITAL = 0x14
+VK_SPACE = 0x20
+VK_LWIN = 0x5B
+VK_RWIN = 0x5C
+VK_LSHIFT = 0xA0
+VK_RSHIFT = 0xA1
+KEY_DOWN_BIT = 0x8000
+KEY_TOGGLED_BIT = 0x0001
+KEY_STATE_DOWN = 0x80
+TOUNICODE_KEEP_KEYBOARD_STATE = 0x4  # Windows 10 1607+: do not consume dead keys.
+
+GUI_INMOVESIZE = 0x02
+GUI_INMENUMODE = 0x04
+GUI_SYSTEMMENUMODE = 0x08
+GUI_POPUPMENUMODE = 0x10
+GUI_INTERACTION_FLAGS = GUI_INMOVESIZE | GUI_INMENUMODE | GUI_SYSTEMMENUMODE | GUI_POPUPMENUMODE
+EXPLORER_WINDOW_CLASSES = ("CabinetWClass", "ExploreWClass")
+FILE_VIEW_FOCUS_CLASSES = ("DirectUIHWND", "SysListView32", "SHELLDLL_DefView")
+FILE_VIEW_CLASS = "SHELLDLL_DefView"
+TAB_CLASS = "ShellTabWindowClass"
+MAX_FOCUS_ANCESTORS = 20
+
+
+class KeyboardData(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class GuiThreadInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hwndActive", wintypes.HWND),
+        ("hwndFocus", wintypes.HWND),
+        ("hwndCapture", wintypes.HWND),
+        ("hwndMenuOwner", wintypes.HWND),
+        ("hwndMoveSize", wintypes.HWND),
+        ("hwndCaret", wintypes.HWND),
+        ("rcCaret", wintypes.RECT),
+    ]
+
+
+def _bind(library, name, arguments, result):
+    function = getattr(library, name)
+    function.argtypes, function.restype = arguments, result
+
+
+_HWND, _UINT, _INT = wintypes.HWND, wintypes.UINT, ctypes.c_int
+_MSG_POINTER = ctypes.POINTER(wintypes.MSG)
+_bind(
+    user32,
+    "SetWindowsHookExW",
+    [_INT, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD],
+    wintypes.HHOOK,
+)
+_bind(user32, "CallNextHookEx", [wintypes.HHOOK, _INT, wintypes.WPARAM, wintypes.LPARAM], LRESULT)
+_bind(user32, "UnhookWindowsHookEx", [wintypes.HHOOK], wintypes.BOOL)
+_bind(user32, "GetForegroundWindow", [], _HWND)
+_bind(user32, "SetForegroundWindow", [_HWND], wintypes.BOOL)
+_bind(user32, "GetParent", [_HWND], _HWND)
+_bind(user32, "GetClassNameW", [_HWND, wintypes.LPWSTR, _INT], _INT)
+_bind(user32, "GetGUIThreadInfo", [wintypes.DWORD, ctypes.POINTER(GuiThreadInfo)], wintypes.BOOL)
+_bind(user32, "FindWindowExW", [_HWND, _HWND, wintypes.LPCWSTR, wintypes.LPCWSTR], _HWND)
+_bind(user32, "IsWindowVisible", [_HWND], wintypes.BOOL)
+_bind(user32, "GetWindowRect", [_HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL)
+_bind(user32, "GetAsyncKeyState", [_INT], ctypes.c_short)
+_bind(user32, "GetKeyState", [_INT], ctypes.c_short)
+_bind(user32, "GetWindowThreadProcessId", [_HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD)
+_bind(user32, "GetKeyboardLayout", [wintypes.DWORD], wintypes.HKL)
+_bind(
+    user32,
+    "ToUnicodeEx",
+    [_UINT, _UINT, ctypes.POINTER(ctypes.c_ubyte), wintypes.LPWSTR, _INT, _UINT, wintypes.HKL],
+    _INT,
+)
+_bind(user32, "GetMessageW", [_MSG_POINTER, _HWND, _UINT, _UINT], wintypes.BOOL)
+_bind(user32, "PeekMessageW", [_MSG_POINTER, _HWND, _UINT, _UINT, _UINT], wintypes.BOOL)
+_bind(user32, "TranslateMessage", [_MSG_POINTER], wintypes.BOOL)
+_bind(user32, "DispatchMessageW", [_MSG_POINTER], LRESULT)
+_bind(
+    user32,
+    "PostThreadMessageW",
+    [wintypes.DWORD, _UINT, wintypes.WPARAM, wintypes.LPARAM],
+    wintypes.BOOL,
+)
+_bind(user32, "RegisterHotKey", [_HWND, _INT, _UINT, _UINT], wintypes.BOOL)
+_bind(user32, "UnregisterHotKey", [_HWND, _INT], wintypes.BOOL)
+_dwmapi = ctypes.WinDLL("dwmapi")
+_bind(
+    _dwmapi,
+    "DwmSetWindowAttribute",
+    [_HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD],
+    ctypes.c_long,
+)
+_bind(kernel32, "GetModuleHandleW", [wintypes.LPCWSTR], wintypes.HMODULE)
+_bind(kernel32, "GetCurrentThreadId", [], wintypes.DWORD)
+
+
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_ROUNDSMALL = 3
+
+
+def round_corners(hwnd: int) -> None:
+    """Ask Windows 11 for small rounded corners with the native shadow; older systems ignore it."""
+    preference = ctypes.c_int(DWMWCP_ROUNDSMALL)
+    _dwmapi.DwmSetWindowAttribute(
+        hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(preference), ctypes.sizeof(preference)
+    )
+
+
+def class_name(hwnd: int) -> str:
+    buffer = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buffer, len(buffer))
+    return buffer.value
+
+
+def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
+def is_key_down(key: int) -> bool:
+    return bool(user32.GetAsyncKeyState(key) & KEY_DOWN_BIT)
+
+
+def active_tab(hwnd: int) -> int:
+    """The visible tab of a Windows 11 Explorer window, or the window itself."""
+    child = 0
+    while child := user32.FindWindowExW(hwnd, child, TAB_CLASS, None):
+        if user32.IsWindowVisible(child):
+            return child
+    return hwnd
+
+
+def explorer_file_view() -> tuple[int, int] | None:
+    """`(window, tab)` when Explorer's file list has keyboard focus, else None.
+
+    Editable controls (address bar, search box, rename) and menu, drag or resize
+    interaction never count as the file view.
+    """
+    hwnd = user32.GetForegroundWindow()
+    if class_name(hwnd) not in EXPLORER_WINDOW_CLASSES:
+        return None
+    focus = _idle_focus_window()
+    if not focus or class_name(focus) not in FILE_VIEW_FOCUS_CLASSES:
+        return None
+    if not _inside_file_view(focus, hwnd):
+        return None
+    return hwnd, active_tab(hwnd)
+
+
+def _idle_focus_window() -> int | None:
+    """The foreground thread's focus window, unless a menu, drag or resize is active."""
+    info = GuiThreadInfo(cbSize=ctypes.sizeof(GuiThreadInfo))
+    if not user32.GetGUIThreadInfo(0, ctypes.byref(info)):
+        return None
+    if info.flags & GUI_INTERACTION_FLAGS:
+        return None
+    if info.hwndMenuOwner or info.hwndCapture or info.hwndMoveSize:
+        return None
+    return info.hwndFocus
+
+
+def _inside_file_view(focus: int, top_level: int) -> bool:
+    for _ in range(MAX_FOCUS_ANCESTORS):
+        if class_name(focus) == FILE_VIEW_CLASS:
+            return True
+        focus = user32.GetParent(focus)
+        if not focus or focus == top_level:
+            return False
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class TypedKey:
+    """Printable text of a key press, or a dead key that waits for the next key."""
+
+    text: str = ""
+    dead_key: bool = False
+
+
+def typed_key(data: KeyboardData) -> TypedKey:
+    """What a key press produces in the foreground window's keyboard layout.
+
+    Caps Lock is read from this thread's key state, which can lag the foreground
+    thread. Search is case-insensitive, so only layouts where Caps Lock changes
+    non-letter characters are affected.
+    """
+    if any(is_key_down(key) for key in (VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN)):
+        return TypedKey()
+    state = (ctypes.c_ubyte * 256)()
+    for key in (VK_SHIFT, VK_LSHIFT, VK_RSHIFT):
+        if is_key_down(key):
+            state[key] = KEY_STATE_DOWN
+    state[VK_CAPITAL] = user32.GetKeyState(VK_CAPITAL) & KEY_TOGGLED_BIT
+    state[data.vkCode] |= KEY_STATE_DOWN
+    thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+    layout = user32.GetKeyboardLayout(thread)
+    buffer = ctypes.create_unicode_buffer(8)
+    count = user32.ToUnicodeEx(
+        data.vkCode,
+        data.scanCode,
+        state,
+        buffer,
+        len(buffer),
+        TOUNICODE_KEEP_KEYBOARD_STATE,
+        layout,
+    )
+    if count < 0:
+        return TypedKey(dead_key=True)
+    text = buffer[:count]
+    if not text or not text.isprintable() or text.isspace():
+        return TypedKey()
+    return TypedKey(text)
