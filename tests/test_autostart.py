@@ -20,7 +20,7 @@ class AutostartTest(unittest.TestCase):
 
         temporary = tempfile.TemporaryDirectory(prefix="pathscout-startup-link-")
         self.addCleanup(temporary.cleanup)
-        self.folder = Path(temporary.name)
+        self.folder = Path(temporary.name).resolve()
         self.data = self.folder / "data with spaces"
         self.startup = StartupShortcut(self.data, startup_folder=self.folder)
         pythoncom.CoInitialize()
