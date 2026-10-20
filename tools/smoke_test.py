@@ -111,15 +111,17 @@ def check_search_and_exclusions(app: QApplication, controller: LauncherControlle
 
 def check_clipboard_and_favorite(app: QApplication, controller: LauncherController) -> None:
     window = controller.window
-    window.copy_path()
+    window.copy_target()
     assert QApplication.clipboard().text() == str(window.selected_hit().item.path)
     controller.favorite_item(window.selected_hit())
     wait_until(app, lambda: window.selected_hit().item.pinned, "the favorite to appear")
 
 
 def check_settings_and_filters(controller: LauncherController) -> None:
-    dialog = SettingsDialog(controller.settings, controller.window)
-    dialog.accept()
+    dialog = SettingsDialog(
+        controller.settings, controller.window, website_icons=controller.website_icons
+    )
+    dialog.save()
     assert dialog.result_settings == controller.settings, "Unchanged dialog altered settings"
     dialog.deleteLater()
     window, search = controller.window, controller.search
