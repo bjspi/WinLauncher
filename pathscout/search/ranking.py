@@ -25,6 +25,7 @@ from pathscout.search.matching import (
     matches_folder_order,
 )
 from pathscout.search.query import MatchMode, ScoreMode, SearchQuery
+from pathscout.websites import WebsiteTarget
 
 APP_BONUS = 12
 FAVORITE_BONUS = 80
@@ -53,10 +54,14 @@ class PriorityBand(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class SearchHit:
-    item: CatalogItem
+    item: CatalogItem | WebsiteTarget
     score: float
     reason: str
     band: PriorityBand = PriorityBand.NORMAL
+
+    @property
+    def target(self) -> str:
+        return self.item.url if isinstance(self.item, WebsiteTarget) else str(self.item.path)
 
     @property
     def low_priority(self) -> bool:

@@ -64,6 +64,7 @@ from pathscout.ui.highlight import matched_positions
 from pathscout.ui.icons import ResultIcons
 from pathscout.ui.menus import Menu
 from pathscout.ui.theme import Palette, app_icon
+from pathscout.websites import WebsiteQuery, WebsiteTarget
 
 COMPACT_WIDTH = 640
 EXPANDED_WIDTH = 900
@@ -140,7 +141,7 @@ class ResultDelegate(QStyledItemDelegate):
         location_area = text.adjusted(0, 0, -metadata_width, 0)
         if self.rows.two_lines:
             self._paint_name(painter, text, hit.item.name, baseline=text.top() + 23)
-            self._paint_folder(painter, location_area, str(hit.item.path.parent), baseline=baseline)
+            self._paint_folder(painter, location_area, self._location(hit), baseline=baseline)
         else:
             name_end = self._paint_name(painter, location_area, hit.item.name, baseline=baseline)
             location = location_area.adjusted(name_end - text.left() + 12, 0, 0, 0)
@@ -149,6 +150,8 @@ class ResultDelegate(QStyledItemDelegate):
 
     def _location(self, hit: SearchHit) -> str:
         """In an Explorer search, the subfolder below the searched folder; else the folder."""
+        if isinstance(hit.item, WebsiteTarget):
+            return f"{hit.item.keyword}  ·  {hit.item.url}"
         parent = hit.item.path.parent
         if self.scope is None:
             return str(parent)
@@ -226,13 +229,15 @@ def _runs(text: str, highlighted: set[int]) -> Iterator[tuple[int, int, bool]]:
 
 def _accessible_text(hit: SearchHit, metadata: str = "") -> str:
     """What screen readers announce for a row the delegate paints."""
+    if isinstance(hit.item, WebsiteTarget):
+        return f"{hit.item.name}, website, keyword {hit.item.keyword}\n{hit.item.url}"
     favorite = ", favorite" if hit.item.pinned else ""
     details = f"\n{metadata}" if metadata else ""
     return f"{hit.item.name}, {hit.item.kind.value}{favorite}{details}\n{hit.item.path}"
 
 
-def _result_metadata(hit: SearchHit, query: SearchQuery | None) -> str:
-    if query is None:
+def _result_metadata(hit: SearchHit, query: SearchQuery | WebsiteQuery | None) -> str:
+    if not isinstance(query, SearchQuery) or isinstance(hit.item, WebsiteTarget):
         return ""
     parts = []
     if query.min_size is not None or query.max_size is not None:
@@ -635,7 +640,7 @@ class LauncherWindow(QWidget):
         elapsed_ms: float,
         *,
         preserve_selection: bool = True,
-        query: SearchQuery | None = None,
+        query: SearchQuery | WebsiteQuery | None = None,
     ) -> None:
         """Show new results; keep the selected path only when the query is unchanged."""
         previous = self.selected_hit() if preserve_selection else None
@@ -647,9 +652,12 @@ class LauncherWindow(QWidget):
             item = QListWidgetItem(_accessible_text(hit, metadata))
             item.setData(Qt.ItemDataRole.UserRole, hit)
             item.setData(_METADATA_ROLE, metadata)
-            item.setToolTip(f"{hit.item.path}\n{hit.reason}\nRelevance: {hit.score:.1f}")
+            tooltip = f"{hit.target}\n{hit.reason}"
+            if not isinstance(hit.item, WebsiteTarget):
+                tooltip += f"\nRelevance: {hit.score:.1f}"
+            item.setToolTip(tooltip)
             self.results.addItem(item)
-            if previous is not None and hit.item.path == previous.item.path:
+            if previous is not None and hit.target == previous.target:
                 selected_row = row
         if hits and not self.calculation_selected:
             self.results.setCurrentRow(selected_row)
@@ -887,6 +895,9 @@ class LauncherWindow(QWidget):
         if not hit:
             self.detail.clear()
             return
+        if isinstance(hit.item, WebsiteTarget):
+            self.detail.setText(f"{hit.item.url}\n{hit.reason}")
+            return
         size = QLocale().formattedDataSize(hit.item.size)
         modified = _format_modified(hit.item.modified)
         self.detail.setText(f"{hit.item.path}\n{size}  ·  Modified {modified}  ·  {hit.reason}")
@@ -904,19 +915,23 @@ class LauncherWindow(QWidget):
         self.open_requested.emit(item.data(Qt.ItemDataRole.UserRole))
 
     def reveal_selected(self) -> None:
-        if hit := self.selected_hit():
+        if (hit := self.selected_hit()) and not isinstance(hit.item, WebsiteTarget):
             self.reveal_requested.emit(hit)
 
     def favorite_selected(self) -> None:
-        if hit := self.selected_hit():
+        if (hit := self.selected_hit()) and not isinstance(hit.item, WebsiteTarget):
             self.favorite_requested.emit(hit)
 
     def copy_path(self, hit: SearchHit | None = None) -> None:
         hit = hit or self.selected_hit()
         if hit is None:
             return
-        QApplication.clipboard().setText(str(hit.item.path))
-        self.status.setText("Path copied to clipboard")
+        QApplication.clipboard().setText(hit.target)
+        self.status.setText(
+            "URL copied to clipboard"
+            if isinstance(hit.item, WebsiteTarget)
+            else "Path copied to clipboard"
+        )
         self.status.show()
         self._fit_height()
 
@@ -933,6 +948,14 @@ class LauncherWindow(QWidget):
         hit: SearchHit = item.data(Qt.ItemDataRole.UserRole)
         clipboard = QApplication.clipboard()
         menu = Menu(self)
+        if isinstance(hit.item, WebsiteTarget):
+            menu.addAction("Open in browser", lambda: self.open_requested.emit(hit))
+            menu.addAction("Copy URL", lambda: self.copy_path(hit))
+            menu.addSeparator()
+            menu.addAction("Settings…", self.settings_requested.emit)
+            menu.exec(self.results.viewport().mapToGlobal(point))
+            menu.deleteLater()
+            return
         menu.addAction("Open", lambda: self.open_requested.emit(hit))
         menu.addAction("Show in containing folder", lambda: self.reveal_requested.emit(hit))
         menu.addSeparator()

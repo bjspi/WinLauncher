@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import unittest
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
@@ -30,6 +31,7 @@ from pathscout.ui.controller import LauncherController
 from pathscout.ui.indexing import IndexJobKind
 from pathscout.ui.settings import SettingsDialog
 from pathscout.ui.tasks import TaskCategory
+from pathscout.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
 
 
 @dataclass
@@ -99,6 +101,71 @@ class UiFlowTest(unittest.TestCase):
         self.tasks.finish(TaskCategory.SEARCH)
         self.window = self.controller.window
         self.indexing = self.controller.indexing
+
+    def test_website_enter_waits_for_current_query_and_keeps_local_results(self):
+        site = WebsiteShortcut("az", "Amazon", "https://www.amazon.de/s?k=%s")
+        self.controller.settings = replace(self.controller.settings, websites=(site,))
+        local = SearchHit(CatalogItem(self.root / "az Book.txt", ItemKind.FILE), 900, "Exact name")
+        patch.object(
+            self.window.delegate.icons.websites,
+            "icon_for",
+            return_value=self.window.delegate.icons.websites.fallback,
+        ).start()
+        patch.object(self.controller.search.service, "search", return_value=[local]).start()
+        self.window.query.setText("az old")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        stale = self.window.selected_hit()
+        self.window.query.setText("az C++ Book & More")
+        with patch(
+            "pathscout.ui.controller.QDesktopServices.openUrl", return_value=True
+        ) as browser:
+            self.controller.search.request_open(stale)
+            browser.assert_not_called()
+            self.tasks.finish(TaskCategory.SEARCH)
+            browser.assert_called_once()
+            self.assertEqual(
+                bytes(browser.call_args.args[0].toEncoded()).decode(),
+                "https://www.amazon.de/s?k=C%2B%2B%20Book%20%26%20More",
+            )
+        first = self.window.results.item(0).data(Qt.ItemDataRole.UserRole)
+        self.assertIsInstance(first.item, WebsiteTarget)
+        self.assertEqual(first.item.name, "Search Amazon for C++ Book & More")
+        self.assertEqual(self.window.results.item(1).data(Qt.ItemDataRole.UserRole), local)
+        self.launch.assert_not_called()
+        self.window.results.setCurrentRow(0)
+        self.window.copy_path()
+        self.assertEqual(self.app.clipboard().text(), first.target)
+        self.window.reveal_selected()
+        self.window.favorite_selected()
+        self.reveal.assert_not_called()
+        self.assertFalse(self.controller.favorite_pending)
+
+    def test_website_keywords_respect_scope_filters_and_literal_search_text(self):
+        site = WebsiteShortcut("yt", "YouTube", "https://www.youtube.com/results?search_query=%s")
+        self.controller.settings = replace(self.controller.settings, websites=(site,))
+        self.window.query.setText('yt "Unfinished type:unknown')
+        query = self.controller.search.current_query()
+        self.assertIsInstance(query, WebsiteQuery)
+        hits, _ = self.controller.search._work(query, self.controller.settings, threading.Event())
+        self.assertEqual(len(hits), 1)
+        self.assertIn("%22Unfinished%20type%3Aunknown", hits[0].target)
+        self.window.query.setText("yt tutorial")
+        self.window.kind = ItemKind.FILE
+        self.assertNotIsInstance(self.controller.search.current_query(), WebsiteQuery)
+        self.window.kind = None
+        self.window.scope = self.root
+        self.assertNotIsInstance(self.controller.search.current_query(), WebsiteQuery)
+
+    def test_website_browser_failure_is_reported(self):
+        hit = SearchHit(WebsiteTarget("Example", "ex", "https://example.org/"), 0, "Website")
+        with (
+            patch("pathscout.ui.controller.QDesktopServices.openUrl", return_value=False),
+            patch("pathscout.ui.controller.QMessageBox.warning") as warning,
+        ):
+            self.controller.open_item(hit, "")
+        warning.assert_called_once()
+        self.launch.assert_not_called()
 
     def test_filtered_results_show_cached_size_and_modification_date(self):
         modified = datetime(2026, 2, 15, 12, 34).timestamp()
@@ -558,12 +625,13 @@ class UiFlowTest(unittest.TestCase):
         for threads in (1, 8):
             with self.subTest(threads=threads):
                 dialog = SettingsDialog(c.settings, save=c.apply_settings)
+                dialog.show()
                 dialog.content_threads.setValue(threads)
                 c.search.run()
                 previous_cancel = c.search.running
                 with patch.object(c, "_start_monitor") as monitor:
                     dialog.accept()
-                self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
+                self.assertTrue(dialog.isVisible())
                 self.assertEqual(c.settings_file.load().content_search_threads, threads)
                 self.assertTrue(previous_cancel.is_set())
                 self.assertEqual(self.tasks.count(TaskCategory.INDEX), indexed)
@@ -638,8 +706,24 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(dialog.limit.value(), 25)
         save.side_effect = None
         dialog.accept()
-        self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
+        self.assertTrue(dialog.isVisible())
         self.assertEqual(dialog.result_settings.max_results, 25)
+        dialog.deleteLater()
+
+    def test_settings_can_be_saved_repeatedly_without_closing(self):
+        dialog = SettingsDialog(self.controller.settings, save=self.controller.apply_settings)
+        dialog.show()
+        for limit in (25, 30):
+            dialog.limit.setValue(limit)
+            dialog.accept()
+            self.assertTrue(dialog.isVisible())
+            self.assertEqual(self.controller.settings_file.load().max_results, limit)
+            self.assertEqual(dialog.original.max_results, limit)
+        dialog.limit.setValue(40)
+        dialog.reject()
+        self.assertFalse(dialog.isVisible())
+        self.assertEqual(self.controller.settings_file.load().max_results, 30)
+        self.assertEqual(dialog.result_settings.max_results, 30)
         dialog.deleteLater()
 
     def test_hidden_completions_do_not_submit_searches(self):

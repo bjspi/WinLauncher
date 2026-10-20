@@ -1,0 +1,159 @@
+"""Website settings, using the same list, form fields and buttons as the other tabs."""
+
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtWidgets import (
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from pathscout.ui.website_icons import WebsiteIcons
+from pathscout.websites import WebsiteShortcut
+
+
+class WebsiteList(QWidget):
+    def __init__(self, websites: tuple[WebsiteShortcut, ...], icons: WebsiteIcons, parent=None):
+        super().__init__(parent)
+        self.icons = icons
+        self.list = QListWidget()
+        self.list.setAccessibleName("Website shortcuts")
+        self.list.setIconSize(QSize(24, 24))
+        self.list.setMinimumWidth(160)
+        self.list.setSpacing(1)
+        self.keyword, self.title, self.url = QLineEdit(), QLineEdit(), QLineEdit()
+        self.keyword.setPlaceholderText("az")
+        self.title.setPlaceholderText("Amazon")
+        self.url.setPlaceholderText("https://www.amazon.de/s?k=%s")
+        self.url.setToolTip("Use %s for the search text, or a fixed URL to open a page.")
+        for label, field in (
+            ("Website keyword", self.keyword),
+            ("Website title", self.title),
+            ("Website URL", self.url),
+        ):
+            field.setAccessibleName(label)
+            field.textChanged.connect(self._edited)
+        self.form = QWidget()
+        form = QFormLayout(self.form)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        form.addRow("Keyword", self.keyword)
+        form.addRow("Title", self.title)
+        form.addRow("URL", self.url)
+        hint = QLabel(
+            "Use %s where the search text belongs.\n\n"
+            "az headphones → searches Amazon\n"
+            "az → opens the website\n\n"
+            "YouTube example:\nhttps://www.youtube.com/results?search_query=%s"
+        )
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        form.addRow(hint)
+        add = QPushButton("Add website")
+        self.remove = QPushButton("Remove selected")
+        add.clicked.connect(self.add_website)
+        self.remove.clicked.connect(self.remove_selected)
+        buttons = QHBoxLayout()
+        buttons.addWidget(add)
+        buttons.addWidget(self.remove)
+        buttons.addStretch()
+        content = QHBoxLayout()
+        content.setSpacing(20)
+        content.addWidget(self.list, 1)
+        content.addWidget(self.form, 2)
+        layout = QVBoxLayout(self)
+        heading = QLabel("Your websites, a few keystrokes away")
+        heading.setObjectName("sectionTitle")
+        layout.addWidget(heading)
+        note = QLabel("Choose a keyword, then type it in the launcher. Changes apply on Save.")
+        note.setWordWrap(True)
+        note.setObjectName("muted")
+        layout.addWidget(note)
+        layout.addSpacing(8)
+        layout.addLayout(content, 1)
+        layout.addLayout(buttons)
+        privacy = QLabel(
+            "Favicons load directly from each website. Search text is sent only when you open a result."
+        )
+        privacy.setWordWrap(True)
+        privacy.setObjectName("muted")
+        layout.addWidget(privacy)
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.setInterval(500)
+        self.preview_timer.timeout.connect(self._refresh_icons)
+        self.icons.changed.connect(self._refresh_icons)
+        self.list.currentRowChanged.connect(self._selected)
+        for site in websites:
+            self._add_item(site.keyword, site.title, site.url)
+        self.list.setCurrentRow(0 if websites else -1)
+        self._selected()
+
+    def _add_item(self, keyword: str, title: str, url: str) -> None:
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, (keyword, title, url))
+        item.setText(self._label(keyword, title))
+        item.setSizeHint(QSize(160, 42))
+        item.setIcon(self.icons.fallback)
+        self.list.addItem(item)
+
+    @staticmethod
+    def _label(keyword: str, title: str) -> str:
+        return f"{title.strip() or 'New website'}\n{keyword.strip() or 'Choose a keyword'}"
+
+    def add_website(self) -> None:
+        self._add_item("", "", "")
+        self.list.setCurrentRow(self.list.count() - 1)
+        self.keyword.setFocus()
+
+    def remove_selected(self) -> None:
+        row = self.list.currentRow()
+        if row >= 0:
+            self.list.takeItem(row)
+        self._selected()
+
+    def _selected(self, *_args) -> None:
+        item = self.list.currentItem()
+        values = item.data(Qt.ItemDataRole.UserRole) if item else ("", "", "")
+        self.form.setEnabled(item is not None)
+        self.remove.setEnabled(item is not None)
+        for field, value in zip((self.keyword, self.title, self.url), values, strict=True):
+            field.blockSignals(True)
+            field.setText(value)
+            field.blockSignals(False)
+
+    def _edited(self) -> None:
+        if item := self.list.currentItem():
+            values = (self.keyword.text(), self.title.text(), self.url.text())
+            item.setData(Qt.ItemDataRole.UserRole, values)
+            item.setText(self._label(*values[:2]))
+            self.preview_timer.start()
+
+    def _refresh_icons(self) -> None:
+        if not self.isVisible():
+            return
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            url = item.data(Qt.ItemDataRole.UserRole)[2].strip()
+            item.setIcon(self.icons.icon_for(url))
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._refresh_icons()
+
+    def websites(self) -> tuple[WebsiteShortcut, ...]:
+        sites = []
+        for row in range(self.list.count()):
+            values = self.list.item(row).data(Qt.ItemDataRole.UserRole)
+            try:
+                sites.append(WebsiteShortcut(*(value.strip() for value in values)))
+            except ValueError as exc:
+                self.list.setCurrentRow(row)
+                raise ValueError(f"Website {row + 1}: {exc}") from None
+        return tuple(sites)

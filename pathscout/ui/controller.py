@@ -17,7 +17,8 @@ from functools import partial
 from pathlib import Path
 from typing import TypeVar
 
-from PySide6.QtCore import QObject, QProcess, QTimer
+from PySide6.QtCore import QObject, QProcess, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from pathscout.actions import ExplorerTarget, ItemActions
@@ -48,6 +49,7 @@ from pathscout.ui.tasks import BackgroundTasks, TaskCategory
 from pathscout.ui.tray import TrayMenu
 from pathscout.ui.updater import GitUpdater
 from pathscout.ui.window import LauncherWindow
+from pathscout.websites import WebsiteTarget
 
 logger = logging.getLogger(__name__)
 UI_DELAY_POLL_MS = 100
@@ -369,17 +371,26 @@ class LauncherController(QObject):
     # Item actions -------------------------------------------------------------
 
     def open_item(self, hit: SearchHit, history_key: str) -> None:
+        if isinstance(hit.item, WebsiteTarget):
+            self.window.hide()
+            if not QDesktopServices.openUrl(QUrl(hit.item.url)):
+                self._action_failed("The website could not be opened in your default browser.")
+            return
         view, scope = self.window.explorer_view, self.window.scope
         explorer = ExplorerTarget(*view, scope) if view is not None and scope else None
         self.window.hide()
         self._run_action(partial(self.actions.open, hit.item.path, history_key, explorer=explorer))
 
     def reveal_item(self, hit: SearchHit) -> None:
+        if isinstance(hit.item, WebsiteTarget):
+            return
         self.window.hide()
         self._run_action(partial(self.actions.reveal, hit.item.path))
 
     def favorite_item(self, hit: SearchHit) -> None:
         """Toggle once; repeated requests wait until the stored state is visible again."""
+        if isinstance(hit.item, WebsiteTarget):
+            return
         if self.favorite_pending:
             return
         self.favorite_pending = True
@@ -437,6 +448,7 @@ class LauncherController(QObject):
             startup_enabled=self.tray.autostart.isChecked(),
             set_startup=self._set_autostart if os.name == "nt" else None,
             startup_state=self.tray.autostart.isChecked,
+            website_icons=self.window.delegate.icons.websites,
         )
         dialog.exec()
         dialog.deleteLater()

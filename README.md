@@ -32,11 +32,12 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. |
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
+| 🌐 **Website keywords** | Define a title, keyword and URL in Settings → Websites. `az headphones` searches Amazon; `yt Python tutorial` searches YouTube. |
 | 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more. |
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
 | ⌨️ **Keyboard first** | <kbd>Enter</kbd> opens, <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> opens a numbered result, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> shows it in its folder. |
-| 🔒 **Private** | No telemetry or network service. Content searches read files locally on demand. Everything stays in `%USERPROFILE%\.PathScout`. |
+| 🔒 **Private** | No telemetry. File searches stay local; website searches open in your browser. Settings and the catalog stay in `%USERPROFILE%\.PathScout`. |
 | ⬆️ **Self-updating** | Running from a git checkout? PathScout notices new commits and updates with one click. |
 
 <div align="center">
@@ -98,6 +99,29 @@ drag them from Explorer into the list. The first scan runs in the background.
 
 Tick **Start with Windows** in the tray menu or in Settings to launch PathScout at
 sign-in. It manages only its own shortcut in your Startup folder.
+
+In **Settings → Websites**, edit or add a keyword, title and URL. Google, Amazon,
+YouTube, Google Maps, eBay, Kleinanzeigen and IMDb are included by default.
+Use `%s` for search text:
+
+| Keyword | Title | URL |
+| --- | --- | --- |
+| `g` | Google | `https://www.google.com/search?q=%s` |
+| `az` | Amazon | `https://www.amazon.de/s?k=%s` |
+| `yt` | YouTube | `https://www.youtube.com/results?search_query=%s` |
+| `gm` | Google Maps | `https://maps.google.com/?q=%s` |
+| `eb` | eBay | `https://www.ebay.com/sch/i.html?_nkw=%s` |
+| `ka` | Kleinanzeigen | `https://www.kleinanzeigen.de/s-%s/k0` |
+| `imdb` | IMDb | `https://www.imdb.com/de/find/?q=%s&` |
+
+Type `az headphones` and press Enter to search, or just `az` to open the site's
+home page. URLs without `%s` open the exact saved page. Search text keeps its case,
+spaces and punctuation and is URL-encoded automatically. Website keywords work
+in the global launcher with the **All** filter; Explorer searches keep their file
+behavior. Keywords are unique regardless of case. Save applies changes immediately
+and keeps Settings open. Cancel / Close discards only edits since the last save.
+Favicons load in the background directly from each site's
+`/favicon.ico`; unavailable icons use a globe.
 
 ### 📋 Requirements
 
@@ -316,6 +340,9 @@ the top group; the number fine-tunes the order.
 ## 🔒 Privacy
 
 - 🏠 Runs entirely on your computer. No account, telemetry or cloud service.
+- 🌐 Configured websites are contacted for favicons when shown. Website search text
+  is sent only when you open the result in your browser, and is not saved in the
+  file search history. No third-party favicon service is used.
 - 📄 Indexes names and metadata only — never file contents.
 - 🗂️ Settings, catalog, favorites, history and logs live in `%USERPROFILE%\.PathScout`
 - 📝 `settings.json` holds user preferences. `pathscout.log` rotates at 5 MB with five backups.

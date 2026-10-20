@@ -1,8 +1,8 @@
 """Settings dialog. Values are validated by `Settings`; this module only reads widgets.
 
 Autostart changes the Startup shortcut immediately (the shortcut is the source of
-truth, shared with the tray). Every other change applies on Save. If saving
-fails, the dialog stays open with the edits intact.
+truth, shared with the tray). Every other change applies on Save. Saving keeps
+the dialog open; closing discards only changes made since the last save.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from PySide6.QtCore import QMimeData, Qt, Signal
+from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -48,6 +48,8 @@ from pathscout.settings import (
     Settings,
     priority_rules,
 )
+from pathscout.ui.website_icons import WebsiteIcons
+from pathscout.ui.websites import WebsiteList
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
 FOLDER_PRIORITY_FORMAT = "25 | D:\\Projects | high"
@@ -266,6 +268,7 @@ class SettingsDialog(QDialog):
         startup_enabled: bool | None = None,
         set_startup: Callable[[bool], None] | None = None,
         startup_state: Callable[[], bool] | None = None,
+        website_icons: WebsiteIcons | None = None,
     ):
         super().__init__(parent)
         self.original = settings
@@ -278,16 +281,25 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._indexing_tab(settings, startup_enabled), "Search && indexing")
         tabs.addTab(self._exclusions_tab(settings), "Exclusions")
+        if website_icons is None:
+            website_icons = WebsiteIcons(self)
+            self.finished.connect(website_icons.close)
+        self.websites = WebsiteList(settings.websites, website_icons)
+        tabs.addTab(self.websites, "Websites")
         tabs.addTab(self._ranking_tab(settings), "Ranking")
         tabs.addTab(self._advanced_tab(settings), "Advanced rules")
-        buttons = QDialogButtonBox(
+        self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.saved_message = _note("")
+        footer = QHBoxLayout()
+        footer.addWidget(self.saved_message, 1)
+        footer.addWidget(self.buttons)
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
-        layout.addWidget(buttons)
+        layout.addLayout(footer)
 
     # Tabs ---------------------------------------------------------------------
 
@@ -422,9 +434,11 @@ class SettingsDialog(QDialog):
             rescan_seconds=self.scan_interval.value(),
             max_results=self.limit.value(),
             content_search_threads=self.content_threads.value(),
+            websites=self.websites.websites(),
         )
 
     def accept(self) -> None:
+        self.saved_message.clear()
         try:
             settings = self.read_settings()
         except ValueError as exc:
@@ -437,4 +451,7 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Cannot save settings", str(exc))
             return
         self.result_settings = settings
-        super().accept()
+        self.original = settings
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
+        self.saved_message.setText("Settings saved.")
+        QTimer.singleShot(2500, self.saved_message.clear)

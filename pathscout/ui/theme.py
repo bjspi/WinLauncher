@@ -53,6 +53,7 @@ QLabel#detail { color: #5f6670; font-size: 9pt; padding: 6px 22px 0 22px; }
 QLabel#status { color: #9aa0a8; font-size: 8pt; padding: 0; }
 QLabel#activity { color: #a15c00; font-size: 8pt; padding: 4px 22px 0 22px; }
 QLabel#muted { color: #6b727c; font-size: 9pt; }
+QLabel#sectionTitle { font-size: 12pt; font-weight: 600; padding: 4px 0; }
 QLineEdit { background: #ffffff; border: 1px solid #cfd5dd; border-radius: 6px; padding: 5px 8px; selection-background-color: #bcd5f5; selection-color: #1f2329; }
 QLineEdit:focus { border-color: #2f7de1; }
 QPlainTextEdit, QListWidget { background: #ffffff; border: 1px solid #cfd5dd; border-radius: 6px; padding: 4px; selection-background-color: #dbe8f8; selection-color: #1f2329; }

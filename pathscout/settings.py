@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from pathscout.catalog.exclusions import DEFAULT_MARKER_FILES, ExclusionPolicy
+from pathscout.catalog.model import normalize
 from pathscout.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
@@ -17,6 +18,7 @@ from pathscout.catalog.priority import (
     PriorityRule,
     SearchPriority,
 )
+from pathscout.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
 DEFAULT_DOUBLE_CTRL_MS = 350
 DOUBLE_CTRL_RANGE_MS = (150, 800)
@@ -126,12 +128,16 @@ class Settings:
     rescan_seconds: int = 300
     max_results: int = 60
     content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS
+    websites: tuple[WebsiteShortcut, ...] = DEFAULT_WEBSITES
 
     def __post_init__(self) -> None:
         self._validate_limits()
         self._validate_paths()
         self._validate_markers()
         self._validate_priority_rules()
+        keywords = [normalize(site.keyword) for site in self.websites]
+        if len(set(keywords)) != len(keywords):
+            raise ValueError("Website keywords must be unique (ignoring letter case).")
 
     @property
     def indexing_key(self) -> tuple:
@@ -263,6 +269,13 @@ def settings_from_json(data: object) -> Settings:
 
 
 def _setting_value(name: str, value: object) -> object:
+    if name == "websites":
+        if not isinstance(value, list) or not all(isinstance(site, dict) for site in value):
+            raise ValueError("websites must be a list of objects.")
+        try:
+            return tuple(WebsiteShortcut(**site) for site in value)
+        except TypeError as exc:
+            raise ValueError(f"Invalid website: {exc}") from None
     if name in _RULE_TYPES:
         return priority_rules(name, value)
     default = getattr(_DEFAULTS, name)

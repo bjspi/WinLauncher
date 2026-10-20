@@ -22,6 +22,7 @@ from pathscout.search.service import SearchService
 from pathscout.settings import Settings
 from pathscout.ui.tasks import BackgroundTasks, TaskCategory
 from pathscout.ui.window import LauncherWindow
+from pathscout.websites import WebsiteQuery, website_query
 
 DEBOUNCE_MS = 70
 logger = logging.getLogger(__name__)
@@ -41,15 +42,20 @@ class SearchSession(QObject):
         super().__init__(parent)
         self.window, self.service, self.tasks, self.settings = window, service, tasks, settings
         self.running: threading.Event | None = None  # Cancel flag of the search in flight.
-        self.displayed_query: SearchQuery | None = None
+        self.displayed_query: SearchQuery | WebsiteQuery | None = None
         self.open_pending = False
         self.debounce = QTimer(self)
         self.debounce.setSingleShot(True)
         self.debounce.setInterval(DEBOUNCE_MS)
         self.debounce.timeout.connect(self.run)
 
-    def current_query(self) -> SearchQuery:
+    def current_query(self) -> SearchQuery | WebsiteQuery:
         """The query as typed, with the filter buttons applied unless `type:` was typed."""
+        if self.window.scope is None and self.window.kind is None and not self.window.explorer_mode:
+            website = website_query(self.window.query.text(), self.settings().websites)
+            if website is not None:
+                self.window.show_kind(None)
+                return website
         query = parse_query(self.window.query.text(), self.window.scope)
         if self.window.explorer_mode and query.scope == self.window.scope:
             query = replace(query, explorer=True)
@@ -101,7 +107,9 @@ class SearchSession(QObject):
         if hit is not None:
             self.open_requested.emit(hit, query.history_key)
 
-    def _must_wait_for_results(self, hit: SearchHit | None, query: SearchQuery) -> bool:
+    def _must_wait_for_results(
+        self, hit: SearchHit | None, query: SearchQuery | WebsiteQuery
+    ) -> bool:
         """Enter refers to the typed query; its results may not be displayed yet."""
         if self.displayed_query != query:
             return True
@@ -128,10 +136,21 @@ class SearchSession(QObject):
             self.running = None
 
     def _work(
-        self, query: SearchQuery, settings: Settings, cancel: threading.Event
+        self, query: SearchQuery | WebsiteQuery, settings: Settings, cancel: threading.Event
     ) -> tuple[list[SearchHit], float]:
         started = time.perf_counter()
-        hits = self.service.search(query, settings, cancel=cancel)
+        if isinstance(query, WebsiteQuery):
+            target = query.shortcut.target(query.search_text)
+            hits = [SearchHit(target, 0, "Open in your default browser")]
+            try:
+                local_query = parse_query(f"{query.shortcut.keyword} {query.search_text}")
+                hits.extend(self.service.search(local_query, settings, cancel=cancel))
+            except ValueError:
+                # Website search text may contain incomplete quotes or file-filter syntax.
+                pass
+            hits = [] if cancel.is_set() else hits[: settings.max_results]
+        else:
+            hits = self.service.search(query, settings, cancel=cancel)
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
             "Search finished: elapsed_ms=%.1f hits=%d cancelled=%s",
@@ -142,7 +161,10 @@ class SearchSession(QObject):
         return hits, elapsed_ms
 
     def _completed(
-        self, cancel: threading.Event, query: SearchQuery, result: tuple[list[SearchHit], float]
+        self,
+        cancel: threading.Event,
+        query: SearchQuery | WebsiteQuery,
+        result: tuple[list[SearchHit], float],
     ) -> None:
         if cancel is not self.running:
             return
