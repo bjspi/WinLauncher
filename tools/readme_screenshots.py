@@ -14,6 +14,7 @@ from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import SearchHit
 from pathscout.settings import Settings
 from pathscout.ui.settings import SettingsDialog
+from pathscout.ui.website_icons import WebsiteIcons
 from pathscout.ui.window import LauncherWindow
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parents[1] / "docs/images"
@@ -39,7 +40,8 @@ def settle(widget, rounds=30):
         time.sleep(0.02)
 
 
-window = LauncherWindow()
+website_icons = WebsiteIcons()
+window = LauncherWindow(website_icons)
 window.set_catalog_count(48213)
 window.present(text="road")
 window.set_results(
@@ -59,7 +61,7 @@ settle(window)
 window.grab().save(str(OUT / "launcher.png"))
 window.hide()
 
-explorer = LauncherWindow()
+explorer = LauncherWindow(website_icons)
 explorer.set_catalog_count(48213)
 explorer.present(text="bud", scope=Path(r"D:\Work\Projects"), near=(200, 200, 1200, 900))
 query = replace(parse_query("bud", scope=Path(r"D:\Work\Projects")), explorer=True)
@@ -82,6 +84,7 @@ dialog = SettingsDialog(
     Settings(roots=(r"D:\Work", r"D:\Projects")),
     startup_enabled=True,
     set_startup=lambda _enabled: None,
+    website_icons=website_icons,
 )
 dialog.show()
 settle(dialog)

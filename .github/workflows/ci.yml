@@ -76,8 +76,9 @@ jobs:
         run: >-
           python -c "from PySide6.QtWidgets import QApplication; from pathscout.settings import Settings;
           from pathscout.ui.settings import SettingsDialog; from pathscout.ui.theme import app_icon;
+          from pathscout.ui.website_icons import WebsiteIcons;
           from pathscout.search.native_engine import select_native;
-          app = QApplication([]); dialog = SettingsDialog(Settings());
+          app = QApplication([]); dialog = SettingsDialog(Settings(), website_icons=WebsiteIcons());
           assert not app_icon().isNull();
           assert select_native() is not None; print('Installed Python and Rust wheels imported successfully')"
       - uses: actions/upload-artifact@v4
