@@ -264,7 +264,7 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
             listener = self.listener(**options)
             listener.tracker.context = ExplorerContext(5, 6, self.root, ViewKind.FILE_DIALOG)
             with (
-                patch("pathscout.platform.keyboard.dialog_file_view", return_value=(5, 6)),
+                patch("pathscout.platform.keyboard.dialog_typing_view", return_value=(5, 6)),
                 patch("pathscout.platform.keyboard.explorer_file_view", return_value=None),
                 patch("pathscout.platform.keyboard.typed_key", return_value=TypedKey("r")),
                 patch("pathscout.platform.keyboard.window_rect", return_value=(0, 0, 9, 9)),
@@ -303,7 +303,7 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
 
         with (
             patch.object(explorer, "explorer_file_view", return_value=None),
-            patch.object(explorer, "dialog_file_view", return_value=(5, 6)),
+            patch.object(explorer, "dialog_typing_view", return_value=(5, 6)),
             patch.object(explorer, "dialog_folder", return_value=self.root),
         ):
             tracker = ExplorerTracker(on_failure=lambda message: None)
@@ -312,11 +312,13 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
             context = ExplorerContext(5, 6, self.root, ViewKind.FILE_DIALOG)
             self.assertEqual(tracker._resolve(None, view), context)
             self.assertIsNone(ExplorerTracker(lambda message: None, dialogs=False)._focused_view())
+        # Desktop or This PC show no path; the dialog's bar searches everywhere anyway.
         with (
-            patch.object(explorer, "dialog_file_view", return_value=(5, 6)),
-            patch.object(explorer, "dialog_folder", return_value=None),  # This PC.
+            patch.object(explorer, "dialog_typing_view", return_value=(5, 6)),
+            patch.object(explorer, "dialog_folder", return_value=None),
         ):
-            self.assertIsNone(tracker._resolve(None, view))
+            pathless = ExplorerContext(5, 6, None, ViewKind.FILE_DIALOG)
+            self.assertEqual(tracker._resolve(None, view), pathless)
 
 
 class DialogActionsTest(TemporaryFolderTest):
@@ -355,6 +357,75 @@ class QuickSwitchSettingTest(TemporaryFolderTest):
         self.assertTrue(settings_from_json({"roots": []}).quick_switch)
         with self.assertRaisesRegex(ValueError, "quick_switch must be a bool"):
             settings_from_json({"roots": [], "quick_switch": "yes"})
+
+
+@unittest.skipUnless(WINDOWS, "Windows file dialogs")
+class OpenFileNameBoxTest(unittest.TestCase):
+    """Open dialogs start with the focus in their file-name box; typing there counts."""
+
+    DIALOG, COMBO, EDIT, VIEW = 1, 5, 7, 20
+
+    def typing_view(self, *, combo: int, text_length: int | Exception) -> tuple | None:
+        from pathscout.platform import file_dialog
+        from pathscout.platform.windows import user32
+
+        classes = {self.DIALOG: "#32770", self.EDIT: "Edit", self.VIEW: "SHELLDLL_DefView"}
+        answer = {"side_effect": text_length} if isinstance(text_length, Exception) else {}
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(file_dialog, "dialog_file_view", return_value=None))
+            stack.enter_context(patch.object(user32, "GetForegroundWindow", return_value=1))
+            stack.enter_context(patch.object(user32, "GetDlgItem", return_value=combo))
+            stack.enter_context(patch.object(user32, "IsChild", return_value=True))
+            stack.enter_context(
+                patch.object(file_dialog, "idle_focus_window", return_value=self.EDIT)
+            )
+            stack.enter_context(
+                patch.object(file_dialog, "class_name", side_effect=lambda h: classes.get(h, "x"))
+            )
+            stack.enter_context(
+                patch.object(file_dialog, "descendants", return_value=[3, self.VIEW])
+            )
+            send = stack.enter_context(
+                patch.object(file_dialog, "send_message", return_value=text_length, **answer)
+            )
+            view = file_dialog.dialog_typing_view()
+        if combo:
+            self.assertEqual(
+                send.call_args.kwargs["timeout_ms"], file_dialog.TYPING_CHECK_TIMEOUT_MS
+            )
+        return view
+
+    def test_empty_open_file_name_box_opens_the_bar(self):
+        self.assertEqual(self.typing_view(combo=self.COMBO, text_length=0), (1, self.VIEW))
+
+    def test_typed_names_save_dialogs_and_hung_dialogs_keep_their_keys(self):
+        self.assertIsNone(self.typing_view(combo=self.COMBO, text_length=4))
+        self.assertIsNone(self.typing_view(combo=0, text_length=0))  # Save dialog.
+        self.assertIsNone(self.typing_view(combo=self.COMBO, text_length=OSError("hung")))
+
+    def test_escape_hands_the_typed_text_back_with_the_caret_at_the_end(self):
+        from pathscout.platform import file_dialog
+        from pathscout.platform.file_dialog import EM_SETSEL, FileDialog
+
+        dialog = FileDialog(9)
+        order = Mock()
+        with (
+            patch.object(FileDialog, "set_file_name", order.set_file_name),
+            patch.object(FileDialog, "activate", order.activate),
+            patch.object(FileDialog, "focus_file_name", order.focus_file_name),
+            patch.object(FileDialog, "_file_name_edit", return_value=77),
+            patch.object(file_dialog, "send_message", order.send_message),
+        ):
+            dialog.hand_back(r"C:\notes\todo.txt")
+        self.assertEqual(
+            order.mock_calls,
+            [
+                call.set_file_name(r"C:\notes\todo.txt"),
+                call.activate(),
+                call.focus_file_name(),
+                call.send_message(77, EM_SETSEL, 17, 17),
+            ],
+        )
 
 
 if __name__ == "__main__":

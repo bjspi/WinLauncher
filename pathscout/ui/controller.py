@@ -158,6 +158,7 @@ class LauncherController(QObject):
         window.reveal_requested.connect(self.reveal_item)
         window.favorite_requested.connect(self.favorite_item)
         window.explorer_selection.connect(self.follow_in_explorer)
+        window.dialog_text_returned.connect(self._return_text_to_dialog)
         window.exclude_requested.connect(self.exclude_folder)
         window.settings_requested.connect(self.edit_settings)
         window.rescan_requested.connect(self.rescan)
@@ -275,10 +276,13 @@ class LauncherController(QObject):
             self.window.present()
 
     def _search_from_explorer(self, typing: ExplorerTyping) -> None:
+        # Explorer searches its folder; a file dialog searches everywhere, so the
+        # user can reach any folder, such as the desktop, from wherever it opened.
+        scope = typing.folder if typing.kind is ViewKind.EXPLORER else None
         if (
             self.window.isVisible()
             and self.window.explorer_mode
-            and self.window.scope == typing.folder
+            and self.window.scope == scope
             and self.window.explorer_view == typing.view
             and self.window.view_kind is typing.kind
         ):
@@ -286,12 +290,13 @@ class LauncherController(QObject):
             return
         self.window.present(
             text=typing.text,
-            scope=typing.folder,
+            scope=scope,
             near=typing.window,
             explorer_view=typing.view,
             view_kind=typing.kind,
         )
-        self.indexing.request_folder(typing.folder)
+        if scope is not None:
+            self.indexing.request_folder(scope)
 
     def _jump_in_dialog(self, jump: FolderJumpRequested) -> None:
         """Ctrl+G in a file dialog; a dialog that closed meanwhile is no error to show."""
@@ -452,6 +457,16 @@ class LauncherController(QObject):
         if view is None or not scope or self.window.view_kind is not ViewKind.EXPLORER:
             return None
         return ExplorerTarget(*view, scope)
+
+    def _return_text_to_dialog(self, text: str) -> None:
+        if (dialog := self._dialog_target()) is None:
+            return
+        self.tasks.submit(
+            TaskCategory.ACTION,
+            partial(self.actions.hand_back_to_dialog, text, dialog),
+            lambda _result: None,
+            lambda message: logger.info("Typed text not returned to the dialog: %s", message),
+        )
 
     def _dialog_target(self) -> int | None:
         """The Open or Save dialog the bar belongs to, if the search started in one."""

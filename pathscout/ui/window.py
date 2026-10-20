@@ -421,6 +421,8 @@ class LauncherWindow(QWidget):
     favorite_requested = Signal(object)
     # SearchHit the user moved to in the Explorer bar, for Explorer to select.
     explorer_selection = Signal(object)
+    # Text typed in a file dialog's bar that Escape returns to the dialog.
+    dialog_text_returned = Signal(str)
     exclude_requested = Signal(object)
     settings_requested = Signal()
     rescan_requested = Signal()
@@ -622,7 +624,7 @@ class LauncherWindow(QWidget):
 
     def _install_shortcuts(self) -> None:
         for sequence, action in (
-            ("Escape", self.hide),
+            ("Escape", self.dismiss),
             ("Ctrl+L", self.focus_query),
             ("Ctrl+Return", self.reveal_selected),
             ("Ctrl+Enter", self.reveal_selected),  # Keypad Enter.
@@ -1178,6 +1180,17 @@ class LauncherWindow(QWidget):
             return
         if (hit := row.file_hit) is not None:
             self.explorer_selection.emit(hit)
+
+    def dismiss(self) -> None:
+        """Escape: close; a file dialog gets the typed text back in its file-name box.
+
+        Typing in an Open dialog's empty file-name box opens the bar, so leaving it
+        must not lose a name or path the user meant to type there.
+        """
+        text = self.query.text()
+        if self.serves_file_dialog and text:
+            self.dialog_text_returned.emit(text)
+        self.hide()
 
     @property
     def serves_file_dialog(self) -> bool:

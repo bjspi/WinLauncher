@@ -17,11 +17,14 @@ import time
 from pathlib import Path
 
 from pathscout.platform.windows import (
+    DIALOG_CLASS,
     FILE_VIEW_CLASS,
     ULONG_PTR,
     activate_window,
     class_name,
     descendants,
+    dialog_file_view,
+    idle_focus_window,
     user32,
 )
 
@@ -32,6 +35,7 @@ WM_SETTEXT = 0x000C
 WM_GETTEXT = 0x000D
 WM_GETTEXTLENGTH = 0x000E
 WM_NEXTDLGCTL = 0x0028
+EM_SETSEL = 0x00B1
 WM_COMMAND = 0x0111
 DM_GETDEFID = 0x0400  # WM_USER: the dialog's default push button.
 DC_HASDEFID = 0x534B  # High word of a DM_GETDEFID answer that names a button.
@@ -39,6 +43,8 @@ BN_CLICKED = 0
 IDOK = 1
 SMTO_ABORTIFHUNG = 0x0002
 MESSAGE_TIMEOUT_MS = 500  # A hung dialog fails the action instead of blocking a worker.
+# The keyboard hook asks whether the file-name box is empty; it must answer fast.
+TYPING_CHECK_TIMEOUT_MS = 50
 
 # The breadcrumb toolbar's window text is "<localized label>: <folder path>",
 # e.g. "Address: C:\Users" or "Adresse: C:\Users", also with the edit box closed.
@@ -89,11 +95,18 @@ def _address_toolbar(dialog: int) -> int | None:
     return None
 
 
-def send_message(hwnd: int, message: int, wparam: int = 0, lparam: int = 0) -> int:
+def send_message(
+    hwnd: int,
+    message: int,
+    wparam: int = 0,
+    lparam: int = 0,
+    *,
+    timeout_ms: int = MESSAGE_TIMEOUT_MS,
+) -> int:
     """SendMessage with a timeout; raise OSError if the window is gone or hung."""
     result = ULONG_PTR()
     if not user32.SendMessageTimeoutW(
-        hwnd, message, wparam, lparam, SMTO_ABORTIFHUNG, MESSAGE_TIMEOUT_MS, ctypes.byref(result)
+        hwnd, message, wparam, lparam, SMTO_ABORTIFHUNG, timeout_ms, ctypes.byref(result)
     ):
         raise OSError("The file dialog does not respond.")
     return result.value
@@ -169,12 +182,52 @@ class FileDialog:
     def activate(self) -> None:
         activate_window(self.hwnd)
 
+    def hand_back(self, text: str) -> None:
+        """Put text typed into the search bar back into the file-name box, caret at the end.
+
+        For when the user meant to type a name or path after all and left the bar.
+        """
+        self.set_file_name(text)
+        self.activate()
+        self.focus_file_name()
+        send_message(self._file_name_edit(), EM_SETSEL, len(text), len(text))
+
     def _file_name_edit(self) -> int:
         if self._edit is None:
             self._edit = _find_file_name_edit(self.hwnd)
         if self._edit is None:
             raise OSError("This dialog has no file name box.")
         return self._edit
+
+
+def dialog_typing_view() -> tuple[int, int] | None:
+    """`(dialog, file view)` when typing in the foreground dialog opens the search bar.
+
+    The file list counts in Open and Save dialogs alike. An Open dialog starts with
+    the focus in its file-name box, which counts too while it is empty, as there is
+    nothing to type over. A Save dialog's box never counts: new names are typed there.
+    """
+    return dialog_file_view() or _empty_open_file_name_view()
+
+
+def _empty_open_file_name_view() -> tuple[int, int] | None:
+    dialog = user32.GetForegroundWindow()
+    if class_name(dialog) != DIALOG_CLASS:
+        return None
+    # Only Open dialogs have the file-name combo box; Save dialogs use another control.
+    combo = user32.GetDlgItem(dialog, FILE_NAME_COMBO_ID)
+    focus = idle_focus_window()
+    if not combo or not focus or class_name(focus) != EDIT_CLASS:
+        return None
+    if not user32.IsChild(combo, focus):
+        return None
+    try:
+        if send_message(focus, WM_GETTEXTLENGTH, timeout_ms=TYPING_CHECK_TIMEOUT_MS):
+            return None
+    except OSError:
+        return None
+    view = next((w for w in descendants(dialog) if class_name(w) == FILE_VIEW_CLASS), None)
+    return (dialog, view) if view else None
 
 
 def _find_file_name_edit(dialog: int) -> int | None:

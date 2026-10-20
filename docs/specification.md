@@ -330,14 +330,21 @@ Explorer's. IME composition needs target-system validation.
 
 Quick Switch (setting `quick_switch`, on by default) extends Explorer typing to the
 common Open and Save dialogs of other programs: a `#32770` dialog that hosts a
-`SHELLDLL_DefView` file list. Typing starts only while that file list has the
-focus; the file-name box, address bar, search box and navigation pane keep their
-keys. `Shell.Application` does not list dialogs, so the folder is read from the
+`SHELLDLL_DefView` file list. Typing starts while that file list has the focus,
+or while an Open dialog's empty file-name box has it (control 1148, which Save
+dialogs lack; Open dialogs start there). Its emptiness is asked with a 50 ms
+timeout so a hung program never stalls the keyboard hook. A Save dialog's
+file-name box, the address bar, search box and navigation pane keep their keys.
+Escape in the dialog's bar returns the typed text to the file-name box with the
+caret at its end, so a name or path meant for the dialog is not lost. `Shell.Application` does not list dialogs, so the folder is read from the
 dialog's breadcrumb toolbar, whose text is a localized label followed by the path
 (`Address: C:\…`, `Adresse: C:\…`). The path is recognized by its drive letter or
-UNC prefix and must be an existing directory; virtual folders such as This PC are
-not intercepted. The same compact bar opens, docked to the dialog, without
-arrow-key selection in the dialog. Choosing a folder enters its path into the
+UNC prefix and must be an existing directory. Places without a path, such as
+Desktop, This PC or Libraries, still open the bar, because it searches everywhere;
+navigating from them works the same way. The same compact bar opens, docked to the dialog, without
+arrow-key selection in the dialog. Unlike Explorer typing it searches the whole
+catalog rather than the dialog's folder, so any folder, such as the desktop, is a
+few keys away. Choosing a folder enters its path into the
 dialog's file-name box (control 1148 in Open dialogs, otherwise the first visible
 edit outside the address bar and file list), sends the default button's command as
 Enter would, waits up to three seconds for the address bar to show the folder and

@@ -8,12 +8,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from pathscout.platform.file_dialog import dialog_folder
+from pathscout.platform.file_dialog import dialog_folder, dialog_typing_view
 from pathscout.platform.gesture import ViewKind
 from pathscout.platform.windows import (
     activate_window,
     active_tab,
-    dialog_file_view,
     explorer_file_view,
     foreground_explorer,
     foreground_file_dialog,
@@ -32,11 +31,15 @@ SELECT_ONLY_AND_REVEAL = SVSI_SELECT | SVSI_DESELECTOTHERS | SVSI_ENSUREVISIBLE 
 
 @dataclass(frozen=True, slots=True)
 class ExplorerContext:
-    """A focused file view and its folder; for a dialog, `tab` is its file view."""
+    """A focused file view and its folder; for a dialog, `tab` is its file view.
+
+    A dialog may show a folder without a path, such as Desktop or This PC; it
+    still counts, because its search bar searches everywhere.
+    """
 
     hwnd: int
     tab: int
-    folder: Path
+    folder: Path | None
     kind: ViewKind = ViewKind.EXPLORER
 
 
@@ -178,7 +181,7 @@ class ExplorerTracker(threading.Thread):
     def _focused_view(self) -> FocusedView | None:
         if view := explorer_file_view():
             return ViewKind.EXPLORER, view
-        if self.dialogs and (view := dialog_file_view()):
+        if self.dialogs and (view := dialog_typing_view()):
             return ViewKind.FILE_DIALOG, view
         return None
 
@@ -193,12 +196,12 @@ class ExplorerTracker(threading.Thread):
         kind, view = focused
         if kind is ViewKind.FILE_DIALOG:
             folder = dialog_folder(view[0])
-            current = dialog_file_view
+            current = dialog_typing_view
         else:
             folder = cls._explorer_folder(shell, view)
             current = explorer_file_view
-        if folder is None:
-            return None
+            if folder is None:
+                return None  # An Explorer search needs its folder.
         # The user may have switched views while the folder was being resolved.
         return ExplorerContext(*view, folder, kind) if current() == view else None
 

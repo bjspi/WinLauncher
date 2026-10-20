@@ -121,6 +121,7 @@ _bind(user32, "IsWindowVisible", [_HWND], wintypes.BOOL)
 _bind(user32, "IsWindow", [_HWND], wintypes.BOOL)
 _bind(user32, "EnumChildWindows", [_HWND, WNDENUMPROC, wintypes.LPARAM], wintypes.BOOL)
 _bind(user32, "GetDlgItem", [_HWND, _INT], _HWND)
+_bind(user32, "IsChild", [_HWND, _HWND], wintypes.BOOL)
 _bind(
     user32,
     "SendMessageTimeoutW",
@@ -385,13 +386,13 @@ def dialog_file_view() -> tuple[int, int] | None:
 
 def _focused_file_view(top_level: int) -> int | None:
     """The `SHELLDLL_DefView` that contains the idle keyboard focus below `top_level`."""
-    focus = _idle_focus_window()
+    focus = idle_focus_window()
     if not focus or class_name(focus) not in FILE_VIEW_FOCUS_CLASSES:
         return None
     return _file_view_ancestor(focus, top_level)
 
 
-def _idle_focus_window() -> int | None:
+def idle_focus_window() -> int | None:
     """The foreground thread's focus window, unless a menu, drag or resize is active."""
     info = GuiThreadInfo(cbSize=ctypes.sizeof(GuiThreadInfo))
     if not user32.GetGUIThreadInfo(0, ctypes.byref(info)):

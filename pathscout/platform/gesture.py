@@ -28,14 +28,17 @@ class ViewKind(Enum):
 
 @dataclass(frozen=True, slots=True)
 class ExplorerTyping:
-    """Text typed into a file view of Explorer or an Open/Save dialog, searching below `folder`.
+    """Text typed into a file view of Explorer or an Open/Save dialog.
+
+    Explorer searches below `folder`. A dialog searches everywhere; its `folder`
+    is None when it shows a place without a path, such as Desktop or This PC.
 
     `window` is that window's (left, top, right, bottom) in physical screen
     pixels, so the launcher can open next to it.
     """
 
     text: str
-    folder: Path
+    folder: Path | None
     window: tuple[int, int, int, int] | None = None
     # Originating window and tab handles; for a dialog, the dialog and its file view.
     view: tuple[int, int] | None = None

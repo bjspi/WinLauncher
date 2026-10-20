@@ -29,7 +29,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | --- | --- |
 | ⚡ **Instant launcher** | Double-tap <kbd>Ctrl</kbd> or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere. A compact bar opens; results appear as you type. |
 | 📂 **Type-to-search in Explorer** | Start typing in an Explorer file list and a slim bar docks to that window, searching the folder you are in — its own entries first. |
-| 🔀 **Quick Switch in Open/Save dialogs** | Type in a dialog's file list to search its folder: a folder opens in the dialog, a file fills in its name. <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps the dialog to the folder of your last Explorer window. |
+| 🔀 **Quick Switch in Open/Save dialogs** | Type in a dialog's file list to search everywhere: a folder opens in the dialog, a file fills in its name. <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps the dialog to the folder of your last Explorer window. |
 | 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. |
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
@@ -54,7 +54,9 @@ original Explorer tab, without opening another window. Clearing the scope return
 to the global launcher.
 
 **Quick Switch** brings the same bar to the Open and Save dialogs of other
-programs. Click into the dialog's file list and start typing: choosing a folder
+programs. Start typing in an Open dialog, or in the file list of any Open or Save
+dialog, to search all your folders, wherever the dialog opened (<kbd>Esc</kbd>
+puts what you typed back into the file-name box): choosing a folder
 opens it in the dialog, choosing a file opens its folder and enters its name in
 the file-name box. PathScout never confirms the dialog for you, so a Save dialog
 cannot overwrite anything until you press <kbd>Enter</kbd> yourself. In any Open or
@@ -70,7 +72,7 @@ Search & indexing**.
 a `pathscout` command that starts without a console window:
 
 ```powershell
-pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.3.0"
+pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.4.0"
 pathscout --show
 ```
 
@@ -534,9 +536,9 @@ The finished release appears under [Releases](https://github.com/bjspi/PathScout
 - Input methods (IME), Windows 11 tab edge cases, high-DPI multi-monitor setups and
   screen readers still need more real-world testing.
 - Quick Switch works with the standard Windows Open and Save dialogs that show an
-  address bar. Virtual folders such as This PC or Libraries, old-style dialogs and
-  applications with their own file dialogs are left alone. In a "Select Folder"
-  dialog, choosing a folder selects it, as typing its path would.
+  address bar. Old-style dialogs and applications with their own file dialogs are
+  left alone. In a "Select Folder" dialog, choosing a folder selects it, as typing
+  its path would.
 
 ## 📄 License
 

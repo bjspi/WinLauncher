@@ -61,6 +61,12 @@ class ItemActions:
         if folder.is_dir():  # Explorer's folder may have been removed since it was read.
             open_folder(FileDialog(dialog), folder)
 
+    def hand_back_to_dialog(self, text: str, dialog: int) -> None:
+        """Quick Switch: the user left the bar; what they typed goes into the file-name box."""
+        from pathscout.platform.file_dialog import FileDialog
+
+        FileDialog(dialog).hand_back(text)
+
     def reveal(self, path: Path) -> None:
         shell.show_in_folder(path)
 

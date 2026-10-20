@@ -75,7 +75,9 @@ class SearchSession(QObject):
                 self.window.show_kind(None)
                 return website
         query = parse_query(self.window.query.text(), self.window.scope)
-        if self.window.explorer_mode and query.scope == self.window.scope:
+        # The compact bar of a file dialog has no folder: it searches everywhere.
+        scoped = self.window.scope is not None and query.scope == self.window.scope
+        if self.window.explorer_mode and scoped:
             query = replace(query, explorer=True)
         if query.kind is None:
             query = replace(query, kind=self.window.kind)

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pathscout-native"
-version = "0.3.0"
+version = "0.4.0"
 description = "Optional Rust acceleration for PathScout search"
 requires-python = ">=3.11,<3.15"  # Unicode tables exist for 3.11-3.14.
 license = "MIT"

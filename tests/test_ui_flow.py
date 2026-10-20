@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QLocale, Qt, QTimer
-from PySide6.QtGui import QColor, QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QMenu, QMessageBox
 
@@ -907,16 +907,27 @@ class UiFlowTest(unittest.TestCase):
         folder.mkdir()
         file = self.root / "toolbox.txt"
         file.touch()
+        self.indexing.request_full()
+        self.tasks.finish(TaskCategory.INDEX)
         choose = patch.object(self.controller.actions, "choose_in_dialog").start()
         select = patch.object(self.controller.actions, "select_in_explorer").start()
-        dialog = ExplorerTyping("toolbox", self.root, (0, 0, 900, 600), (33, 44), DIALOG)
-        for row, path, hint in ((0, folder, "↵ open in the dialog"), (1, file, "↵ enter as file")):
+        dialog_folder = self.root / "toolbox-cli"  # The dialog's own folder is no limit.
+        dialog = ExplorerTyping("toolbox", dialog_folder, (0, 0, 900, 600), (33, 44), DIALOG)
+        for path, hint in ((folder, "↵ open in the dialog"), (file, "↵ enter as file")):
             self.controller._search_from_explorer(dialog)
             self.controller.search.run()
             self.tasks.finish(TaskCategory.SEARCH)
-            # The same compact bar as in Explorer, but the dialog does not follow arrow keys.
+            # The same compact bar as in Explorer, searching everywhere; no arrow-key follow.
             self.assertTrue(self.window.explorer_mode)
-            self.assertTrue(self.controller.search.current_query().explorer)
+            query = self.controller.search.current_query()
+            self.assertIsNone(query.scope)
+            self.assertFalse(query.explorer)
+            self.assertTrue(self.window.clear_scope.isHidden())
+            paths = [
+                self.window.results.item(i).data(Qt.ItemDataRole.UserRole).hit.item.path
+                for i in range(self.window.results.count())
+            ]
+            row = paths.index(path)
             self.assertFalse(self.controller.explorer_select.isActive())
             self.window.results.setCurrentRow(row)
             self.assertFalse(self.controller.explorer_select.isActive())
@@ -933,6 +944,39 @@ class UiFlowTest(unittest.TestCase):
         )
         self.assertEqual(self.controller._explorer_target(), ExplorerTarget(11, 22, self.root))
         self.assertIsNone(self.controller._dialog_target())
+
+    def test_dialog_on_desktop_or_this_pc_still_opens_the_bar(self):
+        # Their address bar shows a name, not a path; the bar searches everywhere anyway.
+        self.window.hide()
+        dialog = ExplorerTyping("t", None, (0, 0, 900, 600), (33, 44), DIALOG)
+        with patch.object(self.indexing, "request_folder") as refresh:
+            self.controller._search_from_explorer(dialog)
+        self.assertTrue(self.window.isVisible())
+        self.assertTrue(self.window.serves_file_dialog)
+        self.assertIsNone(self.controller.search.current_query().scope)
+        refresh.assert_not_called()
+
+    def test_escape_returns_typed_text_to_the_dialog_but_not_to_explorer(self):
+        hand_back = patch.object(self.controller.actions, "hand_back_to_dialog").start()
+        escape = next(
+            shortcut
+            for shortcut in self.window.findChildren(QShortcut)
+            if shortcut.key() == QKeySequence("Escape")
+        )
+        self.window.hide()
+        dialog = ExplorerTyping("C", self.root, (0, 0, 900, 600), (33, 44), DIALOG)
+        self.controller._search_from_explorer(dialog)
+        self.window.query.setText(r"C:\notes")
+        escape.activated.emit()
+        self.assertFalse(self.window.isVisible())
+        self.tasks.finish(TaskCategory.ACTION)
+        hand_back.assert_called_once_with(r"C:\notes", 33)
+        self.controller._search_from_explorer(
+            ExplorerTyping("x", self.root, (0, 0, 900, 600), (11, 22))
+        )
+        escape.activated.emit()
+        self.assertFalse(self.window.isVisible())
+        hand_back.assert_called_once()
 
     def test_ctrl_g_jump_navigates_the_dialog_in_the_background(self):
         show = patch.object(self.controller.actions, "show_in_dialog").start()

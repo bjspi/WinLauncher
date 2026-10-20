@@ -14,6 +14,7 @@ import time
 from ctypes import wintypes
 
 from pathscout.platform.explorer import ExplorerTracker
+from pathscout.platform.file_dialog import dialog_typing_view
 from pathscout.platform.gesture import (
     DoubleCtrlGesture,
     ExplorerTyping,
@@ -39,7 +40,6 @@ from pathscout.platform.windows import (
     WM_QUIT,
     WM_SYSKEYDOWN,
     KeyboardData,
-    dialog_file_view,
     explorer_file_view,
     foreground_file_dialog,
     kernel32,
@@ -220,4 +220,4 @@ class KeyboardListener(threading.Thread):
 
     @staticmethod
     def _focused_view(kind: ViewKind) -> tuple[int, int] | None:
-        return dialog_file_view() if kind is ViewKind.FILE_DIALOG else explorer_file_view()
+        return dialog_typing_view() if kind is ViewKind.FILE_DIALOG else explorer_file_view()
