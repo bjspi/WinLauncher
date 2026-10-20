@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pathscout.catalog import long_paths
 from pathscout.catalog.model import normalize, path_key
 
 DEFAULT_MARKER_FILES = (
@@ -91,7 +92,7 @@ class ExclusionPolicy:
     def _has_marker(self, folder: Path) -> bool:
         for marker in self.markers:
             try:
-                (folder / marker).stat()
+                long_paths.stat(folder / marker)
             except (FileNotFoundError, NotADirectoryError):
                 continue
             except OSError:

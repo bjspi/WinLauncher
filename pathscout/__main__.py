@@ -139,6 +139,8 @@ def _configure_logging(data_dir: Path) -> QueueListener:
     logging.basicConfig(
         level=logging.INFO,
         handlers=[QueueHandler(messages)],
+        # The queue carries the bare message; the file handler formats it once.
+        format="%(message)s",
         force=True,
     )
     listener = QueueListener(messages, handler)

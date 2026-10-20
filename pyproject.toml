@@ -4,12 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pathscout"
-version = "0.2.1"
+version = "0.2.2"
 description = "Local file search and application launcher for Windows"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
 dependencies = ["PySide6>=6.7,<7", "pywin32>=306; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+# The Rust search engine wheel of this release; the release workflow checks the version.
+rust = [
+    "pathscout_native @ https://github.com/bjspi/PathScout/releases/download/v0.2.2/pathscout_native-0.2.2-cp311-abi3-win_amd64.whl ; sys_platform == 'win32' and python_version < '3.15'",
+]
 
 [project.gui-scripts]
 pathscout = "pathscout.__main__:main"

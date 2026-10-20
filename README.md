@@ -31,6 +31,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📂 **Type-to-search in Explorer** | Start typing in an Explorer file list and a slim bar docks to that window, searching the folder you are in — its own entries first. |
 | 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. |
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
+| 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
 | 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more. |
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
@@ -58,15 +59,14 @@ to the global launcher.
 a `pathscout` command that starts without a console window:
 
 ```powershell
-pipx install git+https://github.com/bjspi/PathScout.git@v0.2.1
-pipx inject pathscout https://github.com/bjspi/PathScout/releases/download/v0.2.1/pathscout_native-0.2.1-cp311-abi3-win_amd64.whl
+pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.2.2"
 pathscout --show
 ```
 
-The second line adds the Rust search engine from the release. Update later with
-`pipx install --force` and `pipx inject --force` using the new version's tag and
-wheel. `pipx uninstall pathscout` removes the program; your settings and catalog
-in `%USERPROFILE%\.PathScout` stay.
+The `[rust]` extra downloads the matching Rust search engine wheel from the
+GitHub release — no compiler needed. Update later by running the same command
+with the new version's tag and `--force`. `pipx uninstall pathscout` removes the
+program; your settings and catalog in `%USERPROFILE%\.PathScout` stay.
 
 ### From a checkout
 
@@ -74,20 +74,16 @@ in `%USERPROFILE%\.PathScout` stay.
 git clone https://github.com/bjspi/PathScout.git
 cd PathScout
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install -e ".[rust]"
 .\.venv\Scripts\python.exe -m pathscout
 ```
 
-For the fast Rust search engine (and `contains:`), also install the matching
-`pathscout_native` wheel from the [latest release](https://github.com/bjspi/PathScout/releases/latest)
-— no compiler needed — or [build it yourself](#rust-search-engine):
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install .\pathscout_native-0.2.1-cp311-abi3-win_amd64.whl
-```
-
-Without it PathScout still works with its slower Python engine and says so in the
-search bar.
+`[rust]` adds the fast Rust search engine (needed for `contains:`) as a prebuilt
+wheel from the matching [GitHub release](https://github.com/bjspi/PathScout/releases).
+After `git pull` to a newer version, run the install line again. Without the
+extra — or on a commit newer than the latest release — PathScout still works
+with its slower Python engine and says so in the search bar; you can also
+[build the engine yourself](#rust-search-engine).
 
 Afterwards, start it without a console window:
 
@@ -144,16 +140,16 @@ Use `t:` as shorthand for `type:`, for example `t:dir`, `t:file` or `t:app`.
 ```text
 report                                  name or path contains "report"
 vsc type:app                            initials of an application
-*.json                                 shell-style filename wildcard
+*.json                                  shell-style filename wildcard
 report[0-9].json                        one digit in the filename
 report ext:pdf,docx                     only these extensions
-ext:doc,docx                           Word document extensions
-ext:doc*                               any extension starting with doc
-ext:(jpg,png)                          either extension; parentheses are optional
+ext:doc,docx                            Word document extensions
+ext:doc*                                any extension starting with doc
+ext:(jpg,png)                           either extension; parentheses are optional
 budget in:"D:\Work Projects"            inside this folder
 path:projects/reports name:annual       ordered parent folders, name only
-report after:2025-06-01 before:2025-06-30 sort:modified
-size:>5mb size:<1gb                    files larger than 5 MB and smaller than 1 GB
+report after:2025-06-01 sort:modified   changed since June 2025, newest first
+size:>5mb size:<1gb                     files larger than 5 MB and smaller than 1 GB
 report after:2026-02* before:2026-02*   reports modified during February 2026
 report !archive                         exclude paths containing "archive"
 report contains:"invoice number"        filter matching text files by their contents (Rust)
@@ -161,10 +157,10 @@ report contains:"invoice number"        filter matching text files by their cont
 *.json rg:gsk_*                         content: and rg: are aliases for contains:
 report match:keyword score:match        no fuzzy matching, text relevance only
 report low:true                         include low-priority results
-%TEMP%                                 open the Windows temporary directory
-%LOCALAPPDATA%                         open local application data
-~/                                     list the user directory's direct children
-~/.config                              open this folder even outside indexed roots
+%TEMP%                                  open the Windows temporary directory
+%LOCALAPPDATA%                          open local application data
+~/                                      list the user directory's direct children
+~/.config                               open this folder even outside indexed roots
 ```
 
 | Filter | Meaning |
@@ -236,6 +232,34 @@ to the next search without rebuilding the catalog.
 Content patterns match anywhere within a line and support `*`, `?`, `[0-9]` and
 `[!0-9]`. They do not span lines. Regex punctuation such as `.` and `+` stays
 literal; use `[*]`, `[?]` and `[[]` to search for literal wildcard characters.
+
+### 🧮 Calculator
+
+When the query is a calculation, its result appears above the search results and
+is selected: <kbd>Enter</kbd> or a click copies it, <kbd>↓</kbd> moves to the
+results, which are searched as usual.
+
+```text
+200 + 10%              220      percent of the left side for + and -
+50% * 30               15       elsewhere 50% is 0.5
+2^10 · 2**10           1024     power; also × and ÷
+1,5 * 3                4,5      decimal commas are answered with commas
+sqrt(2) · exp(1) · ln(e) · log(1000) · log(8, 2)
+sin(pi/2) · cos · tan · asin · acos · atan · deg(pi) · rad(180)
+floor(2.7) · ceil(2.1) · round(2.5) · round(2.345, 2) · abs(-3) · fact(5)
+min(4, 2, 9) · max(1,5; 2) · mod(10, 3)
+bin(10) · hex(255) · oct(8) · 0xff · 0b101 · 0o17
+chr(65) · ascii(10) · ord(A) · hex2ascii(30323030) · ascii2hex(0200)
+```
+
+Constants are `pi`/`π`, `e` and `tau`; names ignore case. `log` is base 10 unless
+a base is given, `ln` is natural, and angles are radians. Multi-argument
+functions separate arguments with `,`, or with `;` when the numbers use decimal
+commas. A lone number or constant (`2024`, `pi`) and digits joined by hyphens
+(`2024-06-15`, `2024-2025`) stay searches. The calculator parses the text itself
+and never runs Python code; results larger than about 1000 digits are not shown.
+
+### 📁 Paths and shortcuts
 
 Start with `%` to suggest known Windows directory variables (`%APPDATA%`,
 `%USERPROFILE%` and others). A trailing `/` or `\` lists direct children;
@@ -397,15 +421,16 @@ verifies the Python wheel/source distribution and the Windows x64 Rust wheel. Do
 Pushing a `v*` tag runs the same checks and publishes a GitHub Release only after
 they pass, attaching those packages and a clean source ZIP. The tag must match
 `pathscout/__init__.py`, `pyproject.toml`, `native/pyproject.toml` and
-`native/Cargo.toml` (for example `v0.2.1`). Install both wheels from a release
+`native/Cargo.toml` (for example `v0.2.2`), and the `rust` extra in `pyproject.toml`
+must point to that release's native wheel. Install both wheels from a release
 with `python -m pip install <python-wheel> <native-wheel>` to enable Rust without
 installing a compiler. Source ZIPs retain `native/` for local builds.
 
-For example, publish version 0.2.1 from a clean, committed checkout with:
+For example, publish version 0.2.2 from a clean, committed checkout with:
 
 ```powershell
-git tag -a v0.2.1 -m "PathScout 0.2.1"
-git push origin v0.2.1
+git tag -a v0.2.2 -m "PathScout 0.2.2"
+git push origin v0.2.2
 ```
 
 The finished release appears under [Releases](https://github.com/bjspi/PathScout/releases).
@@ -418,6 +443,8 @@ The finished release appears under [Releases](https://github.com/bjspi/PathScout
 
 - Windows only: the keyboard hook, Explorer integration, folder watching and
   autostart use Windows APIs.
+- Paths longer than 260 characters are indexed and searched, but some programs
+  cannot open them; Explorer and most current applications can.
 - Indexes by walking folders and watching changes, not by reading the NTFS
   journal; very large drive-wide catalogs build slower. Without the Rust engine,
   broad one-letter searches over 50,000 entries take around half a second.

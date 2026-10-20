@@ -19,6 +19,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
 
 from pathscout.actions import ExplorerTarget
+from pathscout.catalog import long_paths
 from pathscout.catalog.model import CatalogItem, ItemKind
 from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from pathscout.platform.gesture import ExplorerTyping, InputUnavailable
@@ -110,7 +111,12 @@ class UiFlowTest(unittest.TestCase):
         for explorer in (False, True):
             with self.subTest(explorer=explorer):
                 self.window._set_explorer_mode(explorer, self.root)
-                with patch.object(Path, "stat", side_effect=AssertionError("GUI filesystem read")):
+                read = AssertionError("GUI filesystem read")
+                with (
+                    patch.object(Path, "stat", side_effect=read),
+                    patch.object(long_paths, "stat", side_effect=read),
+                    patch.object(long_paths, "lstat", side_effect=read),
+                ):
                     self.window.set_results([hit], 1, query=query)
                     self.assertFalse(self.window.grab().isNull())
                 item = self.window.results.item(0)
@@ -493,6 +499,40 @@ class UiFlowTest(unittest.TestCase):
             c.apply_settings(replace(c.settings, excluded_patterns=("build",)))
         monitor.assert_called_once()
         self.assertEqual(self.tasks.count(TaskCategory.INDEX), before + 1)
+
+    def test_calculation_is_selected_copied_and_left_with_the_arrow_keys(self):
+        window = self.window
+        (self.root / "report.txt").write_text("Fixture")
+        sum_file = self.root / "1+1.txt"
+        sum_file.write_text("Fixture")
+        self.indexing.request_full()
+        self.tasks.finish(TaskCategory.INDEX)
+        window.query.setText("report")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.assertTrue(window.calculation_row.isHidden())
+        window.query.setText("200 + 10%")
+        self.assertFalse(window.calculation_row.isHidden())
+        self.assertTrue(window.calculation_selected)
+        self.assertIn("= 220", window.calculation_row.result.text())
+        QTest.keyClick(window.query, Qt.Key.Key_Return)
+        self.assertEqual(QApplication.clipboard().text(), "220")
+        self.launch.assert_not_called()
+        # A file whose name is also a calculation: the result row comes first.
+        window.query.setText("1+1")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.assertEqual(window.results.item(0).data(Qt.ItemDataRole.UserRole).item.path, sum_file)
+        self.assertTrue(window.calculation_selected)
+        self.assertIsNone(window.selected_hit())
+        QTest.keyClick(window.query, Qt.Key.Key_Down)
+        self.assertFalse(window.calculation_selected)
+        self.assertEqual(window.selected_hit().item.path, sum_file)
+        QTest.keyClick(window.query, Qt.Key.Key_Up)
+        self.assertTrue(window.calculation_selected)
+        window.query.setText("1+1 report")
+        self.assertTrue(window.calculation_row.isHidden())
+        self.assertFalse(window.calculation_selected)
 
     def test_number_fields_show_values_and_clamp_typed_numbers(self):
         dialog = SettingsDialog(self.controller.settings)

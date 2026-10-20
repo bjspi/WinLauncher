@@ -8,6 +8,7 @@ completed or acknowledged cancellation of that read (`_pending_read`).
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 from collections.abc import Iterator
@@ -20,6 +21,7 @@ import win32event
 import win32file
 import winerror
 
+from pathscout.catalog import long_paths
 from pathscout.catalog.exclusions import ExclusionPolicy
 from pathscout.catalog.model import is_within, normalize
 from pathscout.platform.changes import (
@@ -214,7 +216,7 @@ class DirectoryWatcher(threading.Thread):
         if normalize(path.name) in self.markers:
             # A marker decides about its whole directory, even an already excluded one.
             return FolderChange(path.parent)
-        is_file = path.is_file()
+        is_file = os.path.isfile(long_paths.os_path(path))
         if action == FILE_ACTION_MODIFIED and not is_file:
             return None  # Directory metadata waits for periodic reconciliation.
         if not policy.allows(path):

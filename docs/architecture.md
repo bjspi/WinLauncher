@@ -66,6 +66,9 @@ One scan is split along its responsibilities:
 - `_ScanSession` walks directories. Entries stream from `os.scandir`; traversal
   state is a local pending-folder list. Each visit returns the subfolder to descend
   into, so no mutable state is passed through parameters.
+- `catalog/long_paths.py` gives every `stat`/`lstat`/`scandir` call the
+  extended-length form for paths of 240 characters or more and turns entry paths
+  back into ordinary ones, so the catalog never stores the `\\?\` prefix.
 - `_StagedRows` batches accepted items (500 per batch) into a private temporary table.
 - `_ScanOutcome` records skips, error messages, paths whose old rows must survive,
   and unavailable sources.

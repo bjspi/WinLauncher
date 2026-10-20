@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from pathscout.actions import ExplorerTarget, ItemActions
+from pathscout.catalog import long_paths
 from pathscout.catalog.exclusions import ExclusionPolicy
 from pathscout.catalog.indexer import CatalogIndexer
 from pathscout.catalog.model import (
@@ -512,14 +513,14 @@ class BusinessRulesTest(unittest.TestCase):
         self.file("report.txt")
         self.scan()
         previous = self.store.count()
-        stat = Path.stat
+        stat = long_paths.stat
 
-        def available_only(path, *args, **kwargs):
-            if path == self.root / ".nobackup":
+        def available_only(path):
+            if Path(path) == self.root / ".nobackup":
                 raise PermissionError("marker unavailable")
-            return stat(path, *args, **kwargs)
+            return stat(path)
 
-        with patch.object(Path, "stat", available_only):
+        with patch.object(long_paths, "stat", available_only):
             report = self.indexer.scan(self.settings)
             self.assertTrue(report.errors)
             self.assertEqual(self.store.count(), previous)
@@ -822,15 +823,16 @@ class BusinessRulesTest(unittest.TestCase):
             self.store.stage(connection, ((item, source) for item in items))
             self.store.publish(connection, active_roots=(source,), preserved_roots=())
         settings = replace(self.settings, max_results=10)
-        stat = Path.stat
+        stat = long_paths.stat
         calls = []
 
-        def counted(path, *args, **kwargs):
-            calls.append(path)
-            return stat(path, *args, **kwargs)
+        def counted(path):
+            calls.append(Path(path))
+            return stat(path)
 
-        with patch.object(Path, "stat", counted):
+        with patch.object(long_paths, "stat", counted):
             self.assertEqual(len(self.hits("report match:keyword", settings)), 10)
+        self.assertTrue(calls)  # Kept hits were probed for markers.
         candidate_folders = {path.parent for path in calls if path.parent.parent == self.root}
         self.assertLess(len(candidate_folders), 30)  # Not all 150 candidate folders.
 
@@ -922,14 +924,14 @@ class BusinessRulesTest(unittest.TestCase):
     def test_file_refresh_preserves_failed_path_and_honors_ancestor_rules(self):
         path = self.file("private/report.txt")
         self.scan()
-        lstat = Path.lstat
+        lstat = long_paths.lstat
 
         def unavailable(candidate):
-            if candidate == path:
+            if Path(candidate) == path:
                 raise PermissionError("fixture")
             return lstat(candidate)
 
-        with patch.object(Path, "lstat", unavailable):
+        with patch.object(long_paths, "lstat", unavailable):
             report = self.indexer.refresh_files(self.settings, (path,))
         self.assertTrue(report.errors)
         self.assertTrue(self.hits("report"))

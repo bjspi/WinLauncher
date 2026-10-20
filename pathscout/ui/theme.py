@@ -27,6 +27,10 @@ QWidget { font-family: 'Segoe UI'; font-size: 10pt; color: #1f2329; }
 QDialog { background: #f6f7f9; }
 QFrame#surface { background: #f7f8fa; border: 1px solid #d5dae1; border-radius: 10px; }
 QFrame#divider { background: #e3e6ea; border: 0; margin: 0 16px; }
+QFrame#calculation { background: transparent; border: 0; }
+QFrame#calculation[selected="true"] { background: #e2e7ee; }
+QLabel#calculationResult { font-size: 15pt; color: #1f2329; }
+QLabel#calculationHint { font-size: 8pt; color: #a3a9b1; }
 QLineEdit#query { background: transparent; border: 0; padding: 4px 0; font-size: 18pt; color: #1f2329; selection-background-color: #bcd5f5; selection-color: #1f2329; }
 QLineEdit#query[explorer="true"] { font-size: 10pt; padding: 1px 0; }
 QToolButton#menuButton { background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 3px; }

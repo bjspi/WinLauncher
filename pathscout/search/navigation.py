@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
+from pathscout.catalog import long_paths
 from pathscout.catalog.exclusions import ExclusionPolicy
 from pathscout.catalog.model import CatalogItem, ItemKind, normalize
 from pathscout.catalog.store import CatalogStore
@@ -115,25 +116,27 @@ def _path_items(
     if not path.is_absolute():
         raise ValueError("The expanded shortcut must be an absolute path.")
     browsing = text.endswith(("/", "\\"))
-    if not browsing and path.exists():
+    if not browsing and os.path.lexists(long_paths.os_path(path)):
         yield _item(path), "Path shortcut"
         return
     parent, prefix = (path, "") if browsing else (path.parent, normalize(path.name))
-    if not exclusions.allows(parent, directory=True) or not parent.is_dir():
+    if not exclusions.allows(parent, directory=True) or not os.path.isdir(
+        long_paths.os_path(parent)
+    ):
         return
-    with os.scandir(parent) as entries:
+    with long_paths.scandir(parent) as entries:
         for entry in entries:
             if cancel is not None and cancel.is_set():
                 return
             if normalize(entry.name).startswith(prefix):
                 try:
-                    yield _item(Path(entry.path)), "Path completion"
+                    yield _item(long_paths.ordinary_path(entry.path)), "Path completion"
                 except FileNotFoundError:
                     continue  # A temporary file may disappear during enumeration.
 
 
 def _item(path: Path) -> CatalogItem:
-    info = path.stat()
+    info = long_paths.stat(path)
     kind = ItemKind.FOLDER if stat.S_ISDIR(info.st_mode) else ItemKind.FILE
     return CatalogItem(
         path, kind, info.st_size, info.st_mtime, attributes=getattr(info, "st_file_attributes", 0)

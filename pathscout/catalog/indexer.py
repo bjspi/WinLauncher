@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
+from pathscout.catalog import long_paths
 from pathscout.catalog.model import (
     REGISTRY_SOURCE,
     CatalogItem,
@@ -91,9 +92,13 @@ class _EntryRules:
         return self._unless_ignored(catalog_item(path, info, classify_kind(path, directory)))
 
     def application_item(self, path: Path) -> CatalogItem | None:
-        if not path.is_file() or not self.exclusions.allows(path, application=True):
+        try:
+            info = long_paths.stat(path)
+        except OSError:
             return None
-        return self._unless_ignored(catalog_item(path, path.stat(), ItemKind.APP))
+        if not stat.S_ISREG(info.st_mode) or not self.exclusions.allows(path, application=True):
+            return None
+        return self._unless_ignored(catalog_item(path, info, ItemKind.APP))
 
     def allows_scope(self, folder: Path, source_root: Path) -> bool:
         """A scoped scan inherits every pruning decision of the folders above it.
@@ -107,7 +112,7 @@ class _EntryRules:
         )
 
     def _allows_folder(self, folder: Path, *, explicit_root: bool) -> bool:
-        info = folder.stat() if explicit_root else folder.lstat()
+        info = long_paths.stat(folder) if explicit_root else long_paths.lstat(folder)
         if not stat.S_ISDIR(info.st_mode):
             return False
         if not explicit_root and _is_link_or_offline(info, directory=True):
@@ -245,7 +250,8 @@ class _ScanSession:
                 return False
             if root != source.root and not source.apps_only:
                 # A scoped root is itself an entry of its parent folder.
-                self.rows.add(catalog_item(root, root.stat(), ItemKind.FOLDER), source.id)
+                info = long_paths.stat(root)
+                self.rows.add(catalog_item(root, info, ItemKind.FOLDER), source.id)
         except OSError as exc:
             self.outcome.source_unavailable(source, root, exc)
             return False
@@ -259,7 +265,7 @@ class _ScanSession:
         """
         subfolders = []
         try:
-            with os.scandir(folder) as entries:
+            with long_paths.scandir(folder) as entries:
                 for entry in entries:
                     if self.cancelled:
                         break
@@ -271,7 +277,7 @@ class _ScanSession:
         return subfolders
 
     def _visit(self, entry: os.DirEntry, source: CatalogSource) -> Path | None:
-        path = Path(entry.path)
+        path = long_paths.ordinary_path(entry.path)
         if path_key(path) in self.nested_source_keys:
             self._retain_nested_source(path)
             return None
@@ -302,7 +308,7 @@ class _ScanSession:
     def _file_item(self, path: Path, source: CatalogSource) -> CatalogItem | None:
         if not self.rules.allows_scope(path.parent, source.root):
             return None
-        info = path.lstat()
+        info = long_paths.lstat(path)
         if not stat.S_ISREG(info.st_mode):
             return None
         item = self.rules.entry_item(path, info, directory=False, application=source.apps_only)

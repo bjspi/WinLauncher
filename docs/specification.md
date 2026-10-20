@@ -36,6 +36,12 @@ outage were not reported. A watch failure is reported once per outage, with the
 Windows error, and stays visible in the launcher, the tray tooltip and the index
 status until the watch is restored.
 
+Paths longer than Windows' 260-character limit are indexed, watched and searched
+like others: file-system calls use the extended-length form (`\\?\C:\...`,
+`\\?\UNC\server\share\...`) from 240 characters on, while the catalog, the UI
+and opened paths keep the ordinary form. This does not depend on the system-wide
+long-path setting.
+
 ## Exclusions
 
 An explicit directory exclusion applies to itself and every descendant, with path
@@ -308,6 +314,21 @@ searched folder. Explorer completion shows matching direct folders and files,
 with recursive results only as a fallback. A regular `in:` query lists direct
 entries before deeper matches; relevance orders each group, and priority classes
 still come first.
+
+When the query is a calculation (`pathscout/calculator.py`), the launcher shows
+its result in a row above the results and selects it: Enter or a click copies the
+result, Down moves to the first result and Up from there returns to the
+calculation. The search still runs. Explorer typing has no calculator. A query
+counts as a calculation only with an operator, `%`, a function call or a
+`0x`/`0b`/`0o` literal and only if it parses completely; lone numbers and
+constants and digits joined by hyphens remain searches. `+` and `-` apply a bare
+percentage to their left operand (`200 + 10%` is 220); elsewhere `x%` is x/100.
+`^` and `**` are right-associative powers that bind tighter than unary minus
+(`-2^2` is -4). Decimal commas are accepted outside argument lists and inside
+them when `;` separates the arguments; the result then uses a decimal comma.
+Results show up to 12 significant digits; integer powers beyond about 1000
+digits, non-finite and complex results show nothing. The parser never evaluates
+Python code.
 
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
 the result's folder and its parents up to the configured root (or up to, but not

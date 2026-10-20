@@ -36,6 +36,9 @@ jobs:
               package = tomllib.loads(pathlib.Path(file).read_text())[section]['version']
               assert package == version, f'{file}: {package} != {version}'
           assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag does not match package version'
+          extra = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['optional-dependencies']['rust'][0]
+          assert f'/v{version}/pathscout_native-{version}-' in extra, 'The rust extra points to another release'
+
       - uses: actions/download-artifact@v4
         with:
           name: pathscout-windows-packages

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from collections.abc import Iterator
 from pathlib import Path
 
+from pathscout.catalog import long_paths
 from pathscout.catalog.indexer import catalog_item, classify_kind
 from pathscout.search.candidates import Candidate
 
@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 def directory_candidates(folder: Path, cancel: threading.Event | None) -> Iterator[Candidate]:
     try:
-        with os.scandir(folder) as entries:
+        with long_paths.scandir(folder) as entries:
             for entry in entries:
                 if cancel is not None and cancel.is_set():
                     return
                 try:
-                    path = Path(entry.path)
+                    path = long_paths.ordinary_path(entry.path)
                     item = catalog_item(
                         path,
                         entry.stat(follow_symlinks=False),

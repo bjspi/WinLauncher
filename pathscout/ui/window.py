@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pathscout.calculator import Calculation, calculate
 from pathscout.catalog.model import ItemKind
 from pathscout.search.query import SearchQuery
 from pathscout.search.query_parser import without_type_filter
@@ -268,6 +269,46 @@ def _logical_rect(native: tuple[int, int, int, int]) -> QRect | None:
     return None
 
 
+class CalculationRow(QFrame):
+    """The calculator's result above the search results; a click copies it."""
+
+    clicked = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("calculation")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(22, 8, 16, 8)
+        row.setSpacing(12)
+        self.result = QLabel()
+        self.result.setObjectName("calculationResult")
+        self.result.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.hint = QLabel()
+        self.hint.setObjectName("calculationHint")
+        row.addWidget(self.result, 1)
+        row.addWidget(self.hint)
+        self.setAccessibleName("Calculation result")
+        self.hide()
+
+    def show_result(self, calculation: Calculation, selected: bool) -> None:
+        metrics = self.result.fontMetrics()
+        text = f"= {calculation.result}"
+        self.result.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, 480))
+        self.result.setToolTip(f"{calculation.expression} = {calculation.result}")
+        self.hint.setText("Enter copies" if selected else "")
+        self.setAccessibleDescription(text)
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.show()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        event.accept()
+
+
 class LauncherWindow(QWidget):
     query_changed = Signal()
     open_requested = Signal(object)
@@ -290,6 +331,9 @@ class LauncherWindow(QWidget):
         self.catalog_count = 0
         self.explorer_mode = False  # Compact bar next to the Explorer window.
         self.explorer_view: tuple[int, int] | None = None
+        self.calculation: Calculation | None = None
+        # The calculation, not a result, receives Enter while it is selected.
+        self.calculation_selected = False
         self._bottom_anchor: int | None = None
         self._resize_pending = False
         self.setObjectName("launcher")
@@ -311,6 +355,9 @@ class LauncherWindow(QWidget):
         self.divider.setObjectName("divider")
         self.divider.setFixedHeight(1)
         layout.addWidget(self.divider)
+        self.calculation_row = CalculationRow()
+        self.calculation_row.clicked.connect(self.copy_calculation)
+        layout.addWidget(self.calculation_row)
         self.empty = self._label("message")
         layout.addWidget(self.empty)
         layout.addWidget(self._build_results())
@@ -337,6 +384,7 @@ class LauncherWindow(QWidget):
         self.query.setPlaceholderText("Search apps, files, %TEMP% or ~/")
         self.query.setAccessibleName("Search query")
         self.query.textChanged.connect(self.query_changed)
+        self.query.textChanged.connect(self._update_calculation)
         self.query.installEventFilter(self)
         row.addWidget(self.query, 1)
         self.clear_scope = QToolButton()
@@ -487,7 +535,10 @@ class LauncherWindow(QWidget):
     def _handle_key(self, watched: QObject, event: QKeyEvent) -> bool:
         modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not modifiers:
-            self.open_selected()
+            if self.calculation_selected:
+                self.copy_calculation()
+            else:
+                self.open_selected()
             return True
         if watched is self.query and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             self._move_selection(1 if event.key() == Qt.Key.Key_Down else -1)
@@ -495,8 +546,53 @@ class LauncherWindow(QWidget):
         return False
 
     def _move_selection(self, step: int) -> None:
+        """The calculation, when shown, sits above the first result."""
+        if self.calculation is not None:
+            if self.calculation_selected and step > 0 and self.results.count():
+                self._select_calculation(False)
+                self.results.setCurrentRow(0)
+                return
+            if not self.calculation_selected and step < 0 and self.results.currentRow() <= 0:
+                self._select_calculation(True)
+                return
+            if self.calculation_selected:
+                return
         last = self.results.count() - 1
         self.results.setCurrentRow(max(0, min(last, self.results.currentRow() + step)))
+
+    # Calculator ---------------------------------------------------------------
+
+    def _update_calculation(self, *_changed) -> None:
+        """Show the result of a typed calculation; the search runs regardless."""
+        previous = self.calculation
+        self.calculation = None if self.explorer_mode else calculate(self.query.text())
+        if self.calculation is None:
+            self.calculation_row.hide()
+            if self.calculation_selected:
+                self._select_calculation(False)
+                if self.results.count():
+                    self.results.setCurrentRow(0)
+        else:
+            self._select_calculation(previous is None or self.calculation_selected)
+        if not self.calculation_row.isHidden() or previous is not None:
+            self.empty.setVisible(self.empty.isVisible() and self.calculation is None)
+            self._fit_height()
+
+    def _select_calculation(self, selected: bool) -> None:
+        self.calculation_selected = selected and self.calculation is not None
+        if self.calculation_selected:
+            self.results.setCurrentRow(-1)
+        if self.calculation is not None:
+            self.calculation_row.show_result(self.calculation, self.calculation_selected)
+
+    def copy_calculation(self) -> None:
+        if self.calculation is None:
+            return
+        QApplication.clipboard().setText(self.calculation.result)
+        self._select_calculation(True)
+        self.status.setText("Result copied to clipboard")
+        self.status.show()
+        self._fit_height()
 
     def focus_query(self) -> None:
         self.query.setFocus()
@@ -533,11 +629,13 @@ class LauncherWindow(QWidget):
             self.results.addItem(item)
             if previous is not None and hit.item.path == previous.item.path:
                 selected_row = row
-        if hits:
+        if hits and not self.calculation_selected:
             self.results.setCurrentRow(selected_row)
         # An empty query without history stays a bare search bar.
         self.empty.setText(NO_MATCHES)
-        self.empty.setVisible(not hits and bool(self.query.text().strip()))
+        self.empty.setVisible(
+            not hits and bool(self.query.text().strip()) and self.calculation is None
+        )
         status = f"{len(hits)} results  ·  {elapsed_ms:.0f} ms"
         if not self.explorer_mode:
             status += f"  ·  {self.catalog_count:,} indexed"
@@ -578,7 +676,14 @@ class LauncherWindow(QWidget):
         limit = EXPANDED_ROWS if self.expanded and not self.explorer_mode else layout.visible_rows
         rows = min(self.results.count(), limit)
         self.results.setFixedHeight(rows * layout.height + 2 * self.results.frameWidth())
-        below_bar = (self.empty, self.results, self.detail, self.footer, self.activity)
+        below_bar = (
+            self.calculation_row,
+            self.empty,
+            self.results,
+            self.detail,
+            self.footer,
+            self.activity,
+        )
         self.divider.setVisible(any(not widget.isHidden() for widget in below_bar))
         if not self._resize_pending:
             # Labels are measured correctly only after Qt has polished them.
@@ -663,6 +768,7 @@ class LauncherWindow(QWidget):
         self.query.setText(text)
         self.query.blockSignals(False)
         self._set_explorer_mode(near is not None or explorer_view is not None, scope)
+        self._update_calculation()
         anchor = _logical_rect(near) if near is not None else None
         if anchor is not None:
             self._place_in(anchor)

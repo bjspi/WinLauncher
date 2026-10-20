@@ -72,7 +72,10 @@ def native_availability() -> NativeAvailability:
         native = importlib.import_module("pathscout_native")
     except ModuleNotFoundError as exc:
         if exc.name == "pathscout_native":
-            return _unavailable("The Rust search engine is not installed.")
+            return _unavailable(
+                'The Rust search engine is not installed (pip install -e ".[rust]" in the '
+                "PathScout folder; see the README)."
+            )
         return _unavailable(f"The Rust search engine cannot be loaded: {exc}")
     except Exception as exc:
         return _unavailable(f"The Rust search engine cannot be loaded: {exc}")
