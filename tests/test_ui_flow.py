@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import struct
 import tempfile
 import threading
 import unittest
@@ -28,6 +29,7 @@ from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import SearchHit
 from pathscout.settings import Settings, SettingsFile
 from pathscout.ui.controller import LauncherController
+from pathscout.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
 from pathscout.ui.indexing import IndexJobKind
 from pathscout.ui.settings import SettingsDialog
 from pathscout.ui.tasks import TaskCategory
@@ -113,6 +115,7 @@ class UiFlowTest(unittest.TestCase):
     def test_website_enter_waits_for_current_query_and_keeps_local_results(self):
         site = WebsiteShortcut("az", "Amazon", "https://www.amazon.de/s?k=%s")
         self.controller.settings = replace(self.controller.settings, websites=(site,))
+        (self.root / "az Book.txt").touch()
         local = SearchHit(CatalogItem(self.root / "az Book.txt", ItemKind.FILE), 900, "Exact name")
         search = patch.object(self.controller.search.service, "search", return_value=[local])
         search = search.start()
@@ -168,7 +171,7 @@ class UiFlowTest(unittest.TestCase):
         self.window.query.setText('yt "Unfinished type:unknown')
         query = self.controller.search.current_query()
         self.assertIsInstance(query, WebsiteQuery)
-        hits, _ = self.controller.search._work(query, self.controller.settings, threading.Event())
+        hits = self.controller.search._work(query, self.controller.settings, threading.Event()).hits
         self.assertEqual(len(hits), 1)
         self.assertIn("%22Unfinished%20type%3Aunknown", hits[0].url)
         self.window.query.setText("yt tutorial")
@@ -187,6 +190,90 @@ class UiFlowTest(unittest.TestCase):
             self.controller.open_item(hit, "")
         warning.assert_called_once()
         self.launch.assert_not_called()
+
+    def show_file_result(self, name: str = "report.txt") -> SearchHit:
+        path = self.root / name
+        path.touch()
+        hit = SearchHit(CatalogItem(path, ItemKind.FILE), 100, "Fixture")
+        self.window.set_results([hit], 1)
+        return hit
+
+    def test_copy_and_cut_put_the_selected_file_on_the_clipboard_for_explorer(self):
+        hit = self.show_file_result()
+        for key, effect in ((Qt.Key.Key_C, DROPEFFECT_COPY), (Qt.Key.Key_X, DROPEFFECT_MOVE)):
+            with self.subTest(key=key):
+                self.app.clipboard().clear()
+                QTest.keyClick(self.window.query, key, Qt.KeyboardModifier.ControlModifier)
+                data = self.app.clipboard().mimeData()
+                self.assertEqual([Path(url.toLocalFile()) for url in data.urls()], [hit.item.path])
+                self.assertEqual(
+                    struct.unpack("<I", data.data(PREFERRED_DROP_EFFECT).data()), (effect,)
+                )
+        # Selected query text keeps the ordinary text copy.
+        self.window.query.setText("report")
+        self.window.query.selectAll()
+        QTest.keyClick(self.window.query, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(self.app.clipboard().text(), "report")
+        self.assertFalse(self.app.clipboard().mimeData().hasUrls())
+
+    def test_dragging_a_result_offers_its_file_or_url_without_moving_it(self):
+        hit = self.show_file_result()
+        data = self.window.results.mimeData([self.window.results.item(0)])
+        self.assertEqual([Path(url.toLocalFile()) for url in data.urls()], [hit.item.path])
+        website = WebsiteTarget("Example", "ex", "https://example.org/")
+        self.window.set_results([website], 1)
+        data = self.window.results.mimeData([self.window.results.item(0)])
+        self.assertEqual(data.text(), "https://example.org/")
+        self.assertTrue(self.window.results.dragEnabled())
+
+    def test_footer_hint_follows_what_enter_acts_on(self):
+        self.show_file_result()
+        self.assertIn("Ctrl+C copy file", self.window.hint.text())
+        self.window.set_results([WebsiteTarget("Example", "ex", "https://example.org/")], 1)
+        self.assertIn("open in browser", self.window.hint.text())
+        self.window.query.setText("2 + 2")
+        self.assertEqual(self.window.hint.text(), "↵ copy result")
+        self.window.query.clear()
+        self.window.set_results([], 1)
+        self.assertTrue(self.window.hint.isHidden())
+
+    def test_unmatched_words_offer_a_content_search_on_enter(self):
+        self.window.query.setText("tax notice")
+        with patch("pathscout.ui.search_session.native_availability") as availability:
+            availability.return_value.module = object()
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+        self.assertEqual(self.window.content_search, 'contains:"tax notice"')
+        self.assertIn("Search inside files", self.window.empty.text())
+        QTest.keyClick(self.window.query, Qt.Key.Key_Return)
+        self.assertEqual(self.window.query.text(), 'contains:"tax notice"')
+        # Query syntax is never rewritten into a content search.
+        self.window.query.setText("ext:pdf tax")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.assertIsNone(self.window.content_search)
+
+    def test_deleted_files_are_dimmed_and_refresh_their_folder_instead_of_opening(self):
+        gone = SearchHit(CatalogItem(self.root / "gone.txt", ItemKind.FILE), 100, "Fixture")
+        kept = self.show_file_result("kept.txt")
+        results = self.controller.search._work(
+            parse_query("x"), self.controller.settings, threading.Event()
+        )
+        self.assertEqual(results.missing, frozenset())
+        with patch.object(self.controller.search.service, "search", return_value=[gone, kept]):
+            results = self.controller.search._work(
+                parse_query("x"), self.controller.settings, threading.Event()
+            )
+        self.assertEqual(results.missing, frozenset({gone.item.path}))
+        self.window.set_results(results.hits, 1, missing=results.missing)
+        rows = [self.window.results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(2)]
+        self.assertEqual([row.missing for row in rows], [True, False])
+        self.assertTrue(rows[0].location.startswith("Deleted"))
+        with patch.object(self.indexing, "request_folder") as refresh:
+            self.controller.open_item(gone, "x")
+        refresh.assert_called_once_with(self.root)
+        self.launch.assert_not_called()
+        self.assertIn("no longer exists", self.window.status.text())
 
     def test_filtered_results_show_cached_size_and_modification_date(self):
         modified = datetime(2026, 2, 15, 12, 34).timestamp()
@@ -474,7 +561,8 @@ class UiFlowTest(unittest.TestCase):
         original_clipboard = self.app.clipboard().text()
         self.addCleanup(lambda: self.app.clipboard().setText(original_clipboard))
 
-        for action in ("Open", "Show in containing folder", "Add to favorites", "Copy path"):
+        actions = ("Open", "Show in containing folder", "Add to favorites", "Copy path", "Copy")
+        for action in actions:
             with self.subTest(action=action):
                 self.window.set_results([first], 1)
                 received.clear()
@@ -484,8 +572,12 @@ class UiFlowTest(unittest.TestCase):
                     self.window.set_results([second], 1)
                     for menu in self.window.findChildren(QMenu):
                         if menu.isVisible():
-                            next(item for item in menu.actions() if item.text() == action).trigger()
-                            menu.close()
+                            # Text after a tab is the displayed shortcut.
+                            labels = {
+                                item.text().partition("\t")[0]: item for item in menu.actions()
+                            }
+                            menu.close()  # Even if the action is missing, never block the test.
+                            labels[action].trigger()
 
                 timer = QTimer(self.window)
                 timer.setSingleShot(True)
@@ -498,6 +590,9 @@ class UiFlowTest(unittest.TestCase):
                 timer.deleteLater()
                 if action == "Copy path":
                     self.assertEqual(self.app.clipboard().text(), str(first.item.path))
+                elif action == "Copy":
+                    copied = self.app.clipboard().mimeData().urls()
+                    self.assertEqual([Path(url.toLocalFile()) for url in copied], [first.item.path])
                 else:
                     self.assertEqual(received, [first])
 

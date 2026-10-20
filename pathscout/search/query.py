@@ -31,10 +31,12 @@ class SearchQuery:
     """All text values are search-normalized (`catalog.model.normalize`)."""
 
     terms: tuple[str, ...] = ()
+    exact_terms: tuple[str, ...] = ()  # Quoted `terms`: contiguous text only, never fuzzy.
     kind: ItemKind | None = None
     extensions: tuple[str, ...] = ()
     scope: Path | None = None
     excluded_terms: tuple[str, ...] = ()
+    excluded_extensions: tuple[str, ...] = ()  # Extensions/fnmatch patterns to reject.
     folder_parts: tuple[str, ...] = ()
     basename_only: bool = False
     match_mode: MatchMode = MatchMode.FUZZY
@@ -61,12 +63,17 @@ class SearchQuery:
         """Fuzzy and abbreviation matches need two characters; shorter text skips that pass."""
         if self.match_mode != MatchMode.FUZZY:
             return False
-        texts = (*self.terms, *self.folder_parts)
+        fuzzy_terms = (term for term in self.terms if term not in self.exact_terms)
+        texts = (*fuzzy_terms, *self.folder_parts)
         return any(not is_wildcard(text) and len(text) >= MIN_FUZZY_TERM_LENGTH for text in texts)
 
     @property
     def history_key(self) -> str:
-        """Launches are learned per query text and type/extension/path filters."""
+        """Launches are learned per query text and type/extension/path filters.
+
+        Exclusions, scope, size and dates are left out: related searches share
+        history, and a relative `date:today` keeps its key from day to day.
+        """
         if self.navigation is not None:
             return "navigate:" + normalize(self.navigation)
         parts = list(self.terms)

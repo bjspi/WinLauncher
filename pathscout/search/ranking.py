@@ -95,6 +95,10 @@ class Ranker:
         self.fuzzy = query.match_mode == MatchMode.FUZZY
         self.combined = query.score_mode == ScoreMode.COMBINED
         self.scope_search_prefix = _scope_search_prefix(query)
+        # Quoted terms match as contiguous text even in fuzzy mode.
+        self.fuzzy_terms = tuple(
+            self.fuzzy and term not in query.exact_terms for term in query.terms
+        )
 
     def eligible(self, candidate: Candidate, priority: PriorityDecision) -> bool:
         return priority.search != SearchPriority.IGNORED and self.filters.accepts(candidate)
@@ -142,8 +146,8 @@ class Ranker:
             name = NameForms(candidate.name, candidate.search_name)
             path = self.matching_path(candidate)
         points, reasons = 0.0, []
-        for term in query.terms:
-            match = match_term(term, name, path, self.fuzzy)
+        for term, fuzzy in zip(query.terms, self.fuzzy_terms, strict=True):
+            match = match_term(term, name, path, fuzzy)
             if match is None:
                 return None
             points += match.score

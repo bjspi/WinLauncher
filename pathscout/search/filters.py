@@ -31,6 +31,10 @@ class StructuredFilters:
     def _matches_type(self, candidate: Candidate) -> bool:
         if self.query.kind is not None and self.query.kind != candidate.kind:
             return False
+        if any(
+            fnmatchcase(candidate.extension, pattern) for pattern in self.query.excluded_extensions
+        ):
+            return False
         return not self.query.extensions or any(
             fnmatchcase(candidate.extension, pattern) for pattern in self.query.extensions
         )

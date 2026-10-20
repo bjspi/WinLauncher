@@ -178,14 +178,28 @@ vsc type:app                            initials of an application
 report[0-9].json                        one digit in the filename
 report ext:pdf,docx                     only these extensions
 ext:doc,docx                            Word document extensions
+ext:pdf;docx                            ; separates lists like ,
 ext:doc*                                any extension starting with doc
 ext:(jpg,png)                           either extension; parentheses are optional
+"project plan"                          exact phrase: no initials or fuzzy matching
 budget in:"D:\Work Projects"            inside this folder
+budget D:\Work\                         same as in:D:\Work (note the trailing \)
+rechnungen\ 2024                        "2024" inside a folder matching rechnungen
+work\client\ proposal                   parent folders in this order
 path:projects/reports name:annual       ordered parent folders, name only
 report after:2025-06-01 sort:modified   changed since June 2025, newest first
+report date:today                       modified since midnight
+report date:week                        modified during the last 7 days
+date:2026-07                            modified in July 2026
+date:2026-01..2026-06                   modified in the first half of 2026
+date:>=2026-03                          modified since March 2026
 size:>5mb size:<1gb                     files larger than 5 MB and smaller than 1 GB
+size:10mb..1gb                          between 10 MB and 1 GB, inclusive
 report after:2026-02* before:2026-02*   reports modified during February 2026
 report !archive                         exclude paths containing "archive"
+report -archive -"old version"          - works like !
+report !ext:tmp,bak                     exclude these extensions
+report !*.bak                           exclude one extension
 report contains:"invoice number"        filter matching text files by their contents (Rust)
 *.json contains:gsk_*                   fnmatch pattern within text contents (Rust)
 *.json rg:gsk_*                         content: and rg: are aliases for contains:
@@ -200,11 +214,13 @@ report low:true                         include low-priority results
 | Filter | Meaning |
 | --- | --- |
 | `type:file` · `type:folder` · `type:dir` · `type:app` | Item kind; `t:` is shorthand for `type:` |
-| `ext:pdf,txt` · `ext:(jpg,png)` · `ext:doc*` | Extensions/patterns, combined with OR (repeatable) |
-| `in:"C:\Folder"` | Descendants of an absolute folder |
-| `path:a/b` | Parent folders in this order (repeatable) |
+| `"exact phrase"` | Contiguous text only, without initials or fuzzy matching |
+| `ext:pdf,txt` · `ext:pdf;txt` · `ext:(jpg,png)` · `ext:doc*` | Extensions/patterns, combined with OR (repeatable) |
+| `in:"C:\Folder"` · `C:\Folder\` | Descendants of an absolute folder |
+| `path:a/b` · `a\b\` | Parent folders in this order (repeatable) |
 | `name:text` | Match the file name without extension |
-| `!text` | Reject paths containing `text` |
+| `!text` · `-text` | Reject paths containing `text` |
+| `!ext:tmp,bak` · `-ext:tmp` · `!*.bak` | Reject these extensions |
 | `match:keyword` · `match:fuzzy` | Matching style (default fuzzy) |
 | `sort:score` · `sort:name` · `sort:modified` | Order (default score) |
 | `score:combined` · `score:match` | With or without personal ranking |
@@ -212,20 +228,29 @@ report low:true                         include low-priority results
 | `after:20260215` · `after:2026-W07-1` | Compact and other ISO 8601 day forms |
 | `after:2026-` · `after:2026-02*` | From January 1 or February 1, 2026 |
 | `before:2026-` · `before:2026-02*` | Through the end of 2026 or February 2026 |
+| `date:today` · `date:yesterday` · `date:week` · `date:month` · `date:year` | Since midnight, yesterday, or the last 7, 30 or 365 days including today |
+| `date:2026` · `date:2026-07` · `date:2026-07-15` | That whole year, month or day |
+| `date:2026-01..2026-06` | From the first period through the last, inclusive |
+| `date:>2026-07` · `date:>=2026-07` · `date:<2026-07` · `date:<=2026-07` | After, from, before or through that period |
 | `size:>5kb` · `size:<2mb` | File/application size; also `>=` and `<=` |
+| `size:10mb..1gb` | File/application size range, inclusive |
 | `contains:"some text"` · `contains:gsk_*` | Case-insensitive text/fnmatch content filter; needs the Rust engine |
 | `content:text` · `rg:text` | Aliases for `contains:`, with identical fnmatch behavior |
 | `low:true` | Show low-priority results alongside the others |
 
-Quoted text keeps spaces, apostrophes are literal and Windows paths such as
-`C:\Work` stay ordinary search text. The full contract is in the
+Quoted text keeps spaces and matches exactly, apostrophes are literal and Windows
+paths such as `C:\Work` stay ordinary search text; only a trailing `\` or `/` turns
+a token into a folder filter. A dash inside a word (`my-file`) or on its own is
+ordinary text. Date and size filters intersect, so `date:2026 after:2026-03` means
+March to December 2026. The full contract is in the
 [behavior specification](docs/specification.md).
 
 Search terms support fnmatch patterns: `*`, `?`, `[abc]`, `[0-9]` and `[!0-9]`.
 Patterns match the whole filename, including its extension; `name:` matches the
 stem instead. Use `[[]` for a literal opening bracket. Patterns work inside
 quotes, alongside ordinary fuzzy terms and with filters. `path:` accepts the
-same patterns for individual parent folders; `!text` remains a literal exclusion.
+same patterns for individual parent folders; `!text` remains a literal exclusion,
+except `!ext:` and the exact form `!*.bak`, which exclude extensions.
 
 Extension filters also accept fnmatch patterns. `ext:doc,docx` finds exactly those
 extensions; `ext:doc*` also includes `docm` and other extensions starting with

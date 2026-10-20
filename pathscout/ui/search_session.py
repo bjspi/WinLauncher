@@ -7,17 +7,22 @@ query's results are not displayed yet, opening waits for them.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from functools import partial
+from pathlib import Path
 from typing import TypeAlias
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from pathscout.catalog import long_paths
+from pathscout.search.native_engine import native_availability
 from pathscout.search.query import SearchQuery
 from pathscout.search.query_parser import parse_query
+from pathscout.search.ranking import SearchHit
 from pathscout.search.service import SearchService
 from pathscout.settings import Settings
 from pathscout.ui.result_rows import LauncherHit
@@ -26,9 +31,19 @@ from pathscout.ui.window import LauncherWindow
 from pathscout.websites import WebsiteQuery, website_query
 
 DEBOUNCE_MS = 70
+# Words only: no filters, exclusions, quotes, wildcards, paths or navigation.
+_PLAIN_WORDS = re.compile(r"[^:!*?\[\]\"\\/%~]+")
 # What the typed text asks for: a file search, or a website plus its file search.
 LauncherQuery: TypeAlias = SearchQuery | WebsiteQuery
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResults:
+    hits: list[LauncherHit]
+    elapsed_ms: float
+    # Catalog hits whose file is gone; the catalog has not noticed yet.
+    missing: frozenset[Path] = field(default_factory=frozenset)
 
 
 class SearchSession(QObject):
@@ -139,8 +154,11 @@ class SearchSession(QObject):
 
     def _work(
         self, query: LauncherQuery, settings: Settings, cancel: threading.Event
-    ) -> tuple[list[LauncherHit], float]:
-        """Search the catalog; a website query lists its website above the files."""
+    ) -> SearchResults:
+        """Search the catalog; a website query lists its website above the files.
+
+        Runs on a worker, so it also checks which found files still exist.
+        """
         started = time.perf_counter()
         hits: list[LauncherHit] = []
         if isinstance(query, WebsiteQuery):
@@ -155,13 +173,13 @@ class SearchSession(QObject):
             len(hits),
             cancel.is_set(),
         )
-        return hits, elapsed_ms
+        return SearchResults(hits, elapsed_ms, _missing_files(hits))
 
     def _completed(
         self,
         cancel: threading.Event,
         query: LauncherQuery,
-        result: tuple[list[LauncherHit], float],
+        result: SearchResults,
     ) -> None:
         if cancel is not self.running:
             return
@@ -171,9 +189,19 @@ class SearchSession(QObject):
             return
         same_query = self.displayed_query == query
         self.displayed_query = query
-        hits, elapsed_ms = result
+        files = _file_query(query)
+        offer = (
+            content_search_text(self.window.query.text())
+            if not result.hits and files is not None and files.content_text is None
+            else None
+        )
         self.window.set_results(
-            hits, elapsed_ms, preserve_selection=same_query, query=_file_query(query)
+            result.hits,
+            result.elapsed_ms,
+            preserve_selection=same_query,
+            query=files,
+            missing=result.missing,
+            content_search=offer,
         )
         if self.open_pending:
             self.open_pending = False
@@ -191,3 +219,34 @@ class SearchSession(QObject):
 def _file_query(query: LauncherQuery) -> SearchQuery | None:
     """The catalog search behind `query`; a website query may have none."""
     return query.files if isinstance(query, WebsiteQuery) else query
+
+
+def content_search_text(text: str) -> str | None:
+    """`contains:` for typed words that matched no name, if the Rust engine can run it.
+
+    Text with any query syntax is left alone: turning it into a content search could
+    change what its filters mean.
+    """
+    words = text.strip()
+    if not words or not _PLAIN_WORDS.fullmatch(words):
+        return None
+    if any(word.startswith("-") for word in words.split()):
+        return None  # An exclusion.
+    if native_availability().module is None:
+        return None
+    return f'contains:"{words}"'
+
+
+def _missing_files(hits: list[LauncherHit]) -> frozenset[Path]:
+    """Found files that no longer exist; unreadable ones count as present."""
+    missing = set()
+    for hit in hits:
+        if not isinstance(hit, SearchHit):
+            continue
+        try:
+            long_paths.lstat(hit.item.path)
+        except (FileNotFoundError, NotADirectoryError):
+            missing.add(hit.item.path)
+        except OSError:
+            pass  # Offline or denied: it may well still be there.
+    return frozenset(missing)

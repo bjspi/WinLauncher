@@ -472,6 +472,55 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertEqual([h.item.path for h in self.hits("size:<1byte")], [paths["empty.txt"]])
         self.assertFalse(self.hits("type:folder size:<1gb"))
 
+    def test_listary_style_syntax_filters_files_in_both_engines(self):
+        paths = {}
+        for relative, size, modified in (
+            ("Rechnungen/2024 Strom.pdf", 2048, datetime(2024, 3, 5)),
+            ("Rechnungen/2024 Strom.bak", 2048, datetime(2024, 3, 5)),
+            ("Archiv/2024 Strom.pdf", 4096, datetime(2024, 9, 1)),
+            ("Work/Client/Project Plan.docx", 10, datetime(2026, 1, 15)),
+            ("Work/Client/Plan of Project.docx", 10, datetime(2026, 6, 30)),
+            ("Work/Other/Project Plan old version.docx", 10, datetime(2026, 7, 1)),
+            ("Work/Client/proposal.tmp", 10, datetime(2026, 2, 1)),
+        ):
+            path = self.file(relative, "x" * size)
+            os.utime(path, (modified.timestamp(),) * 2)
+            paths[relative] = path
+        self.scan()
+
+        def found(*relatives):
+            return {paths[relative] for relative in relatives}
+
+        work = self.root / "Work"
+        for text, expected in (
+            (r"rechnungen\ 2024", found("Rechnungen/2024 Strom.pdf", "Rechnungen/2024 Strom.bak")),
+            (r"rechnungen\ 2024 !*.bak", found("Rechnungen/2024 Strom.pdf")),
+            ("2024 -ext:bak;pdf", set()),
+            ("strom -archiv", found("Rechnungen/2024 Strom.pdf", "Rechnungen/2024 Strom.bak")),
+            (r"work\client\ pro", found(*(r for r in paths if r.startswith("Work/Client")))),
+            (
+                f'"{work}{os.sep}" plan date:2026-01..2026-06',
+                found("Work/Client/Project Plan.docx", "Work/Client/Plan of Project.docx"),
+            ),
+            (
+                '"project plan"',
+                found("Work/Client/Project Plan.docx", "Work/Other/Project Plan old version.docx"),
+            ),
+            ('"project plan" -"old version"', found("Work/Client/Project Plan.docx")),
+            ("strom size:3kb..1mb", found("Archiv/2024 Strom.pdf")),
+            (
+                "strom date:<=2024-03",
+                found("Rechnungen/2024 Strom.pdf", "Rechnungen/2024 Strom.bak"),
+            ),
+        ):
+            for engine in ("python", "auto"):
+                with (
+                    self.subTest(text=text, engine=engine),
+                    patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=engine),
+                ):
+                    self.assertEqual({hit.item.path for hit in self.hits(text)}, expected)
+        self.assertGreater(len(self.hits("project plan")), 2)  # Fuzzy without quotes.
+
     def test_query_filters_paths_dates_and_literal_sql_wildcards(self):
         path = self.file("Projects/Reports/100%_complete.txt")
         self.file("Projects/Other/100xxcomplete.txt")

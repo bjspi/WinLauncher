@@ -11,10 +11,12 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import (
     QEvent,
+    QMimeData,
     QObject,
     QPoint,
     QRect,
@@ -39,6 +41,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QFrame,
     QHBoxLayout,
@@ -61,6 +64,7 @@ from pathscout.catalog.model import ItemKind
 from pathscout.search.query import SearchQuery
 from pathscout.search.query_parser import without_type_filter
 from pathscout.search.ranking import SearchHit
+from pathscout.ui.file_transfer import file_mime_data, url_mime_data
 from pathscout.ui.highlight import matched_positions
 from pathscout.ui.icons import ResultIcons
 from pathscout.ui.menus import Menu
@@ -95,7 +99,10 @@ class RowLayout:
 LAUNCHER_ROWS = RowLayout(height=52, icon=32, name_points=11, two_lines=True, visible_rows=9)
 EXPLORER_ROWS = RowLayout(height=25, icon=16, name_points=8, two_lines=False, visible_rows=6)
 NUMBERED_ROWS = 9  # Ctrl+1 … Ctrl+9 open these rows.
-SEPARATOR_INSET = 12  # Where the line before subfolder matches starts.
+SEPARATOR_INSET = 12  # Horizontal inset of the line before subfolder matches.
+SEPARATOR_GAP = 9  # Extra height above that row; the line runs through its middle.
+MISSING_OPACITY = 0.45  # Icon and text of a result whose file no longer exists.
+HINT_SPACING = 8  # Between the shortcut hint and the kind filter buttons.
 FILTERS = (
     ("All", None),
     ("Apps", ItemKind.APP),
@@ -104,6 +111,32 @@ FILTERS = (
 )
 NO_MATCHES = "No matches. Try a shorter name, another spelling or fewer filters."
 logger = logging.getLogger(__name__)
+
+
+class ResultList(QListWidget):
+    """The result list; dragging a row hands its file or URL to the drop target.
+
+    Drags copy or link but never move, so dropping a result on the desktop or a
+    folder of the same drive cannot relocate the user's file by accident.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+
+    def mimeData(self, items) -> QMimeData:  # noqa: N802 - Qt override.
+        return transfer_data(items[0].data(Qt.ItemDataRole.UserRole))
+
+    def startDrag(self, _supported) -> None:  # noqa: N802 - Qt override.
+        super().startDrag(Qt.DropAction.CopyAction | Qt.DropAction.LinkAction)
+
+
+def transfer_data(row: ResultRow, *, cut: bool = False) -> QMimeData:
+    """What copying or dragging `row` hands over: the file itself, or a website's URL."""
+    if (hit := row.file_hit) is not None:
+        return file_mime_data([hit.item.path], cut=cut)
+    return url_mime_data(row.target)
 
 
 class ResultDelegate(QStyledItemDelegate):
@@ -119,7 +152,11 @@ class ResultDelegate(QStyledItemDelegate):
         self.rows = LAUNCHER_ROWS
 
     def sizeHint(self, option, index) -> QSize:
-        return QSize(400, self.rows.height)
+        return QSize(400, self.row_height(index.data(Qt.ItemDataRole.UserRole)))
+
+    def row_height(self, result: ResultRow | None) -> int:
+        separated = result is not None and result.starts_subfolders
+        return self.rows.height + (SEPARATOR_GAP if separated else 0)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         result: ResultRow | None = index.data(Qt.ItemDataRole.UserRole)
@@ -129,10 +166,17 @@ class ResultDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         row, size = option.rect, self.rows.icon
-        self._paint_background(painter, row, option.state)
         if result.starts_subfolders:
+            # The gap stays unhighlighted, so selection never hides the line.
+            line = row.top() + SEPARATOR_GAP // 2
             painter.setPen(QColor(Palette.DIVIDER))
-            painter.drawLine(row.left() + SEPARATOR_INSET, row.top(), row.right(), row.top())
+            painter.drawLine(
+                row.left() + SEPARATOR_INSET, line, row.right() - SEPARATOR_INSET, line
+            )
+            row = row.adjusted(0, SEPARATOR_GAP, 0, 0)
+        self._paint_background(painter, row, option.state)
+        if result.missing:
+            painter.setOpacity(MISSING_OPACITY)
         icon = QRect(row.left() + 16, row.center().y() - size // 2, size, size)
         self._icon(result.hit).paint(painter, icon)
         shortcut_width = self._paint_shortcut(painter, row, index.row(), result.pinned)
@@ -225,6 +269,19 @@ def _runs(text: str, highlighted: set[int]) -> Iterator[tuple[int, int, bool]]:
         if index == len(text) or (index in highlighted) != (start in highlighted):
             yield start, index, start in highlighted
             start = index
+
+
+def _shortcut_hint(row: ResultRow | None, *, explorer: bool, calculation: bool) -> str:
+    """The most useful keys for what Enter would act on now."""
+    if calculation:
+        return "↵ copy result"
+    if row is None:
+        return ""
+    if row.file_hit is None:
+        return "↵ open in browser · Ctrl+C copy URL"
+    if explorer:
+        return "↵ open · ↑↓ select in Explorer"
+    return "↵ open · Ctrl+↵ show in folder · Ctrl+C copy file · Ctrl+1–9"
 
 
 def _with_subfolder_separator(rows: list[ResultRow]) -> list[ResultRow]:
@@ -384,11 +441,16 @@ class LauncherWindow(QWidget):
         self.calculation_row.clicked.connect(self.copy_calculation)
         layout.addWidget(self.calculation_row)
         self.empty = self._label("message")
+        self.empty.linkActivated.connect(self.search_contents)
+        self.content_search: str | None = None  # Offered while no name matches.
         layout.addWidget(self.empty)
         layout.addWidget(self._build_results())
         self.detail = self._label("detail")
         self.status = self._label("status")
         self.status.setWordWrap(False)
+        self.hint = self._label("hint")
+        self.hint.setWordWrap(False)
+        self.hint.setAccessibleName("Keyboard shortcuts")
         self.activity = self._label("activity")
         layout.addWidget(self.detail)
         layout.addWidget(self._build_footer())
@@ -453,13 +515,12 @@ class LauncherWindow(QWidget):
         return menu
 
     def _build_results(self) -> QListWidget:
-        self.results = QListWidget()
+        self.results = ResultList()
         self.results.setObjectName("results")
         self.results.setAccessibleName("Search results")
         self.delegate = ResultDelegate(self.results, self.website_icons)
         self.results.setItemDelegate(self.delegate)
         self.results.setMouseTracking(True)
-        self.results.setUniformItemSizes(True)
         self.results.setFrameShape(QFrame.Shape.NoFrame)
         self.results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
@@ -472,6 +533,7 @@ class LauncherWindow(QWidget):
             lambda _item: self.open_selected() if self.explorer_mode else None
         )
         self.results.currentItemChanged.connect(self.update_detail)
+        self.results.currentItemChanged.connect(self._update_hint)
         self.results.currentItemChanged.connect(self._selection_moved)
         self.results.installEventFilter(self)
         return self.results
@@ -483,6 +545,8 @@ class LauncherWindow(QWidget):
         row.setSpacing(4)
         row.addWidget(self.status)
         row.addStretch(1)
+        row.addWidget(self.hint)
+        row.addSpacing(HINT_SPACING)
         self.kind_buttons: dict[ItemKind, QToolButton] = {}
         for number, (kind, label, icon) in enumerate(
             (
@@ -571,9 +635,18 @@ class LauncherWindow(QWidget):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not modifiers:
             if self.calculation_selected:
                 self.copy_calculation()
+            elif self.content_search is not None and not self.results.count():
+                self.search_contents()
             else:
                 self.open_selected()
             return True
+        # Without selected query text, copying and cutting act on the selected result.
+        typed_selection = watched is self.query and self.query.hasSelectedText()
+        if not typed_selection and not self.calculation_selected:
+            if event.matches(QKeySequence.StandardKey.Copy):
+                return self.copy_selected()
+            if event.matches(QKeySequence.StandardKey.Cut):
+                return self.copy_selected(cut=True)
         if watched is self.query and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             self._move_selection(1 if event.key() == Qt.Key.Key_Down else -1)
             return True
@@ -614,6 +687,7 @@ class LauncherWindow(QWidget):
 
     def _select_calculation(self, selected: bool) -> None:
         self.calculation_selected = selected and self.calculation is not None
+        self._update_hint()
         if self.calculation_selected:
             self.results.setCurrentRow(-1)
         if self.calculation is not None:
@@ -652,16 +726,27 @@ class LauncherWindow(QWidget):
         *,
         preserve_selection: bool = True,
         query: SearchQuery | None = None,
+        missing: frozenset[Path] = frozenset(),
+        content_search: str | None = None,
     ) -> None:
         """Show new results; keep the selected target only when the query is unchanged.
 
         `query` is the file search behind the catalog hits; it drives the name
-        highlighting and the size and date details.
+        highlighting and the size and date details. `missing` files are shown
+        dimmed. Without hits, `content_search` is offered as the next query.
         """
         previous = self.selected_row() if preserve_selection else None
         self.delegate.terms = query.terms if query is not None else ()
         rows = _with_subfolder_separator(
-            [result_row(hit, query, self.result_scope) for hit in hits]
+            [
+                result_row(
+                    hit,
+                    query,
+                    self.result_scope,
+                    missing=isinstance(hit, SearchHit) and hit.item.path in missing,
+                )
+                for hit in hits
+            ]
         )
         selected_index = 0
         with self._replacing_results():
@@ -677,7 +762,16 @@ class LauncherWindow(QWidget):
                 self.results.setCurrentRow(selected_index)
         self._follow_in_explorer(direct_only=True)
         # An empty query without history stays a bare search bar.
-        self.empty.setText(NO_MATCHES)
+        self.content_search = None if hits else content_search
+        if self.content_search is None:
+            self.empty.setTextFormat(Qt.TextFormat.PlainText)
+            self.empty.setText(NO_MATCHES)
+        else:
+            self.empty.setTextFormat(Qt.TextFormat.RichText)
+            self.empty.setText(
+                f'No matching names. <a href="contents">Search inside files</a> (Enter):'
+                f" {escape(self.content_search)}"
+            )
         self.empty.setVisible(
             not hits and bool(self.query.text().strip()) and self.calculation is None
         )
@@ -711,6 +805,8 @@ class LauncherWindow(QWidget):
     def _show_message(self, message: str) -> None:
         with self._replacing_results():
             self.results.clear()
+        self.content_search = None
+        self.empty.setTextFormat(Qt.TextFormat.PlainText)
         self.empty.setText(message)
         self.empty.show()
         self.status.hide()
@@ -718,6 +814,7 @@ class LauncherWindow(QWidget):
 
     def _show_results_area(self, has_results: bool) -> None:
         self.results.setVisible(has_results)
+        self._update_hint()  # Reads the list's visibility.
         self.detail.setVisible(has_results and self.expanded and not self.explorer_mode)
         self._fit_height()
 
@@ -726,7 +823,11 @@ class LauncherWindow(QWidget):
         layout = self.delegate.rows
         limit = EXPANDED_ROWS if self.expanded and not self.explorer_mode else layout.visible_rows
         rows = min(self.results.count(), limit)
-        self.results.setFixedHeight(rows * layout.height + 2 * self.results.frameWidth())
+        content = sum(
+            self.delegate.row_height(self.results.item(index).data(Qt.ItemDataRole.UserRole))
+            for index in range(rows)
+        )
+        self.results.setFixedHeight(content + 2 * self.results.frameWidth())
         below_bar = (
             self.calculation_row,
             self.empty,
@@ -966,6 +1067,22 @@ class LauncherWindow(QWidget):
 
     # Actions ------------------------------------------------------------------
 
+    def search_contents(self, *_link) -> None:
+        """Replace the query with the offered content search, which runs at once."""
+        if self.content_search is not None:
+            self.query.setText(self.content_search)
+
+    def shows_missing(self, hit: LauncherHit) -> bool:
+        """Whether `hit` is shown as a file that no longer exists."""
+        rows = (
+            self.results.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(self.results.count())
+        )
+        return any(row.missing and row.hit == hit for row in rows)
+
+    def report_missing(self, name: str) -> None:
+        self._show_status(f"{name} no longer exists; PathScout refreshes its folder.")
+
     def open_selected(self, *_clicked) -> None:
         self.open_requested.emit(self.selected_hit())
 
@@ -975,6 +1092,15 @@ class LauncherWindow(QWidget):
             return
         self.results.setCurrentRow(row)
         self.open_requested.emit(item.data(Qt.ItemDataRole.UserRole).hit)
+
+    def _update_hint(self, *_items) -> None:
+        hint = _shortcut_hint(
+            None if self.results.isHidden() else self.selected_row(),
+            explorer=self.explorer_mode,
+            calculation=self.calculation_selected,
+        )
+        self.hint.setText(hint)
+        self.hint.setVisible(bool(hint))
 
     @contextmanager
     def _replacing_results(self) -> Iterator[None]:
@@ -1018,7 +1144,27 @@ class LauncherWindow(QWidget):
         if row is None:
             return
         QApplication.clipboard().setText(row.target)
-        self.status.setText(f"{row.target_noun} copied to clipboard")
+        self._show_status(f"{row.target_noun} copied to clipboard")
+
+    def copy_selected(self, row: ResultRow | None = None, *, cut: bool = False) -> bool:
+        """Put `row`'s file on the clipboard for Explorer; a website copies its URL.
+
+        `row` defaults to the selected row. Returns whether there was something to
+        copy; a website cannot be cut.
+        """
+        row = row or self.selected_row()
+        if row is None or (cut and row.file_hit is None):
+            return False
+        QApplication.clipboard().setMimeData(transfer_data(row, cut=cut))
+        if row.file_hit is None:
+            self._show_status("URL copied to clipboard")
+        else:
+            action = "Cut" if cut else "Copied"
+            self._show_status(f"{action} {row.name}; paste it in Explorer")
+        return True
+
+    def _show_status(self, text: str) -> None:
+        self.status.setText(text)
         self.status.show()
         self._fit_height()
 
@@ -1052,7 +1198,9 @@ class LauncherWindow(QWidget):
         menu.addAction("Open", lambda: self.open_requested.emit(hit))
         menu.addAction("Show in containing folder", lambda: self.reveal_requested.emit(hit))
         menu.addSeparator()
-        menu.addAction("Copy path", lambda: self.copy_target(row))
+        menu.addAction("Copy\tCtrl+C", lambda: self.copy_selected(row))
+        menu.addAction("Cut\tCtrl+X", lambda: self.copy_selected(row, cut=True))
+        menu.addAction("Copy path\tCtrl+Shift+C", lambda: self.copy_target(row))
         menu.addAction("Copy file name", lambda: clipboard.setText(hit.item.path.name))
         menu.addAction(
             "Copy parent folder path", lambda: clipboard.setText(str(hit.item.path.parent))

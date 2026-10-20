@@ -86,21 +86,28 @@ periodic refresh to rediscover removal of their marker.
 Queries are limited to 512 characters, terms to 128 characters; control characters
 and invalid operator values are rejected with a message naming the operator and its
 accepted values. Double-quoted tokens preserve spaces; an empty quoted token (`""`)
-is ignored; apostrophes are literal characters. Repeated `ext:` and `path:` filters
-accumulate; size comparisons intersect; for other filters the last value wins. Unsupported dates return a validation error. Windows
-backslashes remain literal. Matching is NFC-normalized and case-insensitive.
+is ignored; apostrophes are literal characters. A search term written with double
+quotes is exact: it matches only as contiguous text, never by initials or as a fuzzy
+subsequence; quoted filter values and exclusions are unaffected. Repeated `ext:`,
+`path:` and folder filters accumulate; size bounds intersect, and so do all date
+bounds (`date:`, `after:`, `before:`); for other filters the last value wins.
+Unsupported dates return a validation error. Windows backslashes remain literal.
+Matching is NFC-normalized and case-insensitive.
 
 | Expression | Contract |
 | --- | --- |
 | `annual report` | Every term must match the name or literal full path |
-| `"annual report"` | One term containing a space |
+| `"annual report"` | One exact term containing a space: contiguous text only, no initials or fuzzy subsequence |
 | `*.json`, `report?.json`, `report[0-9].json` | Whole-filename fnmatch patterns, including the extension |
 | `type:file`, `type:folder`, `type:dir`, `type:app` | Restrict item kind; overrides the UI kind button. `t:` is shorthand for `type:` |
-| `ext:pdf,txt`, `ext:(jpg,png)`, `ext:doc*` | Any listed extension/fnmatch pattern, case-insensitive, optional leading dots and list parentheses |
+| `ext:pdf,txt`, `ext:pdf;txt`, `ext:(jpg,png)`, `ext:doc*` | Any listed extension/fnmatch pattern, case-insensitive, optional leading dots and list parentheses; `,` and `;` separate |
 | `in:"D:\Work Projects"` | Restrict to descendants of this absolute folder |
+| `D:\`, `D:\Work\`, `"D:\Work Projects\"` | An absolute folder ending with a separator acts as `in:` |
 | `path:projects/reports` | Match parent folder components in that order; intervening components allowed |
+| `reports\ 2024`, `work\client\ proposal` | A relative token ending with `\` or `/` acts as `path:` |
 | `name:annual` | Match the stem only, excluding the extension and parent path |
-| `!archive` | Reject a literal substring anywhere in the full path |
+| `!archive`, `-archive`, `-"old version"` | Reject a literal substring anywhere in the full path |
+| `!ext:tmp,bak`, `-ext:(tmp;bak)`, `!*.bak` | Reject these extensions/fnmatch patterns; `*.ext` only when `ext` has no wildcard, dot or separator |
 | `match:keyword` | Exact/prefix/word-prefix/substring matching; no fuzzy subsequences or initials |
 | `match:fuzzy` | Also permit initials and ordered, noncontiguous name characters (default) |
 | `score:combined` | Text relevance plus personalization and configured boosts (default) |
@@ -112,21 +119,40 @@ backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 | `before:2025-06-30` | Modification through the end of this local day, inclusive |
 | `after:2026-`, `after:2026-02*` | Start of the specified local year/month (January 1 / February 1) |
 | `before:2026-`, `before:2026-02*` | Through the last day of the specified local year/month |
+| `date:today`, `date:yesterday` | Since local midnight today; yesterday's whole local day |
+| `date:week`, `date:month`, `date:year` | Since local midnight on the first of the last 7, 30 or 365 calendar days, today included |
+| `date:2026`, `date:2026-07`, `date:2026-07-15` | That whole local year, month or day |
+| `date:2026-01..2026-06` | From the start of the first period through the end of the last, inclusive |
+| `date:>2026-07`, `date:>=2026-07` | After the end of the period; from its start |
+| `date:<2026-07`, `date:<=2026-07` | Before the start of the period; through its end |
 | `size:>5kb`, `size:<2mb` | Strict file/application size comparison; `>=` and `<=` include the boundary |
+| `size:10mb..1gb` | Inclusive file/application size range |
 | `contains:"invoice number"`, `contains:gsk_*` | Case-insensitive text/fnmatch content filter; needs the Rust engine |
 | `content:text`, `rg:text` | Aliases for `contains:`, including its fnmatch semantics |
 | `low:true` | Include low results even when ordinary/high results exist |
 
-An Explorer session supplies the default folder scope. An explicit `in:` overrides
-it. The scope directory itself is excluded from its descendant results. Folder-path
-matching uses the selected keyword/fuzzy matcher on each parent component. Unknown
-prefixes remain literal text, which allows ordinary paths containing colons.
+An Explorer session supplies the default folder scope. An explicit `in:` or an
+absolute folder token ending with a separator overrides it; such a token expands
+variables like `in:`. The scope directory itself is excluded from its descendant
+results. Folder-path matching uses the selected keyword/fuzzy matcher on each
+parent component. Unknown prefixes remain literal text, which allows ordinary
+paths containing colons; a path such as `C:\Work` without a trailing separator
+stays search text, and a token of separators alone is a term.
+
+A token starting with `!` or `-` and longer than that character is an exclusion,
+including quoted text (`-"old version"`). A lone `!` or `-`, and a dash inside a
+word (`my-file`), is ordinary search text. `!ext:`/`-ext:` accept the same lists and
+patterns as `ext:` and reject candidates of any kind whose extension matches;
+exclusion wins over an including `ext:`. Other exclusions, including `!*.tar.gz`,
+`!*.b?k` and `!type:file`, remain literal path substrings.
 
 Size units use powers of 1024, case-insensitively: bytes (`b`, `byte`, `bytes`),
 `kb`/`kbyte`/`kbytes`/`KiB`, and equivalent `m`, `g` and `t` prefixes. No unit means
 bytes. Decimal points and commas are accepted; byte bounds are rounded exactly
 according to the comparison. Spaces after `size:` or its comparison are allowed.
-Repeated comparisons form an intersection; invalid units, out-of-range byte bounds
+A range `a..b` rounds its start up and its end down to whole bytes, and both ends
+need an amount; `size:1gb` without a comparison or range is an error. Repeated
+comparisons and ranges form an intersection; invalid units, out-of-range byte bounds
 and empty ranges report validation errors. Folders are excluded by size filters;
 no recursive folder-size calculation is performed. SQL, Python and native ranking
 apply the same inclusive integer byte bounds. An extension with a different API
@@ -137,6 +163,12 @@ Dates accept `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, with an optional trailing `*` or
 `before:`; leap years and local midnight boundaries are respected. Any other day
 that Python's `date.fromisoformat` accepts is also valid, such as the compact
 `20260215` and ISO week dates like `2026-W07` (its Monday) or `2026-W07-3`.
+`date:` periods, ranges and comparisons use the same forms; any single ISO day is a
+one-day period. Relative names (`today`, `yesterday`, `week`, `month`, `year`) are
+case-insensitive, belong to `date:` only and are resolved against the local date
+when the query is parsed; they cannot be combined with `..` or a comparison.
+Relative values except `yesterday` have no upper bound. A range ending before it
+starts, or intersecting date filters without a common day, is an empty-range error.
 
 Fnmatch patterns support `*`, `?`, character sets/ranges and `[!...]` negation;
 `[[]` escapes an opening bracket and an unmatched `[` is literal. `*` has no
@@ -145,9 +177,12 @@ normalization as ordinary terms, with either slash spelling accepted in paths.
 Without a separator, patterns match only the display name or actual filename,
 never a parent folder. `name:` matches the stem; `path:` matches ordered parent
 components. Patterns are not fuzzy, but accompanying ordinary terms may be.
-The Python engine uses standard-library fnmatch; Rust uses fnmatch-rs with
-regexes compiled once per query. SQL only supplies a safe candidate superset.
-Excluded terms remain literal substrings.
+The Python engine uses standard-library fnmatch; Rust uses its own translator
+(`native/src/glob.rs`), which mirrors CPython's `fnmatch.translate`, with regexes
+compiled once per query. SQL only supplies a safe candidate superset: excluded
+extension patterns are left to the engines, and exact terms use substring rather
+than subsequence patterns in the fuzzy pass. Excluded terms remain literal
+substrings.
 
 Rows show approximate catalog size when a size filter is active and the local
 modification timestamp when a date filter is active, including in Explorer mode
@@ -274,8 +309,9 @@ available in tooltips and expanded view.
 
 Only a successful shell open records a launch. The learning key consists of
 normalized positive terms, effective item kind, sorted extension filters and ordered
-folder components. Scope, exclusions, score/match mode and date filters are omitted,
-so related searches share history. History clearing preserves favorites. No query
+folder components. Scope, exclusions, score/match mode, size and date filters are
+omitted, so related searches share history and a relative `date:today` keeps its key
+from day to day. Quoted and unquoted spellings of a term share it too. History clearing preserves favorites. No query
 is sent to a remote service.
 
 ## Input and actions

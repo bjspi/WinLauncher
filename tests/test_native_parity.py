@@ -140,6 +140,28 @@ QUERY_TEXTS = (
     "squared missing",
     "ab",
     "aab",
+    # Exact phrases, excluded extensions, `-` exclusions, ranges and folder shorthand.
+    '"rpt"',
+    '"vsc"',
+    '"project rep"',
+    '"report" rpt',
+    '"port" "work"',
+    "report !ext:md",
+    "report -ext:(json;exe)",
+    "-ext:t* rpt",
+    "report -*.json",
+    "!*.lnk !ext:j?on report",
+    "report -archive",
+    "size:1kb..2kb",
+    "report size:100..1kb size:<512",
+    "report date:2024",
+    "date:2024-06..2024-12",
+    "rpt date:>=2024-11 date:<2024-12-20",
+    "report date:<=2024-03",
+    "report after:2024-02 date:2024",
+    r"work\deep\ report",
+    "deep/ rpt",
+    r"work\ !ext:txt",
 )
 # fnmatch sets that Rust's regex syntax reads differently unless every member is
 # escaped: `[` inside a set, `]` starting a range, reversed and edge ranges,
@@ -314,6 +336,8 @@ def matrix(root: Path):
         for text in ("", "report", "rpt"):
             for limit in (10, 200):
                 yield parse_query(text, scope=scope), limit
+                # An absolute folder with a trailing separator scopes like `in:`.
+                yield parse_query(f'"{scope}{os.sep}" {text}'), limit
 
 
 def python_rows(rows, query, policy, limit, allows):
@@ -611,6 +635,44 @@ class NativeParityTest(unittest.TestCase):
             names = sorted({text(WILDCARD_NAME_ALPHABET) for _ in range(WILDCARD_FUZZ_NAMES)})
             with self.subTest(pattern=pattern):
                 self.assert_wildcard_parity(pattern, names)
+
+    def test_new_filters_narrow_native_results_exactly_like_python(self):
+        """Parity alone would also pass if both engines ignored a filter."""
+        rows = [row_for(item) for item in corpus(self.root, unicode=False)]
+        policy = PriorityPolicy()
+        work = normalize(str(self.root / "work")) + os.sep
+        for text, keeps in (
+            ('"rpt"', lambda row: False),
+            ('"vsc"', lambda row: False),
+            ('"project rep"', lambda row: "project rep" in row[3]),
+            ("report -ext:(json;lnk)", lambda row: row[5] not in ("json", "lnk")),
+            ("report !*.json", lambda row: row[5] != "json"),
+            ("report -ext:j?on", lambda row: row[5] != "json"),
+            ("size:1kb..2kb", lambda row: 1024 <= row[6] <= 2048 and row[2] != "folder"),
+            (
+                "date:2024-06..2024-12",
+                lambda row: (2024, 6) <= time.localtime(row[7])[:2] <= (2024, 12),
+            ),
+            ("deep/ rpt", lambda row: f"{os.sep}deep{os.sep}" in row[4]),
+            (f'"{self.root / "work"}{os.sep}" report', lambda row: row[4].startswith(work)),
+        ):
+            query = parse_query(text)
+            with self.subTest(text=text):
+                expected = python_rows(rows, query, policy, WILDCARD_LIMIT, lambda *_: True)
+                actual = NATIVE.rank_rows(
+                    query_spec(query, Ranker(query, now=NOW), WILDCARD_LIMIT),
+                    priority_spec(policy),
+                    rows,
+                    lambda *_: True,
+                    NATIVE.CancelFlag(),
+                )
+                self.assertEqual(expected, actual)
+                self.assertTrue(all(keeps(rows[index]) for index, *_ in actual))
+                self.assertEqual(bool(actual), text not in ('"rpt"', '"vsc"'))
+        for fuzzy_text in ("rpt", "vsc", "project rep"):
+            with self.subTest(text=fuzzy_text):
+                query = parse_query(fuzzy_text)
+                self.assertTrue(python_rows(rows, query, policy, 10, lambda *_: True))
 
     def test_invalid_native_size_bounds_are_rejected(self):
         spec = query_spec(parse_query("report"), Ranker(parse_query("report")), 10)

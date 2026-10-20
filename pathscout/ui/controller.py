@@ -397,6 +397,11 @@ class LauncherController(QObject):
             if not QDesktopServices.openUrl(QUrl(hit.url)):
                 self._action_failed("The website could not be opened in your default browser.")
             return
+        if self.window.shows_missing(hit):
+            # Opening would fail; refreshing the folder drops the entry from the catalog.
+            self.window.report_missing(hit.item.name)
+            self.indexing.request_folder(hit.item.path.parent)
+            return
         explorer = self._explorer_target()
         self.window.hide()
         self._run_action(partial(self.actions.open, hit.item.path, history_key, explorer=explorer))

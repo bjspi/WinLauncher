@@ -315,6 +315,11 @@ def _require_structured_filters(where: _SqlFilter, query: SearchQuery) -> None:
         else:
             placeholders = ",".join("?" for _ in query.extensions)
             where.require(f"e.extension IN ({placeholders})", *query.extensions)
+    # Excluded patterns are left to the engines: a LIKE superset could hide eligible rows.
+    excluded = [extension for extension in query.excluded_extensions if not is_wildcard(extension)]
+    if excluded:
+        placeholders = ",".join("?" for _ in excluded)
+        where.require(f"e.extension NOT IN ({placeholders})", *excluded)
     if query.modified_after is not None:
         where.require("e.modified >= ?", query.modified_after)
     if query.modified_before is not None:
@@ -349,7 +354,8 @@ def _require_fuzzy_text(where: _SqlFilter, query: SearchQuery) -> None:
     for part in query.folder_parts:
         where.require(_PATH_LIKE, _subsequence(part))
     for term in query.terms:
-        _require_term(where, query, name_pattern=_subsequence(term), path_pattern=_contains(term))
+        name_pattern = _contains(term) if term in query.exact_terms else _subsequence(term)
+        _require_term(where, query, name_pattern=name_pattern, path_pattern=_contains(term))
     _exclude_literal_matches(where, query)
 
 

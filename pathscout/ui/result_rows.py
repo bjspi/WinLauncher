@@ -6,7 +6,7 @@ actions that exist for one kind only dispatch on `ResultRow.hit`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TypeAlias
@@ -20,6 +20,7 @@ from pathscout.websites import WebsiteTarget
 
 LauncherHit: TypeAlias = SearchHit | WebsiteTarget
 WEBSITE_REASON = "Opens in your default browser"
+MISSING_LABEL = "Deleted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,7 @@ class ResultRow:
     direct: bool = False
     # The first subfolder match after the direct entries; a line separates them.
     starts_subfolders: bool = False
+    missing: bool = False  # The file is gone; the catalog has not noticed yet.
 
     @property
     def file_hit(self) -> SearchHit | None:
@@ -45,11 +47,14 @@ class ResultRow:
         return self.hit if isinstance(self.hit, SearchHit) else None
 
 
-def result_row(hit: LauncherHit, query: SearchQuery | None, scope: Path | None) -> ResultRow:
+def result_row(
+    hit: LauncherHit, query: SearchQuery | None, scope: Path | None, *, missing: bool = False
+) -> ResultRow:
     """Describe `hit`; locations are relative to `scope` in an Explorer search."""
     if isinstance(hit, WebsiteTarget):
         return _website_row(hit)
-    return _file_row(hit, query, scope)
+    row = _file_row(hit, query, scope)
+    return _as_missing(row) if missing else row
 
 
 def _website_row(website: WebsiteTarget) -> ResultRow:
@@ -85,6 +90,18 @@ def _file_row(hit: SearchHit, query: SearchQuery | None, scope: Path | None) -> 
         metadata=metadata,
         pinned=item.pinned,
         direct=scope is not None and item.path.parent == scope,
+    )
+
+
+def _as_missing(row: ResultRow) -> ResultRow:
+    """A found file that no longer exists: shown dimmed and labeled, never opened."""
+    location = f"{MISSING_LABEL}  ·  {row.location}" if row.location else MISSING_LABEL
+    return replace(
+        row,
+        missing=True,
+        location=location,
+        tooltip=f"{row.target}\nNo longer exists",
+        accessible_text=f"{MISSING_LABEL}: {row.accessible_text}",
     )
 
 

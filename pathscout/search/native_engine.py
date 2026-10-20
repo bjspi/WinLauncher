@@ -35,7 +35,7 @@ from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking
 from pathscout.settings import DEFAULT_CONTENT_SEARCH_THREADS
 
-API_VERSION = 8
+API_VERSION = 9
 ENGINE_VARIABLE = "PATHSCOUT_SEARCH_ENGINE"
 PHASE_VARIABLE = "PATHSCOUT_NATIVE_PHASE"
 _ENGINES = ("auto", "python", "native")
@@ -127,10 +127,12 @@ def query_spec(
 ) -> dict[str, object]:
     return {
         "terms": list(query.terms),
+        "exact_terms": list(query.exact_terms),
         "folder_parts": list(query.folder_parts),
         "excluded_terms": list(query.excluded_terms),
         "kind": str(query.kind) if query.kind is not None else None,
         "extensions": list(query.extensions),
+        "excluded_extensions": list(query.excluded_extensions),
         "scope_key": ranker.filters.scope_key,
         "scope_search_prefix": ranker.scope_search_prefix,
         "modified_after": query.modified_after,

@@ -148,7 +148,8 @@ fn text_relevance(query: &Query, row: &Candidate) -> Option<(f64, Vec<String>)> 
     let mut score = 0.0;
     let mut reasons = Vec::with_capacity(query.terms.len() + 1);
     for term in &query.terms {
-        let (points, reason) = match_term(term, &name, path, query.fuzzy)?;
+        let fuzzy = query.fuzzy && !term.exact;
+        let (points, reason) = match_term(term, &name, path, fuzzy)?;
         score += points;
         reasons.push(reason.into());
     }
@@ -156,4 +157,40 @@ fn text_relevance(query: &Query, row: &Candidate) -> Option<(f64, Vec<String>)> 
         reasons.push("Ordered folder path".into());
     }
     Some((score, reasons))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::priority::Decision;
+    use crate::query::testing::{file, query};
+
+    const NO_PRIORITY: Decision = Decision {
+        class: SearchClass::Normal,
+        boost: 0,
+    };
+
+    /// The match reason of a one-term query, or None if it does not match.
+    fn reason(term: &str, exact: bool, path: &str) -> Option<String> {
+        let mut query = query(&[term]);
+        query.terms[0].exact = exact;
+        query.combined = true;
+        let ranking = rank(&query, &file(path), &NO_PRIORITY)?;
+        ranking.reasons.into_iter().next()
+    }
+
+    #[test]
+    fn exact_terms_match_contiguous_text_but_never_initials_or_subsequences() {
+        let path = "C:/Work/VisualStudioCode.exe";
+        let found = |term, exact| reason(term, exact, path);
+        assert_eq!(found("vsc", false).as_deref(), Some("Abbreviation"));
+        assert_eq!(found("vsc", true), None);
+        assert_eq!(found("vsd", false).as_deref(), Some("Fuzzy match"));
+        assert_eq!(found("vsd", true), None);
+        assert_eq!(
+            found("sualstu", true).as_deref(),
+            Some("Name contains query")
+        );
+        assert_eq!(found("work", true).as_deref(), Some("Path contains query"));
+    }
 }

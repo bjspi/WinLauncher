@@ -77,6 +77,7 @@ pub(crate) struct Query {
     pub excluded_terms: Vec<String>,
     pub kind: Option<Kind>,
     pub extensions: Vec<Term>,
+    pub excluded_extensions: Vec<Term>,
     pub scope_key: Option<String>,
     /// Normalized scope path plus separator; Explorer searches match paths below it.
     pub scope_search_prefix: Option<String>,
@@ -99,12 +100,18 @@ impl Query {
     pub fn from_dict(dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let kind: Option<String> = required(dict, "kind")?;
         let sort: String = required(dict, "sort")?;
+        let exact_terms: Vec<String> = required(dict, "exact_terms")?;
+        let mut terms = compile_terms(required(dict, "terms")?)?;
+        for term in &mut terms {
+            term.exact = exact_terms.contains(&term.text);
+        }
         let query = Self {
-            terms: compile_terms(required(dict, "terms")?)?,
+            terms,
             folder_parts: compile_terms(required(dict, "folder_parts")?)?,
             excluded_terms: required(dict, "excluded_terms")?,
             kind: kind.as_deref().map(Kind::parse).transpose()?,
             extensions: compile_terms(required(dict, "extensions")?)?,
+            excluded_extensions: compile_terms(required(dict, "excluded_extensions")?)?,
             scope_key: required(dict, "scope_key")?,
             scope_search_prefix: required(dict, "scope_search_prefix")?,
             modified_after: required(dict, "modified_after")?,
@@ -165,6 +172,13 @@ impl Query {
             return false;
         }
         if self.content_text.is_some() && row.kind != Kind::File {
+            return false;
+        }
+        if self
+            .excluded_extensions
+            .iter()
+            .any(|term| term.matches(&row.extension))
+        {
             return false;
         }
         self.extensions.is_empty()
@@ -349,5 +363,92 @@ impl Candidate {
                 .unbind(),
         ];
         Ok(PyTuple::new(py, fields)?.unbind())
+    }
+}
+
+/// Queries and rows for unit tests, with neutral defaults.
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+
+    pub fn query(terms: &[&str]) -> Query {
+        Query {
+            terms: terms
+                .iter()
+                .map(|text| Term::new((*text).into()).unwrap())
+                .collect(),
+            folder_parts: Vec::new(),
+            excluded_terms: Vec::new(),
+            kind: None,
+            extensions: Vec::new(),
+            excluded_extensions: Vec::new(),
+            scope_key: None,
+            scope_search_prefix: None,
+            modified_after: None,
+            modified_before: None,
+            min_size: None,
+            max_size: None,
+            content_text: None,
+            content_search_threads: 1,
+            explorer: false,
+            basename_only: false,
+            fuzzy: true,
+            combined: false,
+            sort: SortOrder::Score,
+            limit: 10,
+            now: 0.0,
+        }
+    }
+
+    /// A file row at `path`, normalized as the catalog stores it.
+    pub fn file(path: &str) -> Candidate {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let extension = name.rsplit_once('.').map_or("", |(_, extension)| extension);
+        Candidate {
+            path_text: path.into(),
+            identity: path.to_uppercase(),
+            kind: Kind::File,
+            search_name: name.to_lowercase(),
+            search_path: path.to_lowercase(),
+            extension: extension.to_lowercase(),
+            size: 0,
+            modified: 0.0,
+            attributes: 0,
+            launches: 0,
+            last_used: 0.0,
+            query_launches: 0,
+            pinned: false,
+            application_source: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::{file, query};
+    use super::*;
+
+    fn terms(texts: &[&str]) -> Vec<Term> {
+        compile_terms(texts.iter().map(|text| (*text).to_string()).collect()).unwrap()
+    }
+
+    #[test]
+    fn excluded_extensions_reject_names_and_patterns_but_keep_others() {
+        let mut excluding = query(&[]);
+        excluding.excluded_extensions = terms(&["tmp", "b?k"]);
+        assert!(!excluding.accepts(&file("C:/Work/draft.tmp")));
+        assert!(!excluding.accepts(&file("C:/Work/draft.bak")));
+        assert!(excluding.accepts(&file("C:/Work/draft.txt")));
+        assert!(excluding.accepts(&file("C:/Work/tmp/draft")));
+    }
+
+    #[test]
+    fn exclusions_win_over_an_including_extension_filter() {
+        let mut both = query(&[]);
+        both.extensions = terms(&["t*"]);
+        both.excluded_extensions = terms(&["tmp"]);
+        assert!(both.accepts(&file("C:/Work/notes.txt")));
+        assert!(!both.accepts(&file("C:/Work/notes.tmp")));
+        assert!(!both.accepts(&file("C:/Work/notes.md")));
     }
 }

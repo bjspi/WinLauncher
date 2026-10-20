@@ -20,6 +20,8 @@ pub const MIN_FUZZY_TERM_LENGTH: usize = 2;
 
 pub struct Term {
     pub text: String,
+    /// Written in quotes: matched as contiguous text, never by initials or fuzzily.
+    pub exact: bool,
     pattern: Option<Regex>,
 }
 
@@ -30,7 +32,11 @@ impl Term {
         } else {
             None
         };
-        Ok(Self { text, pattern })
+        Ok(Self {
+            text,
+            exact: false,
+            pattern,
+        })
     }
 
     pub fn matches(&self, text: &str) -> bool {

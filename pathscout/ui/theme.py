@@ -15,7 +15,7 @@ class Palette:
     ACCENT = "#2f7de1"
     SELECTED = "#e2e7ee"
     HOVER = "#edf0f4"
-    DIVIDER = "#d5dae1"  # Between an Explorer folder's direct entries and subfolder matches.
+    DIVIDER = "#7aa7e8"  # Between an Explorer folder's direct entries and subfolder matches.
     # Query syntax in the search field: filters, content searches, exclusions, errors.
     FILTER = "#1f5fb8"
     FILTER_BACKGROUND = "#e3edfb"
@@ -60,6 +60,7 @@ QLabel#message { color: #5f6670; padding: 14px 22px; }
 QLabel#message[explorer="true"] { font-size: 8pt; padding: 8px 10px; }
 QLabel#detail { color: #5f6670; font-size: 9pt; padding: 6px 22px 0 22px; }
 QLabel#status { color: #9aa0a8; font-size: 8pt; padding: 0; }
+QLabel#hint { color: #a3a9b1; font-size: 8pt; padding: 0; }
 QLabel#activity { color: #a15c00; font-size: 8pt; padding: 4px 22px 0 22px; }
 QLabel#muted { color: #6b727c; font-size: 9pt; }
 QLabel#sectionTitle { font-size: 12pt; font-weight: 600; padding: 4px 0; }
