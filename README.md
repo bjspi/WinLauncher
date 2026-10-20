@@ -288,6 +288,15 @@ patterns with `*`, `?` and `[…]` wildcards, and marker file names. Defaults:
 
 Patterns match whole names, so `buildings` stays searchable.
 
+Patterns with `\` or `/` match folder paths instead (either separator works). There,
+`*` and `?` stay within one folder and `**` spans any number of folders:
+
+```text
+Projects\Android\*\build     build folders one level below any Projects\Android
+Android/**/build             build folders at any depth below an Android folder
+D:\Archive\*\cache           starts with a drive, so it matches only from D:\
+```
+
 **Settings → Ranking** boosts or demotes folders, one rule per line:
 
 ```text

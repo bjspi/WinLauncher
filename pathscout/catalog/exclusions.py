@@ -18,6 +18,8 @@ DEFAULT_MARKER_FILES = (
     "conda-meta",
 )
 _GLOB_CHARACTERS = frozenset("*?[")
+_SEPARATORS = re.compile(r"[\\/]+")
+_ANY_FOLDERS = "(?:/[^/]+)*"
 
 
 @dataclass(slots=True)
@@ -50,7 +52,7 @@ class ExclusionPolicy:
         name_patterns = [p for p in patterns if "/" not in p]
         self._plain_names = frozenset(p for p in name_patterns if not _is_glob(p))
         self._name_globs = tuple(_compile_glob(p) for p in name_patterns if _is_glob(p))
-        self._path_globs = tuple(_compile_glob(p) for p in path_patterns)
+        self._path_globs = tuple(_compile_path_glob(p) for p in path_patterns)
 
     def fresh(self) -> ExclusionPolicy:
         """The same rules with an empty marker cache."""
@@ -86,7 +88,7 @@ class ExclusionPolicy:
             return True
         if not self._path_globs:
             return False
-        path = normalize(str(folder)).replace("\\", "/").rstrip("/")
+        path = _SEPARATORS.sub("/", "/" + normalize(str(folder))).rstrip("/")
         return any(glob.fullmatch(path) for glob in self._path_globs)
 
     def _has_marker(self, folder: Path) -> bool:
@@ -109,3 +111,41 @@ def _is_glob(pattern: str) -> bool:
 
 def _compile_glob(pattern: str) -> re.Pattern[str]:
     return re.compile(fnmatch.translate(pattern))
+
+
+def _compile_path_glob(pattern: str) -> re.Pattern[str]:
+    """Match a path pattern against `/`-prefixed paths such as `/c:/work/app`.
+
+    `*`, `?` and `[…]` stay within one folder name and `**` spans any number of
+    folders. Patterns starting with a drive or a separator are anchored at the
+    root; others match the trailing folders of a path, so `android/**/build`
+    excludes every `build` folder somewhere below any `android` folder.
+    """
+    pattern = _SEPARATORS.sub("/", pattern).rstrip("/")
+    segments = pattern.strip("/").split("/")
+    anchored = pattern.startswith("/") or segments[0].endswith(":")
+    regex = "" if anchored else _ANY_FOLDERS
+    for segment in segments:
+        regex += _ANY_FOLDERS if segment == "**" else "/" + _segment_regex(segment)
+    return re.compile(regex)
+
+
+def _segment_regex(segment: str) -> str:
+    """fnmatch semantics for one folder name; wildcards never match `/`."""
+    regex, index = [], 0
+    while index < len(segment):
+        char = segment[index]
+        index += 1
+        if char == "*":
+            regex.append("[^/]*")
+        elif char == "?":
+            regex.append("[^/]")
+        elif char == "[" and (end := segment.find("]", index + 1)) > index:
+            body = segment[index:end]
+            index = end + 1
+            negated = body.startswith("!")
+            body = re.escape(body[1:] if negated else body).replace("\\-", "-")
+            regex.append(f"[^/{body}]" if negated else f"[{body}]")
+        else:
+            regex.append(re.escape(char))
+    return "".join(regex)

@@ -121,6 +121,27 @@ class BusinessRulesTest(unittest.TestCase):
         (self.base / ".nobackup").write_text("")
         self.assertFalse(ExclusionPolicy().allows(self.root / "anything.txt"))
 
+    def test_path_patterns_match_folder_levels_with_either_separator(self):
+        def allows(pattern: str, path: str) -> bool:
+            return ExclusionPolicy(patterns=(pattern,), markers=()).allows(Path(path))
+
+        one_level = r"Projects\Android\*\build"
+        self.assertFalse(allows(one_level, r"D:\Projects\Android\App\build\out\a.txt"))
+        self.assertFalse(allows(one_level, r"E:\Work\projects\android\App\BUILD\a.txt"))
+        self.assertTrue(allows(one_level, r"D:\Projects\Android\App\sub\build\a.txt"))
+        self.assertTrue(allows(one_level, r"D:\Projects\Android\build\a.txt"))
+        self.assertTrue(allows(one_level, r"D:\MyProjects\Android\App\build\a.txt"))
+        any_depth = "Android/**/build"
+        self.assertFalse(allows(any_depth, r"E:\Android\build\a.txt"))
+        self.assertFalse(allows(any_depth, r"E:\Android\a\b\c\build\a.txt"))
+        self.assertTrue(allows(any_depth, r"E:\Android\a\build2\a.txt"))
+        anchored = "D:/Tools/x?z"
+        self.assertFalse(allows(anchored, r"D:\Tools\xyz\a.txt"))
+        self.assertTrue(allows(anchored, r"E:\Tools\xyz\a.txt"))
+        self.assertTrue(allows(anchored, r"D:\Other\Tools\xyz\a.txt"))
+        self.assertFalse(allows(r"\\server\share\[!a]*", r"\\server\share\bcd\a.txt"))
+        self.assertTrue(allows(r"\\server\share\[!a]*", r"\\server\share\abc\a.txt"))
+
     def test_cancelled_scan_preserves_entire_previous_snapshot(self):
         self.file("original.txt")
         self.scan()

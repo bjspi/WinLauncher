@@ -336,6 +336,10 @@ class SettingsDialog(QDialog):
         self.patterns = QPlainTextEdit("\n".join(settings.excluded_patterns))
         self.patterns.setAccessibleName("Excluded file and folder patterns, one per line")
         self.patterns.setMaximumHeight(130)
+        self.patterns.setToolTip(
+            "Names such as node_modules or *.lnk, or folder paths such as\n"
+            "Projects\\Android\\*\\build (* = one folder) or Android/**/build (** = any depth)."
+        )
         self.markers = QLineEdit(", ".join(settings.marker_files))
         self.markers.setAccessibleName("Marker file names, comma-separated")
         form.addRow("Excluded directories", self.excluded)

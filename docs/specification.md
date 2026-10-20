@@ -52,8 +52,14 @@ that merely share search normalization remain separate identities. Case-sensitiv
 NTFS directory namespaces are not supported.
 
 Patterns without a separator match file and directory names; `*`, `?` and bracket patterns
-use Python fnmatch semantics. Patterns with `/` or `\` match the full normalized
-absolute path using `/` separators. Matching directories exclude their subtree.
+use Python fnmatch semantics. Patterns with `/` or `\` match folder paths; both
+separators are equivalent and matching is case-insensitive. In them `*`, `?` and
+`[…]` stay within one folder name, while a `**` segment spans any number of
+folders (including none). A pattern starting with a drive (`D:/Tools/*`) or a
+separator (`\\server\share\*`) matches from the root; any other path pattern
+matches the trailing folders of a path, so `Projects\Android\*\build` excludes
+`D:\Work\Projects\Android\App\build` and `Android/**/build` excludes every `build`
+folder at any depth below an `Android` folder. Matching directories exclude their subtree.
 For example, `*.lnk` excludes Windows shortcuts by default. Name patterns without
 a separator do not apply to entries from application sources (Start-menu folders and
 registered App Paths), so installed applications stay searchable; folder exclusions,
