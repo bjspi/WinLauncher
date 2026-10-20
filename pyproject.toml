@@ -9,7 +9,12 @@ description = "Local file search and application launcher for Windows"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
-dependencies = ["PySide6>=6.7,<7", "pywin32>=306; sys_platform == 'win32'"]
+dependencies = [
+    # PySide6 6.12.0 aborts the process at random (on CI with Python 3.11 and 3.12).
+    # Raise the limit only after the test suite passes on the new release.
+    "PySide6>=6.7,<6.12",
+    "pywin32>=306; sys_platform == 'win32'",
+]
 
 [project.optional-dependencies]
 # The Rust search engine wheel of this release; the release workflow checks the version.

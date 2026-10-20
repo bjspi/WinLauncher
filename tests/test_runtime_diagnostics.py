@@ -34,6 +34,13 @@ from pathscout.search.ranking import Ranker
 from pathscout.settings import Settings, SettingsFile
 from pathscout.ui import icons
 
+# Qt must keep running while Rust searches: most timer ticks stay prompt and none
+# stalls like a held GIL would.
+RESPONSIVE_TICK_S = 0.1
+PROMPT_TICK_SHARE = 0.95
+STALL_LIMIT_S = 1.0
+FAKE_ICON_HANDLE = 0x1234
+
 
 class RuntimeDiagnosticsTest(unittest.TestCase):
     @classmethod
@@ -130,13 +137,16 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
         def slow_lookup(*_):
             entered.set()
             release.wait(3)
-            return image
+            return FAKE_ICON_HANDLE
 
         cache = icons.ResultIcons()
         changed = []
         cache.changed.connect(lambda: changed.append(True))
         item = CatalogItem(Path("C:/example/slow.exe"), ItemKind.APP)
-        with patch.object(icons, "_shell_image", side_effect=slow_lookup) as load:
+        with (
+            patch.object(icons, "_shell_icon", side_effect=slow_lookup) as load,
+            patch.object(icons, "_image_from_icon", return_value=image) as convert,
+        ):
             try:
                 fallback = cache.icon_for(item)
                 self.assertTrue(entered.wait(1))
@@ -154,11 +164,13 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
                 self.assertTrue(changed)
                 self.assertNotEqual(cache.icon_for(item).cacheKey(), fallback.cacheKey())
                 load.assert_called_once()
+                # The loader thread hands over the handle; the GUI thread makes the image.
+                convert.assert_called_once_with(FAKE_ICON_HANDLE)
             finally:
                 release.set()
                 cache.close()
-                if cache._worker is not None:
-                    cache._worker.join(3)
+                # A closed cache ignores late icons; the shared loader frees their handles.
+                self.assertNotIn(id(cache), cache._loader._requesters)
 
     def test_qt_can_type_and_cancel_while_rust_search_runs(self):
         try:
@@ -228,8 +240,12 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
                     timer.stop()
             self.assertEqual(edit.text(), "next query")
             self.assertTrue(cancelled_at, "Qt could not run Python while Rust was searching")
-            self.assertLess(time.perf_counter() - cancelled_at[0], 0.1)
-            self.assertLess(max(b - a for a, b in zip(ticks, ticks[1:], strict=False)), 0.1)
+            self.assertLess(time.perf_counter() - cancelled_at[0], RESPONSIVE_TICK_S)
+            # A search holding the GIL would stall Qt for the whole search; on shared CI
+            # machines single ticks may still lag, so only most ticks must be prompt.
+            gaps = sorted(b - a for a, b in zip(ticks, ticks[1:], strict=False))
+            self.assertLess(gaps[int(len(gaps) * PROMPT_TICK_SHARE)], RESPONSIVE_TICK_S)
+            self.assertLess(gaps[-1], STALL_LIMIT_S)
 
     @unittest.skipUnless(os.name == "nt", "Windows foreground activation")
     def test_foreground_retry_detaches_and_does_not_chase_another_app(self):

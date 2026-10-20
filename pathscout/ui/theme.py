@@ -126,7 +126,7 @@ QPlainTextEdit#code { font-family: 'Cascadia Mono', 'Consolas'; font-size: 9pt; 
 QMenu#tray { padding: 6px; font-size: 9pt; }
 QMenu#tray::item { padding: 7px 20px 7px 10px; border-radius: 6px; }
 QMenu#tray::icon { padding-left: 10px; }
-QMenu#tray::indicator { left: 10px; }
+QMenu#tray::indicator { width: 0; height: 0; }  /* Checks are icons, see TrayMenu. */
 QWidget#trayHeader { background: transparent; }
 QLabel#trayTitle { font-size: 10pt; font-weight: 600; color: #15191e; }
 QLabel#trayStatus { font-size: 8pt; color: #7d848d; }

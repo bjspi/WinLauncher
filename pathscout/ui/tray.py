@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -49,10 +49,12 @@ class TrayMenu(QObject):
         self._add_action("Index status…", self.status_requested, "activity")
         self.menu.addSeparator()
         self._add_action("Settings…", self.settings_requested, "gear")
-        # Checkable: its check mark takes the icon's place.
+        # Its check mark is drawn as an icon, so it lines up with the other icons.
         self.autostart = self._add_action("Start with Windows", self.autostart_toggled)
         self.autostart.setCheckable(True)
         self.autostart.setEnabled(autostart_available)
+        self.autostart.toggled.connect(self._show_check)
+        self._show_check(False)
         self._add_action("Clear search history", self.clear_history_requested, "trash")
         self.menu.addSeparator()
         self.update = self._add_action("Check for updates…", self.update_requested, "download")
@@ -95,6 +97,10 @@ class TrayMenu(QObject):
             action.setIcon(line_icon(icon, Palette.MENU_ICON))
         action.triggered.connect(signal)  # Qt forwards `checked` only where accepted.
         return action
+
+    def _show_check(self, checked: bool) -> None:
+        # A null icon keeps the column free, so the text stays aligned.
+        self.autostart.setIcon(line_icon("check", Palette.ACCENT) if checked else QIcon())
 
     def set_catalog_count(self, count: int) -> None:
         self.status.setText(f"{count:,} items indexed" if count else "Ready to search")
