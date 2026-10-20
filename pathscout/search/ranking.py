@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-from pathscout.catalog.model import CatalogItem, ItemKind
+from pathscout.catalog.model import CatalogItem, ItemKind, normalize
 from pathscout.catalog.priority import NO_PRIORITY, PriorityDecision, SearchPriority
 from pathscout.search.candidates import Candidate
 from pathscout.search.filters import StructuredFilters
@@ -40,6 +40,7 @@ RECENCY_HALF_VALUE_DAYS = 7
 SECONDS_PER_DAY = 86400
 # Absorbs float rounding, so an upper bound is never a hair below the real score.
 BOUND_TOLERANCE = 1e-6
+_LN2 = math.log(2.0)
 
 
 class PriorityBand(IntEnum):
@@ -93,6 +94,7 @@ class Ranker:
         self.filters = StructuredFilters(query)
         self.fuzzy = query.match_mode == MatchMode.FUZZY
         self.combined = query.score_mode == ScoreMode.COMBINED
+        self.scope_search_prefix = _scope_search_prefix(query)
 
     def eligible(self, candidate: Candidate, priority: PriorityDecision) -> bool:
         return priority.search != SearchPriority.IGNORED and self.filters.accepts(candidate)
@@ -109,12 +111,15 @@ class Ranker:
         text = self.text_relevance(candidate)
         if text is None:
             return None
-        if self.combined:
-            parts = [text, personalization(candidate, self.now), configured_priority(priority)]
-        else:
-            parts = [ScorePart(text.points, ("Text relevance only",))]
-        reasons = tuple(reason for part in parts for reason in part.reasons)
-        return Ranking(sum(part.points for part in parts), self.band(priority), reasons)
+        if not self.combined:
+            return Ranking(text.points, self.band(priority), ("Text relevance only",))
+        personal = personalization(candidate, self.now)
+        configured = configured_priority(priority)
+        # Explicit left-to-right float addition: identical on every Python version
+        # and in the Rust engine (`sum()` changed its rounding in Python 3.12).
+        score = text.points + personal.points + configured.points
+        reasons = text.reasons + personal.reasons + configured.reasons
+        return Ranking(score, self.band(priority), reasons)
 
     def best_possible_score(self, candidate: Candidate, priority: PriorityDecision) -> float:
         """An upper bound for `rank(...).score`, without matching any text."""
@@ -135,7 +140,7 @@ class Ranker:
             name, path = NameForms(candidate.stem), None
         else:
             name = NameForms(candidate.name, candidate.search_name)
-            path = None if query.explorer else candidate.search_path
+            path = self.matching_path(candidate)
         points, reasons = 0.0, []
         for term in query.terms:
             match = match_term(term, name, path, self.fuzzy)
@@ -146,6 +151,20 @@ class Ranker:
         if query.folder_parts:
             reasons.append("Ordered folder path")
         return ScorePart(points, tuple(reasons))
+
+    def matching_path(self, candidate: Candidate) -> str:
+        """Explorer searches match the path below the searched folder, so the folder's
+        own name does not make every descendant a "Path contains query" hit."""
+        prefix = self.scope_search_prefix
+        if prefix is not None and candidate.search_path.startswith(prefix):
+            return candidate.search_path[len(prefix) :]
+        return candidate.search_path
+
+
+def _scope_search_prefix(query: SearchQuery) -> str | None:
+    if not query.explorer or query.scope is None:
+        return None
+    return normalize(str(query.scope)).rstrip("\\/") + "\\"
 
 
 def rank(
@@ -170,7 +189,7 @@ _APP_ONLY = ScorePart(float(APP_BONUS))
 
 
 def personalization(candidate: Candidate, now: float) -> ScorePart:
-    points = APP_BONUS if candidate.kind == ItemKind.APP else 0.0
+    points = float(APP_BONUS) if candidate.kind == ItemKind.APP else 0.0
     if not (
         candidate.pinned or candidate.launches or candidate.query_launches or candidate.last_used
     ):
@@ -202,4 +221,14 @@ def configured_priority(priority: PriorityDecision) -> ScorePart:
 
 
 def _per_doubling(count: int, points: float, cap: float) -> float:
-    return min(cap, math.log2(count + 1) * points)
+    return float(min(cap, _log2(count + 1) * points))
+
+
+def _log2(value: int) -> float:
+    """log2 computed identically on every Python version and in the Rust engine.
+
+    `math.log2` rounds differently on Python 3.11 for Windows, which used its own
+    fallback instead of the C library's `log2`.
+    """
+    mantissa, exponent = math.frexp(value)
+    return math.log(2.0 * mantissa) / _LN2 + (exponent - 1)

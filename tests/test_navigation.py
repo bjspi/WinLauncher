@@ -23,8 +23,8 @@ class PathNavigationTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="pathscout-navigation-")
         self.addCleanup(self.temporary.cleanup)
         self.home = Path(self.temporary.name).resolve()
-        self.agents = self.home / ".myagents"
-        self.agents.mkdir()
+        self.toolbox = self.home / ".toolbox"
+        self.toolbox.mkdir()
         (self.home / "My Documents").mkdir()
         (self.home / "notes.txt").write_text("fixture")
         self.settings = Settings(roots=(), index_apps=False)
@@ -55,9 +55,9 @@ class PathNavigationTest(unittest.TestCase):
     def test_home_and_environment_paths_work_without_indexing_or_native_module(self):
         for text, expected in (
             ("~", self.home),
-            ("~/.myagents", self.agents),
-            ("~\\.myagents", self.agents),
-            ("%USERPROFILE%/.myagents", self.agents),
+            ("~/.toolbox", self.toolbox),
+            ("~\\.toolbox", self.toolbox),
+            ("%USERPROFILE%/.toolbox", self.toolbox),
             ("%TEMP%", self.home / "Temporary"),
             ("%LOCALAPPDATA%", self.home / "Local Data"),
             ("~/My Documents", self.home / "My Documents"),
@@ -71,18 +71,18 @@ class PathNavigationTest(unittest.TestCase):
             ):
                 self.assertEqual(self.paths(text), [expected])
         self.assertEqual(self.service.store.count(), 0)
-        self.assertEqual(parse_query("~/.myagents").history_key, "navigate:~/.myagents")
+        self.assertEqual(parse_query("~/.toolbox").history_key, "navigate:~/.toolbox")
 
     def test_alias_suggestions_and_direct_children_use_prefix_completion(self):
         self.assertEqual(self.paths("%LO"), [self.home / "Local Data"])
         self.assertEqual(self.paths("%T"), [self.home / "Temporary"])
-        self.assertIn(self.agents, self.paths("~/"))
+        self.assertIn(self.toolbox, self.paths("~/"))
         self.assertIn(self.home / "notes.txt", self.paths("~\\"))
-        self.assertEqual(self.paths("~/.my"), [self.agents])
+        self.assertEqual(self.paths("~/.to"), [self.toolbox])
         self.assertEqual(self.paths("%USERPROFILE%/My Doc"), [self.home / "My Documents"])
-        (self.agents / "nested").mkdir()
-        self.assertNotIn(self.agents / "nested", self.paths("~/"))
-        self.assertIn(self.agents / "nested", self.paths("~/.myagents/"))
+        (self.toolbox / "nested").mkdir()
+        self.assertNotIn(self.toolbox / "nested", self.paths("~/"))
+        self.assertIn(self.toolbox / "nested", self.paths("~/.toolbox/"))
         self.assertEqual(self.paths("%USERPROFILE%/missing/"), [])
 
     def test_navigation_honors_exclusions_markers_priorities_and_type(self):
@@ -92,7 +92,7 @@ class PathNavigationTest(unittest.TestCase):
                 folder = self.home / pattern
                 folder.mkdir(exist_ok=True)
         paths = self.paths("~/")
-        self.assertIn(self.agents, paths)
+        self.assertIn(self.toolbox, paths)
         self.assertNotIn(self.home / "Report.LNK", paths)
         self.assertEqual(self.paths("~/Report.LNK"), [])
         for name in (".mypy_cache", ".ruff_cache", "__pycache__", ".pylint.d", ".pytype"):
@@ -103,8 +103,8 @@ class PathNavigationTest(unittest.TestCase):
                 side_effect=AssertionError("Excluded subtree must not be read"),
             ):
                 self.assertEqual(self.paths(f"~/{name}/"), [])
-        (self.agents / ".nobackup").touch()
-        self.assertEqual(self.paths("~/.myagents"), [])
+        (self.toolbox / ".nobackup").touch()
+        self.assertEqual(self.paths("~/.toolbox"), [])
         settings = replace(
             self.settings, name_priorities=(NamePriority("notes", search_priority="ignored"),)
         )
@@ -131,8 +131,8 @@ class PathNavigationTest(unittest.TestCase):
         )
 
     def test_shortcut_favorite_state_can_be_toggled(self):
-        query = parse_query("~/.myagents")
-        self.service.store.set_favorite(self.agents, True)
+        query = parse_query("~/.toolbox")
+        self.service.store.set_favorite(self.toolbox, True)
         self.assertTrue(self.service.search(query, self.settings)[0].item.pinned)
-        self.service.store.set_favorite(self.agents, False)
+        self.service.store.set_favorite(self.toolbox, False)
         self.assertFalse(self.service.search(query, self.settings)[0].item.pinned)

@@ -9,6 +9,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+import unicodedata
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -47,7 +48,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
             data.mkdir(parents=True)
             legacy = root / "local" / "PathScout"
             legacy.mkdir(parents=True)
-            settings = Settings(roots=(), search_backend="python")
+            settings = Settings(roots=(), max_results=77)
             SettingsFile(legacy / "settings.json").save(settings)
             with (
                 patch.object(Path, "home", return_value=root / "home"),
@@ -164,6 +165,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
             native = importlib.import_module("pathscout_native")
         except ImportError:
             self.skipTest("Optional Rust extension is not installed")
+        native.use_unicode(unicodedata.unidata_version)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store = CatalogStore(root / "catalog.sqlite3")
@@ -182,20 +184,21 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
                 0.0,
                 0,
                 False,
+                False,
             )
             query = SearchQuery(terms=("ab" * 20,))
             spec = query_spec(query, Ranker(query), 10)
             rules = priority_spec(PriorityPolicy())
-            columns = ",".join(f":r{i}" for i in range(13))
+            columns = ",".join(f":r{i}" for i in range(14))
             sql = f"WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<999999) SELECT {columns} FROM n"
             parameters = {f"r{i}": value for i, value in enumerate(row)}
             flag = native.CancelFlag()
             entered = threading.Event()
             policy = ExclusionPolicy(markers=())
 
-            def allows(path, directory):
+            def allows(path, directory, application):
                 entered.set()
-                return policy.allows(Path(path), directory=directory)
+                return policy.allows(Path(path), directory=directory, application=application)
 
             edit, loop, timer = QLineEdit(), QEventLoop(), QTimer()
             ticks = [time.perf_counter()]

@@ -134,8 +134,7 @@ class SearchSession(QObject):
         hits = self.service.search(query, settings, cancel=cancel)
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "Search finished: requested_backend=%s elapsed_ms=%.1f hits=%d cancelled=%s",
-            settings.search_backend,
+            "Search finished: elapsed_ms=%.1f hits=%d cancelled=%s",
             elapsed_ms,
             len(hits),
             cancel.is_set(),

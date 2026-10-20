@@ -18,8 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pathscout.catalog.model import (
+    APPLICATION_SOURCE_PREFIX,
+    REGISTRY_SOURCE,
     CatalogItem,
     ItemKind,
+    file_stem,
     normalize,
     normalize_extension,
     path_key,
@@ -32,14 +35,15 @@ from pathscout.search.query import SearchQuery
 MIN_TRIGRAM_TERM_LENGTH = 3  # FTS5 trigram indexes cannot match shorter terms.
 CANCEL_CHECK_INSTRUCTIONS = 1000
 
-# Column order must match `_candidate_from_row`.
+# Column order must match `candidate_from_row` and the native module's `Candidate`.
 _CANDIDATE_SQL = """
     SELECT e.path, e.path_key, e.kind, e.name, e.search_path, e.extension,
         e.size, e.modified, e.attributes,
         coalesce(u.launches, 0) AS launches,
         coalesce(u.last_used, 0) AS last_used,
         coalesce(q.launches, 0) AS query_launches,
-        f.path_key IS NOT NULL AS pinned
+        f.path_key IS NOT NULL AS pinned,
+        (e.root = '{registry}' OR e.root LIKE '{applications}%') AS application_source
     FROM {entries}
     LEFT JOIN usage u ON u.path_key = e.path_key
     LEFT JOIN query_usage q ON q.path_key = e.path_key AND q.query = :history_key
@@ -56,12 +60,6 @@ def _file_name(path_text: str) -> str:
     """The last path component; stored paths are absolute Windows paths."""
     separator = max(path_text.rfind("\\"), path_text.rfind("/"))
     return path_text[separator + 1 :]
-
-
-def _pathlib_stem(file_name: str) -> str:
-    """`PurePath.stem` without building a path: a leading or trailing dot is no suffix."""
-    dot = file_name.rfind(".")
-    return file_name[:dot] if 0 < dot < len(file_name) - 1 else file_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,10 +80,12 @@ class Candidate:
     last_used: float = 0
     query_launches: int = 0
     pinned: bool = False
+    # From a Start-menu folder or App Paths: file-name exclusion patterns do not apply.
+    application_source: bool = False
 
     @property
     def stem(self) -> str:
-        return _pathlib_stem(self.file_name)
+        return file_stem(self.file_name)
 
     @property
     def name(self) -> str:
@@ -106,7 +106,7 @@ class Candidate:
         )
 
     def to_row(self) -> tuple:
-        """The native adapter uses the same 13-column layout as candidate SQL."""
+        """The native adapter uses the same column layout as candidate SQL."""
         return (
             self.path_text,
             self.identity,
@@ -121,6 +121,7 @@ class Candidate:
             self.last_used,
             self.query_launches,
             self.pinned,
+            self.application_source,
         )
 
     @classmethod
@@ -231,7 +232,12 @@ def candidate_sql(query: SearchQuery, fuzzy: bool = False) -> tuple[str, dict[st
     else:
         _require_literal_text(where, query)
     entries = _LEARNED_ENTRIES if query.uses_learned_items_only else _ALL_ENTRIES
-    sql = _CANDIDATE_SQL.format(entries=entries, where=where.sql())
+    sql = _CANDIDATE_SQL.format(
+        entries=entries,
+        where=where.sql(),
+        registry=REGISTRY_SOURCE,
+        applications=APPLICATION_SOURCE_PREFIX,
+    )
     parameters = {"history_key": query.history_key, **where.parameters}
     return sql, parameters
 
@@ -246,14 +252,14 @@ def _stream_items(
         for row in connection.execute(sql, parameters):
             if cancel is not None and cancel.is_set():
                 return
-            yield _candidate_from_row(row)
+            yield candidate_from_row(row)
     except sqlite3.OperationalError:
         # The progress handler interrupts a cancelled statement with this error.
         if cancel is None or not cancel.is_set():
             raise
 
 
-def _candidate_from_row(row: tuple) -> Candidate:
+def candidate_from_row(row: tuple) -> Candidate:
     (
         path_text,
         identity,
@@ -268,6 +274,7 @@ def _candidate_from_row(row: tuple) -> Candidate:
         last_used,
         query_launches,
         pinned,
+        application_source,
     ) = row
     return Candidate(
         path_text,
@@ -284,6 +291,7 @@ def _candidate_from_row(row: tuple) -> Candidate:
         last_used,
         query_launches,
         bool(pinned),
+        bool(application_source),
     )
 
 

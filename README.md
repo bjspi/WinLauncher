@@ -52,6 +52,24 @@ to the global launcher.
 
 ## 🚀 Quick start
 
+### With pipx (recommended)
+
+[pipx](https://pipx.pypa.io/) installs PathScout into its own environment and adds
+a `pathscout` command that starts without a console window:
+
+```powershell
+pipx install git+https://github.com/bjspi/PathScout.git@v0.2.1
+pipx inject pathscout https://github.com/bjspi/PathScout/releases/download/v0.2.1/pathscout_native-0.2.1-cp311-abi3-win_amd64.whl
+pathscout --show
+```
+
+The second line adds the Rust search engine from the release. Update later with
+`pipx install --force` and `pipx inject --force` using the new version's tag and
+wheel. `pipx uninstall pathscout` removes the program; your settings and catalog
+in `%USERPROFILE%\.PathScout` stay.
+
+### From a checkout
+
 ```powershell
 git clone https://github.com/bjspi/PathScout.git
 cd PathScout
@@ -59,6 +77,17 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\python.exe -m pathscout
 ```
+
+For the fast Rust search engine (and `contains:`), also install the matching
+`pathscout_native` wheel from the [latest release](https://github.com/bjspi/PathScout/releases/latest)
+— no compiler needed — or [build it yourself](#rust-search-engine):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install .\pathscout_native-0.2.1-cp311-abi3-win_amd64.whl
+```
+
+Without it PathScout still works with its slower Python engine and says so in the
+search bar.
 
 Afterwards, start it without a console window:
 
@@ -77,7 +106,8 @@ sign-in. It manages only its own shortcut in your Startup folder.
 ### 📋 Requirements
 
 - Windows 10 or 11
-- Python 3.11 or newer with SQLite FTS5 (the standard python.org and Conda builds)
+- Python 3.11 or newer with SQLite FTS5 (the standard python.org and Conda builds);
+  the Rust engine wheel supports Python 3.11 to 3.14
 - An ordinary user account — no administrator rights, services or drivers
 
 ## ⌨️ Keyboard
@@ -134,7 +164,7 @@ report low:true                         include low-priority results
 %TEMP%                                 open the Windows temporary directory
 %LOCALAPPDATA%                         open local application data
 ~/                                     list the user directory's direct children
-~/.myagents                            open this folder even outside indexed roots
+~/.config                              open this folder even outside indexed roots
 ```
 
 | Filter | Meaning |
@@ -149,10 +179,11 @@ report low:true                         include low-priority results
 | `sort:score` · `sort:name` · `sort:modified` | Order (default score) |
 | `score:combined` · `score:match` | With or without personal ranking |
 | `after:YYYY-MM-DD` · `before:YYYY-MM-DD` | Modification date range, inclusive |
+| `after:20260215` · `after:2026-W07-1` | Compact and other ISO 8601 day forms |
 | `after:2026-` · `after:2026-02*` | From January 1 or February 1, 2026 |
 | `before:2026-` · `before:2026-02*` | Through the end of 2026 or February 2026 |
 | `size:>5kb` · `size:<2mb` | File/application size; also `>=` and `<=` |
-| `contains:"some text"` · `contains:gsk_*` | Case-insensitive text/fnmatch content filter; Rust backend required |
+| `contains:"some text"` · `contains:gsk_*` | Case-insensitive text/fnmatch content filter; needs the Rust engine |
 | `content:text` · `rg:text` | Aliases for `contains:`, with identical fnmatch behavior |
 | `low:true` | Show low-priority results alongside the others |
 
@@ -175,9 +206,11 @@ Size units are case-insensitive: `b`/`byte`, `kb`/`kbyte`/`KiB`, `mb`/`mbyte`,
 `gb`/`gbyte` and `tb`/`tbyte` (plural `bytes` forms also work). Each step is 1024;
 without a unit the value is bytes. Decimal points or commas work (`size:>1.5mb`),
 and `size:> 5kb` is accepted. Repeated size filters intersect their bounds.
-Folder sizes are not calculated. Partial dates accept a year or year-month,
-optionally ending in `-` or `*`; `after:` starts the period and `before:` includes
-its final day, using local time.
+Folder sizes are not calculated. Dates accept every ISO 8601 day that Python's
+`date.fromisoformat` reads (`2026-02-15`, `20260215`, week dates such as
+`2026-W07-1`). Partial dates accept a year or year-month, optionally ending in `-`
+or `*`; `after:` starts the period and `before:` includes its final day, using
+local time.
 Size filters show approximate sizes on each result row; date filters show the
 stored modification date. These labels use catalog metadata without reading
 files while painting the UI.
@@ -186,14 +219,16 @@ files while painting the UI.
 exclusions, before the final result limit. It builds no content index and runs on
 the search worker with cancellation. JSON, Markdown, TXT, logs, CSV, configuration
 and common source-code files are supported, including UTF-8 and BOM-marked UTF-16.
-Binary data, Office documents, PDFs, offline files and files over 64 MiB are
+Files are not decoded, so ASCII text also matches in legacy encodings such as
+Windows-1252. Binary data, Office documents, PDFs, files over 64 MiB and cloud
+placeholders that would have to be downloaded first (OneDrive "online-only") are
 skipped; unreadable or deleted files also do not match. PDFs with a text layer
 would require a separate text extractor; image-only PDFs would additionally need
 OCR. Narrow the filename, extension or folder first for large collections.
 
-**Settings → Search & indexing → Content search threads (Rust)** sets how many
+**Settings → Search & indexing → Content search threads** sets how many
 files are scanned concurrently (1–16, default 4). This applies to `contains:`,
-`content:` and `rg:`; filename search still uses the catalog. The backend uses
+`content:` and `rg:`; filename search still uses the catalog. The Rust engine uses
 ripgrep libraries directly, with reusable workers and no per-file processes.
 Higher values can increase disk activity and memory use. Save applies the change
 to the next search without rebuilding the catalog.
@@ -215,7 +250,9 @@ patterns with `*`, `?` and `[…]` wildcards, and marker file names. Defaults:
 
 - **Markers:** `.nobackup`, `.no-backup`, `pyvenv.cfg` (Python environments) and
   `conda-meta` (Conda environments) exclude their folder and everything below it.
-- **Windows shortcuts:** `*.lnk` excludes shortcuts, including existing catalog results.
+- **Windows shortcuts:** `*.lnk` excludes shortcuts in your folders, including existing
+  catalog results. Start-menu and registered applications stay searchable: file-name
+  patterns do not apply to them (folder exclusions and markers still do).
 - **Office temporary files:** `~$*` excludes lock/owner files such as `~$Report.docx`.
 - **Folder names:** `.git*`, `.svn`, `.hg`, `__pycache__`, `.venv`, `venv`,
   `.ruff_cache`, `.mypy_cache`, `.dmypy_cache`, `.pytype`, `.pyre`, `.pyright`,
@@ -288,40 +325,42 @@ on. Read the [architecture notes](docs/architecture.md) for the details.
 
 ## 🧪 Development
 
-### Optional native acceleration
+### Rust search engine
 
-The separate `pathscout-native` package accelerates matching, ranking and SQLite
-candidate reads. The normal Python installation needs no Rust dependencies and
-continues to work when the extension is absent or incompatible.
+The separate `pathscout_native` package is PathScout's search engine: matching,
+ranking, SQLite candidate reads and `contains:`. The Python ranking stays the
+behavior reference, and the test suite checks that both produce identical scores,
+reasons and order. The PathScout package itself needs no Rust dependencies; when
+the extension is missing or does not fit this Python, PathScout searches with
+the Python engine, shows why in the search bar and leaves `contains:` unavailable.
 
-Choose **Rust** (default, with Python fallback) or **Python** in
-**Settings → Search & indexing → Search backend**. Save applies the choice to
-the next search without rebuilding the catalog.
-
-Use Python 3.12, Rust stable for `x86_64-pc-windows-msvc`, and Visual Studio Build
-Tools with **Desktop development with C++**:
+One abi3 wheel serves Python 3.11 to 3.14; it picks the Unicode tables of the
+running interpreter (Unicode 14.0, 15.0, 15.1 and 16.0). Build it with Rust stable
+for `x86_64-pc-windows-msvc` and Visual Studio Build Tools with **Desktop
+development with C++**:
 
 ```powershell
 python -m pip install maturin
-python -m pip install ./native
+python native\tools\build.py --out dist            # abi3 wheel without local paths
+python -m pip install --force-reinstall (Get-ChildItem dist\pathscout_native-*.whl).FullName
 python -c "import pathscout_native; print(pathscout_native.API_VERSION)"
-# Rebuild after changing native sources or updating this checkout:
-python -m pip install --force-reinstall ./native
-# Build an abi3 wheel for distribution:
-python -m maturin build --release --locked --manifest-path native/Cargo.toml --out dist
 ```
 
-For diagnostics, `PATHSCOUT_SEARCH_ENGINE` overrides the saved preference:
-`auto` selects native when available, `python` forces the reference engine,
-and `native` requires a compatible extension.
-Execution errors log once and retry the search in Python. Unicode tables currently
-target Python's Unicode 15.0 (Python 3.12); other Unicode versions use Python.
-Filename regex rules support a checked ASCII subset, including lookarounds and
-backreferences. Unsupported regex syntax or applicable non-ASCII filenames also
-use Python for the whole search.
+`native/tools/build.py` wraps `maturin build --release --locked` and remaps your
+user folder, the checkout and the Cargo/rustup homes, so the wheel contains no
+paths from your machine. After changing `native/Cargo.lock`, refresh the shipped
+license texts with `python native\tools\collect_licenses.py`; after adding a
+Python version, generate its Unicode tables with
+`python -I native\tools\generate_unicode.py` using that interpreter.
 
-For development in a virtual environment, `cd native; python -m maturin develop
---release` installs directly into that environment. Compare both native phases:
+`PATHSCOUT_SEARCH_ENGINE` selects the engine for tests and diagnostics: `auto`
+(default) uses Rust when available, `python` forces the reference engine, and
+`native` requires the extension and fails instead of falling back. In `auto`, an
+unexpected Rust error is logged once and that search is repeated in Python.
+Filename regex rules run natively for ASCII names; other names, and syntax Rust's
+regex cannot match exactly, call the rule's compiled Python pattern instead.
+
+Compare the engines and both native phases:
 
 ```powershell
 python tools\benchmark.py --engine python --entries 50000 --directories 1000
@@ -333,12 +372,15 @@ cargo test --manifest-path native/Cargo.toml --locked
 `PATHSCOUT_NATIVE_PHASE=rows` keeps SQLite reads in Python; the default `sqlite`
 phase streams candidates in Rust.
 
+### Tests and checks
+
 ```powershell
 python -m unittest discover -s tests -v          # unit, UI and integration tests
 python tools\smoke_test.py --native              # real Qt flow + hook attach/detach
 python tools\benchmark.py --entries 50000        # synthetic search benchmark
-python -m ruff check pathscout tests tools
-python -m ruff format --check pathscout tests tools
+python tools\readme_screenshots.py              # regenerate the README screenshots
+python -m ruff check pathscout tests tools native/tools
+python -m ruff format --check pathscout tests tools native/tools
 ```
 
 Tests use temporary catalogs, folders and git repositories; they never touch your
@@ -348,22 +390,22 @@ real settings, Startup folder or files.
 
 [CI](https://github.com/bjspi/PathScout/actions/workflows/ci.yml) runs on pushes to
 `main`, pull requests and manual dispatch. It checks Python style, Rust formatting
-and Clippy, runs Windows tests without the extension and with both backends,
-checks the Qt/keyboard flow, and builds the Python wheel/source distribution and
-Windows x64 Rust wheel. Download them from the run's `pathscout-windows-packages` artifact.
+and Clippy, runs the Windows tests with each engine, tests the Rust wheel on
+Python 3.11, 3.12, 3.13 and 3.14, checks the Qt/keyboard flow, and builds and
+verifies the Python wheel/source distribution and the Windows x64 Rust wheel. Download them from the run's `pathscout-windows-packages` artifact.
 
 Pushing a `v*` tag runs the same checks and publishes a GitHub Release only after
 they pass, attaching those packages and a clean source ZIP. The tag must match
 `pathscout/__init__.py`, `pyproject.toml`, `native/pyproject.toml` and
-`native/Cargo.toml` (for example `v0.2.0`). Install both wheels from a release
+`native/Cargo.toml` (for example `v0.2.1`). Install both wheels from a release
 with `python -m pip install <python-wheel> <native-wheel>` to enable Rust without
 installing a compiler. Source ZIPs retain `native/` for local builds.
 
-For example, publish version 0.2.0 from a clean, committed checkout with:
+For example, publish version 0.2.1 from a clean, committed checkout with:
 
 ```powershell
-git tag -a v0.2.0 -m "PathScout 0.2.0"
-git push origin v0.2.0
+git tag -a v0.2.1 -m "PathScout 0.2.1"
+git push origin v0.2.1
 ```
 
 The finished release appears under [Releases](https://github.com/bjspi/PathScout/releases).
@@ -377,9 +419,8 @@ The finished release appears under [Releases](https://github.com/bjspi/PathScout
 - Windows only: the keyboard hook, Explorer integration, folder watching and
   autostart use Windows APIs.
 - Indexes by walking folders and watching changes, not by reading the NTFS
-  journal; very large drive-wide catalogs build slower. The Python engine takes
-  around half a second for broad one-letter searches over 50,000 entries; optional
-  native acceleration reduces that substantially.
+  journal; very large drive-wide catalogs build slower. Without the Rust engine,
+  broad one-letter searches over 50,000 entries take around half a second.
 - Input methods (IME), Windows 11 tab edge cases, high-DPI multi-monitor setups and
   screen readers still need more real-world testing.
 

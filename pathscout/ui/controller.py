@@ -20,7 +20,7 @@ from typing import TypeVar
 from PySide6.QtCore import QObject, QProcess, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from pathscout.actions import ItemActions
+from pathscout.actions import ExplorerTarget, ItemActions
 from pathscout.catalog.indexer import CatalogIndexer
 from pathscout.catalog.model import ScanReport, is_within
 from pathscout.catalog.sources import catalog_sources
@@ -34,6 +34,7 @@ from pathscout.platform.gesture import (
 )
 from pathscout.platform.shell import application_roots
 from pathscout.platform.startup import PACKAGE_PARENT, StartupShortcut
+from pathscout.search.native_engine import native_availability
 from pathscout.search.ranking import SearchHit
 from pathscout.search.service import SearchService
 from pathscout.settings import Settings, SettingsFile
@@ -49,6 +50,8 @@ from pathscout.ui.updater import GitUpdater
 from pathscout.ui.window import LauncherWindow
 
 logger = logging.getLogger(__name__)
+UI_DELAY_POLL_MS = 100
+UI_DELAY_WARNING_MS = 250
 KEYBOARD_POLL_MS = 20
 WATCH_POLL_MS = 500
 HIDDEN_SCOPE_CLEANUP_MS = 500
@@ -113,7 +116,11 @@ class LauncherController(QObject):
         self.keyboard_timer = self._poll(self._drain_keyboard, KEYBOARD_POLL_MS)
         self.watch_timer = self._poll(self._drain_watch_events, WATCH_POLL_MS)
         self._ui_tick = time.monotonic()
-        self.ui_timer = self._poll(self._check_ui_delay, 100)
+        # Measures UI responsiveness while the launcher is visible; idle in the tray.
+        self.ui_timer = self._poll(self._check_ui_delay, UI_DELAY_POLL_MS)
+        self.ui_timer.stop()
+        self.window.shown.connect(self._start_ui_delay_check)
+        self._report_search_engine()
         self.tray.show()
         self._start_keyboard()
         self._start_monitor()
@@ -212,11 +219,22 @@ class LauncherController(QObject):
             elif isinstance(intent, InputUnavailable):
                 self.status.show_problem(ProblemTopic.KEYBOARD, intent.message, intent.message)
 
+    def _start_ui_delay_check(self) -> None:
+        self._ui_tick = time.monotonic()
+        self.ui_timer.start()
+
+    def _report_search_engine(self) -> None:
+        """Searching without the Rust engine works, but slowly and without `contains:`."""
+        reason = native_availability().reason
+        if reason:
+            message = f"{reason} Searches are slower and contains: is unavailable."
+            self.status.show_problem(ProblemTopic.SEARCH_ENGINE, message)
+
     def _check_ui_delay(self) -> None:
         now = time.monotonic()
         elapsed_ms = (now - self._ui_tick) * 1000
         self._ui_tick = now
-        if elapsed_ms > 250:
+        if elapsed_ms > UI_DELAY_WARNING_MS:
             logger.warning(
                 "UI event loop delayed: %.0f ms search_running=%s indexing=%s",
                 elapsed_ms,
@@ -351,16 +369,10 @@ class LauncherController(QObject):
     # Item actions -------------------------------------------------------------
 
     def open_item(self, hit: SearchHit, history_key: str) -> None:
-        action = partial(self.actions.open, hit.item.path, history_key)
-        if self.window.explorer_view is not None and self.window.scope is not None:
-            action = partial(
-                self.actions.open,
-                hit.item.path,
-                history_key,
-                explorer=(*self.window.explorer_view, self.window.scope),
-            )
+        view, scope = self.window.explorer_view, self.window.scope
+        explorer = ExplorerTarget(*view, scope) if view is not None and scope else None
         self.window.hide()
-        self._run_action(action)
+        self._run_action(partial(self.actions.open, hit.item.path, history_key, explorer=explorer))
 
     def reveal_item(self, hit: SearchHit) -> None:
         self.window.hide()
@@ -438,8 +450,7 @@ class LauncherController(QObject):
         self.settings_file.save(settings)
         previous, self.settings = self.settings, settings
         logger.info(
-            "Settings saved: search_backend=%s indexing_changed=%s input_changed=%s",
-            settings.search_backend,
+            "Settings saved: indexing_changed=%s input_changed=%s",
             previous.indexing_key != settings.indexing_key,
             previous.input_key != settings.input_key,
         )

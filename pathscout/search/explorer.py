@@ -8,7 +8,7 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 
-from pathscout.catalog.indexer import _catalog_item, _classify_kind
+from pathscout.catalog.indexer import catalog_item, classify_kind
 from pathscout.search.candidates import Candidate
 
 logger = logging.getLogger(__name__)
@@ -22,10 +22,10 @@ def directory_candidates(folder: Path, cancel: threading.Event | None) -> Iterat
                     return
                 try:
                     path = Path(entry.path)
-                    item = _catalog_item(
+                    item = catalog_item(
                         path,
                         entry.stat(follow_symlinks=False),
-                        _classify_kind(path, entry.is_dir()),
+                        classify_kind(path, entry.is_dir()),
                     )
                     yield Candidate.from_item(item)
                 except OSError:

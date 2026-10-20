@@ -12,10 +12,10 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from PySide6.QtCore import QMimeData, Signal
+from PySide6.QtCore import QMimeData, Qt, Signal
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -121,15 +120,46 @@ def _split_commas(text: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in text.split(",") if part.strip())
 
 
-def _spin_box(bounds: tuple[int, int], value: int, suffix: str = "") -> QSpinBox:
-    widget = QSpinBox()
-    widget.setRange(*bounds)
-    widget.setValue(value)
-    widget.setSuffix(suffix)
-    # The dark stylesheet hides Qt's arrow glyphs; typing, arrow keys and the wheel remain.
-    widget.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-    widget.setToolTip(f"{bounds[0]}–{bounds[1]}{suffix}; type a value or use the arrow keys")
-    return widget
+class NumberField(QLineEdit):
+    """A whole number within `bounds`; arrow keys and the wheel step by one.
+
+    Not a `QSpinBox`: Qt 6.12 collapses the text area of style-sheet spin boxes
+    without buttons, which leaves them empty and impossible to type into.
+    """
+
+    def __init__(self, bounds: tuple[int, int], value: int, unit: str = ""):
+        super().__init__()
+        self.bounds = bounds
+        self._last_valid = value
+        self.setValidator(QIntValidator(*bounds, self))
+        self.setValue(value)
+        unit_text = f" {unit}" if unit else ""
+        self.setToolTip(f"{bounds[0]}–{bounds[1]}{unit_text}; type a value or use the arrow keys")
+
+    def value(self) -> int:
+        """The typed number clamped to `bounds`; the last valid value while empty."""
+        try:
+            number = int(self.text())
+        except ValueError:
+            return self._last_valid
+        return min(max(number, self.bounds[0]), self.bounds[1])
+
+    def setValue(self, value: int) -> None:  # noqa: N802 - mirrors QSpinBox.
+        self._last_valid = min(max(value, self.bounds[0]), self.bounds[1])
+        self.setText(str(self._last_valid))
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override.
+        steps = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
+        if steps is None:
+            super().keyPressEvent(event)
+        else:
+            self.setValue(self.value() + steps)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override.
+        if self.hasFocus() and event.angleDelta().y():
+            self.setValue(self.value() + (1 if event.angleDelta().y() > 0 else -1))
+        else:
+            super().wheelEvent(event)
 
 
 def _note(text: str) -> QLabel:
@@ -279,19 +309,13 @@ class SettingsDialog(QDialog):
         self.explorer = QCheckBox("Search when typing in Explorer's file view")
         self.explorer.setChecked(settings.explorer_typing)
         form.addRow(self.explorer)
-        self.ctrl_interval = _spin_box(DOUBLE_CTRL_RANGE_MS, settings.double_ctrl_ms, " ms")
-        self.scan_interval = _spin_box(RESCAN_RANGE_SECONDS, settings.rescan_seconds, " seconds")
-        self.limit = _spin_box(RESULT_LIMIT_RANGE, settings.max_results)
-        form.addRow("Double-Ctrl interval", self.ctrl_interval)
-        form.addRow("Refresh catalog every", self.scan_interval)
+        self.ctrl_interval = NumberField(DOUBLE_CTRL_RANGE_MS, settings.double_ctrl_ms, "ms")
+        self.scan_interval = NumberField(RESCAN_RANGE_SECONDS, settings.rescan_seconds, "seconds")
+        self.limit = NumberField(RESULT_LIMIT_RANGE, settings.max_results)
+        form.addRow("Double-Ctrl interval (ms)", self.ctrl_interval)
+        form.addRow("Refresh catalog every (s)", self.scan_interval)
         form.addRow("Maximum results", self.limit)
-        self.backend = QComboBox()
-        self.backend.addItem("Rust", "rust")
-        self.backend.addItem("Python", "python")
-        self.backend.setCurrentIndex(self.backend.findData(settings.search_backend))
-        self.backend.setAccessibleName("Search backend")
-        form.addRow("Search backend", self.backend)
-        self.content_threads = _spin_box(
+        self.content_threads = NumberField(
             CONTENT_SEARCH_THREADS_RANGE, settings.content_search_threads
         )
         self.content_threads.setAccessibleName("Content search threads")
@@ -299,8 +323,7 @@ class SettingsDialog(QDialog):
             "1–16 parallel file scans for contains:, content: and rg: (Rust only). "
             "More threads can increase disk activity and memory use."
         )
-        form.addRow("Content search threads (Rust)", self.content_threads)
-        form.addRow(_note("Rust uses Python when unavailable or a search rule requires it."))
+        form.addRow("Content search threads", self.content_threads)
         form.addRow(
             _note("Other changes apply on Save. File names and paths stay on this computer.")
         )
@@ -394,7 +417,6 @@ class SettingsDialog(QDialog):
             double_ctrl_ms=self.ctrl_interval.value(),
             rescan_seconds=self.scan_interval.value(),
             max_results=self.limit.value(),
-            search_backend=self.backend.currentData(),
             content_search_threads=self.content_threads.value(),
         )
 

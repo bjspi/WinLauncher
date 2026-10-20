@@ -55,10 +55,12 @@ class ExclusionPolicy:
         """The same rules with an empty marker cache."""
         return ExclusionPolicy(self.paths, self.patterns, self.markers, self.raise_marker_errors)
 
-    def allows(self, path: Path, *, directory: bool = False) -> bool:
+    def allows(self, path: Path, *, directory: bool = False, application: bool = False) -> bool:
+        """`application` marks Start-menu and App Paths entries: file-name patterns such
+        as `*.lnk` never hide them, while folder rules and markers still apply."""
         if self._excluded_keys and path_key(path).startswith(self._excluded_keys):
             return False
-        if not directory and self._matches_pattern(path):
+        if not directory and not application and self._matches_pattern(path):
             return False
         return self._allows_directory(path if directory else path.parent)
 

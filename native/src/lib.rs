@@ -18,16 +18,25 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use rusqlite::types::Value;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, Statement};
 
 use content::ContentFilter;
 use content_workers::ContentWorkers;
 use heap::{BestHits, Kept};
-use priority::Policy;
-use query::{Candidate, Query};
+use priority::{Policy, SearchClass};
+use query::{Candidate, Kind, Query, CANDIDATE_COLUMNS};
 
+/// Bumped whenever the Python-facing contract changes; Python checks it on import.
+const API_VERSION: u32 = 8;
 const CANCEL_CHECK_INSTRUCTIONS: i32 = 1000;
+/// Same as Python's `CatalogStore` connections.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(15);
+/// Lets the GIL go regularly while Python rows are converted.
+const ROWS_PER_GIL_YIELD: usize = 1000;
+
+/// `(row index, score, band, reasons)` for `rank_rows`.
 type RowResult = (usize, f64, u8, Vec<String>);
+/// `(row, score, band, reasons)` for `rank_sqlite`.
 type SqliteResult = (Py<PyTuple>, f64, u8, Vec<String>);
 
 #[pyclass]
@@ -52,6 +61,7 @@ impl CancelFlag {
     }
 }
 
+/// One search: filters, early discard, ranking, exclusion callback and the heap.
 struct Search<'a> {
     query: &'a Query,
     priorities: &'a Policy,
@@ -68,14 +78,18 @@ impl<'a> Search<'a> {
         allows: &'a Py<PyAny>,
         cancel: &'a CancelFlag,
     ) -> PyResult<Self> {
-        let content = query
-            .content_text
-            .as_deref()
-            .map(ContentFilter::new)
-            .transpose()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?
-            .map(|filter| ContentWorkers::new(filter, query.content_search_threads, cancel))
-            .transpose()?;
+        let content = match query.content_text.as_deref() {
+            Some(text) => {
+                let filter = ContentFilter::new(text)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                Some(ContentWorkers::new(
+                    filter,
+                    query.content_search_threads,
+                    cancel,
+                )?)
+            }
+            None => None,
+        };
         Ok(Self {
             query,
             priorities,
@@ -88,43 +102,45 @@ impl<'a> Search<'a> {
 
     fn consider(&mut self, index: usize, row: Candidate) -> PyResult<()> {
         let priority = self.priorities.evaluate(&row)?;
-        if priority.search == "ignored" || !self.query.accepts(&row) {
+        if priority.class == SearchClass::Ignored || !self.query.accepts(&row) {
             return Ok(());
         }
-        if !self
-            .best
-            .could_keep(&heap::best_possible_key(self.query, &row, &priority))
-        {
+        let best_possible = heap::best_possible_key(self.query, &row, &priority);
+        if !self.best.could_keep(&best_possible) {
             return Ok(());
         }
         let Some(ranking) = rank::rank(self.query, &row, &priority) else {
             return Ok(());
         };
         let key = heap::key(self.query, &row, &ranking);
-        if !self.best.would_keep(&key) || self.cancel.is_set() {
+        if !self.best.would_keep(&key) || self.cancel.is_set() || !self.allows(&row)? {
             return Ok(());
         }
-        let allowed = Python::with_gil(|py| {
-            self.allows
-                .call1(py, (&row.path_text, row.kind == "folder"))?
-                .extract::<bool>(py)
-        })?;
-        if allowed {
-            let hit = Kept {
-                key,
-                index,
-                row,
-                ranking,
-            };
-            if let Some(content) = &mut self.content {
+        let hit = Kept {
+            key,
+            index,
+            row,
+            ranking,
+        };
+        match &mut self.content {
+            Some(content) => {
                 if let Some(ready) = content.submit(hit)? {
                     self.keep(ready);
                 }
-            } else {
-                self.best.add(hit);
             }
+            None => self.best.add(hit),
         }
         Ok(())
+    }
+
+    /// Python's exclusion check; it probes the disk for marker files.
+    fn allows(&self, row: &Candidate) -> PyResult<bool> {
+        let arguments = (
+            row.path_text.as_str(),
+            row.kind == Kind::Folder,
+            row.application_source,
+        );
+        Python::with_gil(|py| self.allows.call1(py, arguments)?.extract::<bool>(py))
     }
 
     fn keep(&mut self, hit: Kept) {
@@ -143,13 +159,23 @@ impl<'a> Search<'a> {
             }
         }
         if self.cancel.is_set() {
-            Ok(Vec::new())
-        } else {
-            Ok(self.best.ordered())
+            return Ok(Vec::new());
         }
+        Ok(self.best.ordered())
     }
 }
 
+fn require_unicode_tables() -> PyResult<()> {
+    if unicode::is_selected() {
+        Ok(())
+    } else {
+        Err(PyRuntimeError::new_err(
+            "Call use_unicode() before searching",
+        ))
+    }
+}
+
+/// Phase 1: rank candidate rows that Python already fetched.
 #[pyfunction]
 fn rank_rows(
     py: Python<'_>,
@@ -159,6 +185,7 @@ fn rank_rows(
     allows: Py<PyAny>,
     cancel: PyRef<'_, CancelFlag>,
 ) -> PyResult<Vec<RowResult>> {
+    require_unicode_tables()?;
     let query = Query::from_dict(query)?;
     let priorities = Policy::from_dict(priorities)?;
     let cancel = cancel.clone();
@@ -168,19 +195,11 @@ fn rank_rows(
             return Ok(Vec::new());
         }
         candidates.push(Candidate::from_python(&row?)?);
-        if candidates.len() % 1000 == 0 {
+        if candidates.len() % ROWS_PER_GIL_YIELD == 0 {
             py.allow_threads(std::thread::yield_now);
         }
     }
     let kept = py.allow_threads(move || {
-        if priorities.has_name_rules() {
-            for row in &candidates {
-                if cancel.is_set() {
-                    return Ok(Vec::new());
-                }
-                priorities.validate_candidate(row)?;
-            }
-        }
         let mut search = Search::new(&query, &priorities, &allows, &cancel)?;
         for (index, candidate) in candidates.into_iter().enumerate() {
             if cancel.is_set() {
@@ -193,12 +212,8 @@ fn rank_rows(
     Ok(kept
         .into_iter()
         .map(|hit| {
-            (
-                hit.index,
-                hit.ranking.score,
-                hit.ranking.band,
-                hit.ranking.reasons,
-            )
+            let band = hit.ranking.band as u8;
+            (hit.index, hit.ranking.score, band, hit.ranking.reasons)
         })
         .collect())
 }
@@ -229,49 +244,43 @@ fn parameters_from_python(parameters: &Bound<'_, PyDict>) -> PyResult<Vec<(Strin
         .collect()
 }
 
-fn candidate_from_sql(row: &rusqlite::Row<'_>) -> Result<Candidate, rusqlite::Error> {
-    Ok(Candidate {
-        path_text: row.get(0)?,
-        identity: row.get(1)?,
-        kind: row.get(2)?,
-        search_name: row.get(3)?,
-        search_path: row.get(4)?,
-        extension: row.get(5)?,
-        size: row.get(6)?,
-        modified: row.get(7)?,
-        attributes: row.get(8)?,
-        launches: row.get(9)?,
-        last_used: row.get(10)?,
-        query_launches: row.get(11)?,
-        pinned: row.get(12)?,
-    })
+fn candidate_from_sql(row: &rusqlite::Row<'_>) -> PyResult<Candidate> {
+    let kind: String = row.get(2).map_err(sql_error)?;
+    let candidate = Candidate {
+        path_text: row.get(0).map_err(sql_error)?,
+        identity: row.get(1).map_err(sql_error)?,
+        kind: Kind::parse(&kind)?,
+        search_name: row.get(3).map_err(sql_error)?,
+        search_path: row.get(4).map_err(sql_error)?,
+        extension: row.get(5).map_err(sql_error)?,
+        size: row.get(6).map_err(sql_error)?,
+        modified: row.get(7).map_err(sql_error)?,
+        attributes: row.get(8).map_err(sql_error)?,
+        launches: row.get(9).map_err(sql_error)?,
+        last_used: row.get(10).map_err(sql_error)?,
+        query_launches: row.get(11).map_err(sql_error)?,
+        pinned: row.get(12).map_err(sql_error)?,
+        application_source: row.get(13).map_err(sql_error)?,
+    };
+    candidate.validate()?;
+    Ok(candidate)
 }
 
-fn search_sqlite(
-    database: &str,
-    sql: &str,
-    parameters: &[(String, Value)],
-    query: &Query,
-    priorities: &Policy,
-    allows: &Py<PyAny>,
-    cancel: &CancelFlag,
-) -> PyResult<Vec<Kept>> {
-    if cancel.is_set() {
-        return Ok(Vec::new());
-    }
+/// A read-only connection whose statements stop once the search is cancelled.
+fn open_read_only(database: &str, cancel: &CancelFlag) -> PyResult<Connection> {
     let connection = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(sql_error)?;
-    connection
-        .busy_timeout(Duration::from_secs(15))
-        .map_err(sql_error)?;
-    let progress_flag = cancel.clone();
-    connection.progress_handler(
-        CANCEL_CHECK_INSTRUCTIONS,
-        Some(move || progress_flag.is_set()),
-    );
+    connection.busy_timeout(BUSY_TIMEOUT).map_err(sql_error)?;
+    let flag = cancel.clone();
+    connection.progress_handler(CANCEL_CHECK_INSTRUCTIONS, Some(move || flag.is_set()));
+    // One read transaction, so both candidate passes see the same snapshot.
     connection.execute_batch("BEGIN").map_err(sql_error)?;
-    let mut statement = connection.prepare(sql).map_err(sql_error)?;
-    if !statement.readonly() || statement.column_count() != 13 {
+    Ok(connection)
+}
+
+/// Bind Python's named parameters; every placeholder must have a value.
+fn bind_parameters(statement: &mut Statement<'_>, parameters: &[(String, Value)]) -> PyResult<()> {
+    if !statement.readonly() || statement.column_count() != CANDIDATE_COLUMNS {
         return Err(PyValueError::new_err(
             "Expected a read-only candidate SELECT",
         ));
@@ -293,25 +302,25 @@ fn search_sqlite(
             )));
         }
     }
-    // Reject unsupported regex inputs before any disk callback can run.
-    if priorities.has_name_rules() {
-        let mut preflight = statement.raw_query();
-        loop {
-            if cancel.is_set() {
-                return Ok(Vec::new());
-            }
-            match preflight.next() {
-                Ok(Some(row)) => {
-                    priorities.validate_candidate(&candidate_from_sql(row).map_err(sql_error)?)?
-                }
-                Ok(None) => break,
-                Err(_) if cancel.is_set() => return Ok(Vec::new()),
-                Err(error) => return Err(sql_error(error)),
-            }
-        }
+    Ok(())
+}
+
+/// Phase 2: run Python's candidate SQL and rank the rows as they stream in.
+fn search_sqlite(
+    database: &str,
+    sql: &str,
+    parameters: &[(String, Value)],
+    search: Search<'_>,
+    cancel: &CancelFlag,
+) -> PyResult<Vec<Kept>> {
+    let mut search = search;
+    if cancel.is_set() {
+        return Ok(Vec::new());
     }
+    let connection = open_read_only(database, cancel)?;
+    let mut statement = connection.prepare(sql).map_err(sql_error)?;
+    bind_parameters(&mut statement, parameters)?;
     let mut rows = statement.raw_query();
-    let mut search = Search::new(query, priorities, allows, cancel)?;
     let mut index = 0;
     loop {
         if cancel.is_set() {
@@ -319,17 +328,15 @@ fn search_sqlite(
         }
         match rows.next() {
             Ok(Some(row)) => {
-                let candidate = candidate_from_sql(row).map_err(sql_error)?;
-                candidate.validate()?;
-                search.consider(index, candidate)?;
+                search.consider(index, candidate_from_sql(row)?)?;
                 index += 1;
             }
-            Ok(None) => break,
+            Ok(None) => return search.finish(),
+            // The progress handler interrupts a cancelled statement with an error.
             Err(_) if cancel.is_set() => return Ok(Vec::new()),
             Err(error) => return Err(sql_error(error)),
         }
     }
-    search.finish()
 }
 
 #[pyfunction]
@@ -344,38 +351,40 @@ fn rank_sqlite(
     allows: Py<PyAny>,
     cancel: PyRef<'_, CancelFlag>,
 ) -> PyResult<Vec<SqliteResult>> {
+    require_unicode_tables()?;
     let parameters = parameters_from_python(parameters)?;
     let query = Query::from_dict(query)?;
     let priorities = Policy::from_dict(priorities)?;
     let cancel = cancel.clone();
-    let kept = py.allow_threads(move || {
-        search_sqlite(
-            &database,
-            &sql,
-            &parameters,
-            &query,
-            &priorities,
-            &allows,
-            &cancel,
-        )
+    let kept = py.allow_threads(|| {
+        let search = Search::new(&query, &priorities, &allows, &cancel)?;
+        search_sqlite(&database, &sql, &parameters, search, &cancel)
     })?;
     kept.into_iter()
         .map(|hit| {
+            let band = hit.ranking.band as u8;
             Ok((
                 hit.row.to_python(py)?,
                 hit.ranking.score,
-                hit.ranking.band,
+                band,
                 hit.ranking.reasons,
             ))
         })
         .collect()
 }
 
+/// Select the tables of the calling interpreter's `unicodedata.unidata_version`.
+#[pyfunction]
+fn use_unicode(version: &str) -> PyResult<()> {
+    unicode::select(version).map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn pathscout_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add("API_VERSION", 7)?;
-    module.add("UNICODE_VERSION", unicode::UNICODE_VERSION)?;
+    module.add("API_VERSION", API_VERSION)?;
+    module.add("UNICODE_VERSIONS", unicode::supported_versions())?;
     module.add_class::<CancelFlag>()?;
+    module.add_function(wrap_pyfunction!(use_unicode, module)?)?;
     module.add_function(wrap_pyfunction!(rank_rows, module)?)?;
     module.add_function(wrap_pyfunction!(rank_sqlite, module)?)?;
     Ok(())

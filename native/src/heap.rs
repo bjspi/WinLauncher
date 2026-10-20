@@ -1,9 +1,11 @@
+//! Sort keys and the bounded best-hits heap, as Python's `ResultOrder` and `_BestHits`.
+
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use crate::priority::Decision;
-use crate::query::{Candidate, Query};
-use crate::rank::{self, Ranking};
+use crate::query::{Candidate, Kind, Query, SortOrder};
+use crate::rank::{self, Band, Ranking};
 use crate::unicode::casefold;
 
 #[derive(Debug, PartialEq)]
@@ -30,33 +32,42 @@ impl Ord for Part {
     }
 }
 
+/// Compared lexicographically; smaller keys rank first. A shorter key that equals
+/// the start of a longer one sorts first, which the score bound relies on.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct Key(Vec<Part>);
 
-fn groups(query: &Query, row: &Candidate, band: u8) -> Vec<Part> {
-    let direct = query.scope_key.as_ref().is_none_or(|scope| {
-        let identity = row.identity.strip_suffix('/').unwrap_or(&row.identity);
-        let parent = identity.rsplit_once('/').map_or("", |(parent, _)| parent);
-        parent.len() + 1 == scope.len() && scope.starts_with(parent)
-    });
-    let mut parts = Vec::new();
+fn flag(value: bool) -> Part {
+    Part::Number(if value { 1.0 } else { 0.0 })
+}
+
+fn is_direct_entry(query: &Query, row: &Candidate) -> bool {
+    let Some(scope) = &query.scope_key else {
+        return true;
+    };
+    let identity = row.identity.strip_suffix('/').unwrap_or(&row.identity);
+    let parent = identity.rsplit_once('/').map_or("", |(parent, _)| parent);
+    scope.strip_suffix('/') == Some(parent)
+}
+
+/// Explorer lists folders first; then the priority band and direct entries.
+fn groups(query: &Query, row: &Candidate, band: Band) -> Vec<Part> {
+    let mut parts = Vec::with_capacity(6);
     if query.explorer {
-        parts.push(Part::Number(if row.kind == "folder" { 0.0 } else { 1.0 }));
+        parts.push(flag(row.kind != Kind::Folder));
     }
-    parts.extend([
-        Part::Number(band as f64),
-        Part::Number(if direct { 0.0 } else { 1.0 }),
-    ]);
+    parts.push(Part::Number(f64::from(band as u8)));
+    parts.push(flag(!is_direct_entry(query, row)));
     parts
 }
 
-fn unscored_key(query: &Query, row: &Candidate, band: u8) -> Key {
-    let mut parts = Vec::new();
+fn unscored_key(query: &Query, row: &Candidate, band: Band) -> Key {
+    let mut parts = Vec::with_capacity(4);
     if query.explorer {
-        parts.push(Part::Number(if row.kind == "folder" { 0.0 } else { 1.0 }));
+        parts.push(flag(row.kind != Kind::Folder));
     }
-    parts.push(Part::Number(if band == 2 { 1.0 } else { 0.0 }));
-    if query.sort == "name" {
+    parts.push(flag(band == Band::Fallback));
+    if query.sort == SortOrder::Name {
         parts.push(Part::Text(casefold(row.name())));
     } else {
         parts.push(Part::Number(-row.modified));
@@ -66,7 +77,7 @@ fn unscored_key(query: &Query, row: &Candidate, band: u8) -> Key {
 }
 
 pub(crate) fn key(query: &Query, row: &Candidate, ranking: &Ranking) -> Key {
-    if query.sort != "score" {
+    if query.sort != SortOrder::Score {
         return unscored_key(query, row, ranking.band);
     }
     let mut parts = groups(query, row, ranking.band);
@@ -76,9 +87,10 @@ pub(crate) fn key(query: &Query, row: &Candidate, ranking: &Ranking) -> Key {
     Key(parts)
 }
 
+/// A key no worse than the candidate's real key, computed without matching text.
 pub(crate) fn best_possible_key(query: &Query, row: &Candidate, priority: &Decision) -> Key {
     let band = rank::band(query, priority);
-    if query.sort != "score" {
+    if query.sort != SortOrder::Score {
         return unscored_key(query, row, band);
     }
     let mut parts = groups(query, row, band);
@@ -173,7 +185,7 @@ mod tests {
             let row = Candidate {
                 path_text: "C:/test.txt".into(),
                 identity: "C:/TEST.TXT/".into(),
-                kind: "file".into(),
+                kind: Kind::File,
                 search_name: "test.txt".into(),
                 search_path: "c:/test.txt".into(),
                 extension: "txt".into(),
@@ -184,6 +196,7 @@ mod tests {
                 last_used: 0.0,
                 query_launches: 0,
                 pinned: false,
+                application_source: false,
             };
             hits.add(Kept {
                 key,
@@ -191,7 +204,7 @@ mod tests {
                 row,
                 ranking: Ranking {
                     score,
-                    band: 1,
+                    band: Band::Normal,
                     reasons: vec![],
                 },
             });

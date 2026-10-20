@@ -12,6 +12,7 @@ class ProblemTopic(StrEnum):
     KEYBOARD = "keyboard"
     FOLDER_WATCH = "folder watch"
     AUTOSTART = "autostart"
+    SEARCH_ENGINE = "search engine"
 
 
 class StatusBoard:

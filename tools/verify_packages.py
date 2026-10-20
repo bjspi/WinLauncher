@@ -1,7 +1,10 @@
 """Check built distributions against the workspace and reject private artifacts.
 
-Run after building both archives into `dist/`:
+Run after building the archives into `dist/`:
     python tools/verify_packages.py
+
+A native wheel (`pathscout_native-*.whl`) in `dist/` is checked too: it must ship
+its license files and must not contain paths of the machine that built it.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ PRIVATE_NAMES = {".nobackup", ".no-backup"}
 PRIVATE_SUFFIXES = {".exe", ".dll", ".gzf", ".pyc", ".sqlite3", ".log", ".png"}
 REQUIRED_NAMES = {"LICENSE", "THIRD_PARTY_NOTICES.md"}
 SDIST_SAMPLES = ("docs/architecture.md", "docs/specification.md", "tests/test_ui_flow.py")
+NATIVE_LICENSES = {"LICENSE", "THIRD_PARTY_LICENSES.txt"}
 
 
 def wheel_files(archive: Path) -> dict[str, bytes]:
@@ -69,7 +73,29 @@ def verify(archive: Path) -> int:
     return len(files)
 
 
+def build_paths() -> set[bytes]:
+    """Local folders `native/tools/build.py` remaps; none may appear in the binary."""
+    folders = {Path.home(), ROOT}
+    texts = {str(folder) for folder in folders}
+    texts |= {text.replace("\\", "/") for text in texts}
+    return {text.encode() for text in texts} | {text.encode("utf-16-le") for text in texts}
+
+
+def verify_native(archive: Path) -> int:
+    files = wheel_files(archive)
+    licenses = {Path(name).name for name in files if ".dist-info/licenses/" in name}
+    missing = NATIVE_LICENSES - licenses
+    assert not missing, f"{archive.name} misses license files: {', '.join(sorted(missing))}"
+    for name, data in files.items():
+        for path in build_paths():
+            assert path not in data, f"{archive.name}: {name} contains a local build path"
+    return len(files)
+
+
 def main() -> int:
+    for archive in sorted((ROOT / "dist").glob("pathscout_native-*.whl")):
+        count = verify_native(archive)
+        print(f"Verified {archive.name}: {count} files, licenses, no local build paths")
     archives = sorted((ROOT / "dist").glob("pathscout-*"))
     archives = [a for a in archives if a.suffix == ".whl" or a.name.endswith(".tar.gz")]
     if not archives:

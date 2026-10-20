@@ -18,6 +18,7 @@ import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 from pathscout.catalog.exclusions import ExclusionPolicy
 from pathscout.catalog.model import ItemKind
@@ -25,7 +26,13 @@ from pathscout.catalog.priority import PriorityDecision
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.candidates import Candidate, read_candidates
 from pathscout.search.explorer import directory_candidates
-from pathscout.search.native_engine import log_native_failure, rank_with_native, select_native
+from pathscout.search.native_engine import (
+    log_native_failure,
+    native_availability,
+    native_required,
+    rank_with_native,
+    select_native,
+)
 from pathscout.search.navigation import search_paths
 from pathscout.search.query import SearchQuery, SortOrder
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking, SearchHit
@@ -120,6 +127,27 @@ class _BestHits:
         return [kept.ranking.hit(kept.candidate.to_item()) for kept in ordered]
 
 
+class _ExclusionCheck:
+    """Exclusions for hits that would be kept; the check may probe the disk.
+
+    In an Explorer search, folders listed directly from the open folder stay
+    visible even when a marker would exclude their contents from the catalog.
+    """
+
+    def __init__(self, exclusions: ExclusionPolicy, direct_entries: bool):
+        self.exclusions = exclusions
+        self.direct_entries = direct_entries
+
+    def __call__(self, path_text: str, directory: bool, application: bool) -> bool:
+        if self.direct_entries and directory:
+            return True
+        return self.exclusions.allows(Path(path_text), directory=directory, application=application)
+
+    def allows(self, candidate: Candidate) -> bool:
+        directory = candidate.kind == ItemKind.FOLDER
+        return self(candidate.path_text, directory, candidate.application_source)
+
+
 class SearchService:
     def __init__(self, store: CatalogStore):
         self.store = store
@@ -147,52 +175,71 @@ class SearchService:
         cancel: threading.Event | None,
         candidates: list[Candidate] | None = None,
     ) -> list[SearchHit]:
-        direct = query.explorer and candidates is not None
-        exclusions = settings.exclusions()
-        priorities = settings.priorities()
-        ranker = Ranker(query)
-        native = select_native(settings.search_backend)
-        if query.content_text is not None and native is None:
-            raise ValueError(
-                "contains: requires the Rust backend. Select Rust in Settings and install its current extension."
-            )
+        """Rank with the Rust engine; Python only when Rust is unavailable or failed."""
+        native = select_native()
+        content_search = query.content_text is not None
+        if content_search and native is None:
+            reason = native_availability().reason or "It is turned off for this run."
+            raise ValueError(f"contains: needs the Rust search engine. {reason}")
         logger.info(
-            "Search started: requested_backend=%s engine=%s content_filter=%s content_threads=%s",
-            settings.search_backend,
+            "Search started: engine=%s content_filter=%s",
             "rust" if native is not None else "python",
-            query.content_text is not None,
-            settings.content_search_threads if query.content_text is not None else 0,
+            content_search,
         )
+        direct_entries = query.explorer and candidates is not None
+        check = _ExclusionCheck(settings.exclusions(), direct_entries)
         if native is not None:
             try:
-                kept = rank_with_native(
-                    native,
-                    self.store,
-                    query,
-                    priorities,
-                    ranker,
-                    settings.max_results,
-                    lambda path, directory: (
-                        (direct and directory) or exclusions.allows(Path(path), directory=directory)
-                    ),
-                    cancel=cancel,
-                    content_search_threads=settings.content_search_threads,
-                    candidates=candidates,
-                )
-                if cancel is not None and cancel.is_set():
-                    return []
-                hits = [ranking.hit(candidate.to_item()) for candidate, ranking in kept]
-                return _hide_fallbacks_unless_needed(hits, query)
+                return self._rank_native(native, query, settings, cancel, candidates, check)
             except Exception as exc:
-                if query.content_text is not None:
-                    logger.exception("Native content search failed")
-                    raise RuntimeError(
-                        f"contains: could not complete the Rust content search: {exc}"
-                    ) from exc
+                if content_search:
+                    logger.exception("Rust content search failed")
+                    raise RuntimeError(f"contains: the content search failed: {exc}") from exc
+                if native_required():
+                    raise
                 log_native_failure(exc)
+        return self._rank_python(query, settings, cancel, candidates, check)
+
+    def _rank_native(
+        self,
+        native: ModuleType,
+        query: SearchQuery,
+        settings: Settings,
+        cancel: threading.Event | None,
+        candidates: list[Candidate] | None,
+        check: _ExclusionCheck,
+    ) -> list[SearchHit]:
+        kept = rank_with_native(
+            native,
+            self.store,
+            query,
+            settings.priorities(),
+            Ranker(query),
+            settings.max_results,
+            check,
+            cancel=cancel,
+            content_search_threads=settings.content_search_threads,
+            candidates=candidates,
+        )
+        if cancel is not None and cancel.is_set():
+            return []
+        hits = [ranking.hit(candidate.to_item()) for candidate, ranking in kept]
+        return _hide_fallbacks_unless_needed(hits, query)
+
+    def _rank_python(
+        self,
+        query: SearchQuery,
+        settings: Settings,
+        cancel: threading.Event | None,
+        candidates: list[Candidate] | None,
+        check: _ExclusionCheck,
+    ) -> list[SearchHit]:
+        priorities = settings.priorities()
+        ranker = Ranker(query)
         order = ResultOrder(query, ranker)
         best = _BestHits(settings.max_results)
-        for candidate in candidates if candidates is not None else self._candidates(query, cancel):
+        stream = candidates if candidates is not None else self._candidates(query, cancel)
+        for candidate in stream:
             if cancel is not None and cancel.is_set():
                 return []
             priority = priorities.evaluate(candidate)
@@ -205,9 +252,7 @@ class SearchService:
                 continue
             key = order.key(candidate, ranking)
             # Marker probes touch the disk, so only hits that would be kept pay for them.
-            if best.would_keep(key) and (
-                (direct and candidate.kind == ItemKind.FOLDER) or _allowed(exclusions, candidate)
-            ):
+            if best.would_keep(key) and check.allows(candidate):
                 best.add(key, candidate, ranking)
         if cancel is not None and cancel.is_set():
             return []
@@ -221,11 +266,6 @@ class SearchService:
             return literal
         fuzzy = read_candidates(self.store, query, fuzzy=True, cancel=cancel)
         return itertools.chain(literal, fuzzy)
-
-
-def _allowed(exclusions: ExclusionPolicy, candidate: Candidate) -> bool:
-    directory = candidate.kind == ItemKind.FOLDER
-    return exclusions.allows(Path(candidate.path_text), directory=directory)
 
 
 def _hide_fallbacks_unless_needed(hits: list[SearchHit], query: SearchQuery) -> list[SearchHit]:

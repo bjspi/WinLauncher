@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from pathscout.actions import ItemActions
+from pathscout.actions import ExplorerTarget, ItemActions
 from pathscout.catalog.exclusions import ExclusionPolicy
 from pathscout.catalog.indexer import CatalogIndexer
 from pathscout.catalog.model import (
@@ -268,6 +268,24 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertFalse(report.errors)
         hits = self.search.search(parse_query("ext:exe"), settings)
         self.assertEqual([hit.item.path for hit in hits], [visible])
+
+    def test_start_menu_shortcuts_survive_the_default_lnk_exclusion(self):
+        start_menu = self.base / "Start Menu"
+        shortcut = start_menu / "Programs" / "Editor.lnk"
+        shortcut.parent.mkdir(parents=True)
+        shortcut.write_text("shortcut", encoding="utf-8")
+        self.file("Editor notes.lnk")
+        settings = replace(self.settings, index_apps=True)
+        self.assertIn("*.lnk", settings.excluded_patterns)
+        report = self.indexer.scan(settings, application_roots=(start_menu,))
+        self.assertFalse(report.errors)
+        for engine in ("python", "auto"):
+            with (
+                self.subTest(engine=engine),
+                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=engine),
+            ):
+                hits = self.search.search(parse_query("editor"), settings)
+                self.assertEqual([hit.item.path for hit in hits], [shortcut])
 
     def test_attribute_priority_and_most_specific_folder_rule(self):
         item = CatalogItem(self.root / "nested/file.txt", ItemKind.FILE, attributes=2)
@@ -625,20 +643,20 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertEqual(unscoped[0], deep)
 
     def test_explorer_live_folder_names_override_markers_without_indexing_contents(self):
-        self.file("ghidra-mcp/.nobackup", "")
-        self.file("ghidra-mcp/secret-document.txt")
-        self.file("ghidra-second/.no-backup", "")
-        direct_file = self.file("ghidra.txt")
-        deep = self.file("archive/ghidra.txt")
+        self.file("toolbox-cli/.nobackup", "")
+        self.file("toolbox-cli/secret-document.txt")
+        self.file("toolbox-second/.no-backup", "")
+        direct_file = self.file("toolbox.txt")
+        deep = self.file("archive/toolbox.txt")
         self.scan()
         count = self.store.count()
         for sort in ("score", "name", "modified"):
             with self.subTest(sort=sort):
-                query = replace(parse_query(f"ghidra sort:{sort}", scope=self.root), explorer=True)
+                query = replace(parse_query(f"toolbox sort:{sort}", scope=self.root), explorer=True)
                 hits = self.search.search(query, self.settings)
                 self.assertEqual(
                     {hit.item.path for hit in hits[:2]},
-                    {self.root / "ghidra-mcp", self.root / "ghidra-second"},
+                    {self.root / "toolbox-cli", self.root / "toolbox-second"},
                 )
                 self.assertEqual(hits[2].item.path, direct_file)
                 self.assertNotIn(deep, [hit.item.path for hit in hits])
@@ -648,7 +666,7 @@ class BusinessRulesTest(unittest.TestCase):
         query = replace(parse_query("new-folder", scope=self.root), explorer=True)
         self.assertEqual(self.search.search(query, self.settings)[0].item.path, fresh)
         self.assertEqual(self.store.count(), count)
-        self.assertFalse(self.hits("ghidra-mcp"))
+        self.assertFalse(self.hits("toolbox-cli"))
         query = replace(parse_query("secret-document", scope=self.root), explorer=True)
         self.assertFalse(self.search.search(query, self.settings))
 
@@ -698,6 +716,26 @@ class BusinessRulesTest(unittest.TestCase):
             with self.assertRaises(OSError):
                 navigate_to(destination, 11, 22, self.root)
 
+    def test_explorer_fallback_matches_paths_below_the_folder_and_program_names(self):
+        receipt = self.file("invoices 2024/receipt.pdf")
+        setup = self.file("tools/setup.exe")
+        self.file("tools/readme.txt")
+        self.scan()
+        for engine in ("python", "auto"):
+            for text, expected in (
+                ("invoices receipt", [receipt]),
+                ("2024 receipt", [receipt]),
+                ("setup.exe", [setup]),
+                ("*.exe", [setup]),
+            ):
+                with (
+                    self.subTest(engine=engine, text=text),
+                    patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=engine),
+                ):
+                    query = replace(parse_query(text, scope=self.root), explorer=True)
+                    hits = self.search.search(query, self.settings)
+                    self.assertEqual([hit.item.path for hit in hits], expected)
+
     @unittest.skipUnless(os.name == "nt", "Windows Explorer adapter")
     def test_explorer_folder_action_records_only_successful_navigation(self):
         destination = self.root / "target"
@@ -708,14 +746,14 @@ class BusinessRulesTest(unittest.TestCase):
             patch("pathscout.platform.shell.open_path") as launch,
             patch.object(self.store, "record_launch") as record,
         ):
-            action.open(destination, "target", explorer=(11, 22, self.root))
+            action.open(destination, "target", explorer=ExplorerTarget(11, 22, self.root))
             navigate.assert_called_once_with(destination, 11, 22, self.root)
             launch.assert_not_called()
             record.assert_called_once_with(destination, "target")
             record.reset_mock()
             navigate.side_effect = OSError("Original tab closed")
             with self.assertRaises(OSError):
-                action.open(destination, "target", explorer=(11, 22, self.root))
+                action.open(destination, "target", explorer=ExplorerTarget(11, 22, self.root))
             record.assert_not_called()
             launch.assert_not_called()
 
@@ -760,18 +798,18 @@ class BusinessRulesTest(unittest.TestCase):
                     )
 
     def test_candidate_rows_name_items_like_catalog_items(self):
-        for relative, kind in (
-            ("archive.tar.gz", ItemKind.FILE),
-            ("file.", ItemKind.FILE),
-            (".hidden", ItemKind.FILE),
-            ("Tool.lnk", ItemKind.APP),
-            ("Folder.With.Dots", ItemKind.FOLDER),
+        for relative, kind, stem in (
+            ("archive.tar.gz", ItemKind.FILE, "archive.tar"),
+            ("file.", ItemKind.FILE, "file."),
+            (".hidden", ItemKind.FILE, ".hidden"),
+            ("Tool.lnk", ItemKind.APP, "Tool"),
+            ("Folder.With.Dots", ItemKind.FOLDER, "Folder.With"),
         ):
             item = CatalogItem(self.root / relative, kind)
             candidate = Candidate.from_item(item)
             with self.subTest(relative=relative):
                 self.assertEqual(candidate.name, item.name)
-                self.assertEqual(candidate.stem, item.path.stem)
+                self.assertEqual(candidate.stem, stem)
                 self.assertEqual(candidate.to_item(), item)
 
     def test_losing_candidates_do_not_probe_every_directory(self):

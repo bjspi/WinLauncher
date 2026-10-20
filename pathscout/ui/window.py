@@ -279,6 +279,7 @@ class LauncherWindow(QWidget):
     restart_requested = Signal()
     about_requested = Signal()
     hidden = Signal()
+    shown = Signal()
 
     def __init__(self):
         flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
@@ -655,6 +656,9 @@ class LauncherWindow(QWidget):
         """
         self._show_scope(scope)
         self.explorer_view = explorer_view
+        if explorer_view is not None or near is not None:
+            self.kind = None  # Explorer completion always searches the whole folder.
+            self.show_kind(None)
         self.query.blockSignals(True)
         self.query.setText(text)
         self.query.blockSignals(False)
@@ -818,6 +822,10 @@ class LauncherWindow(QWidget):
         )
         menu.exec(self.results.viewport().mapToGlobal(point))
         menu.deleteLater()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.shown.emit()
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)

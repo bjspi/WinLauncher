@@ -1,7 +1,15 @@
-"""Optional native candidate ranking, with Python as the behavior reference."""
+"""The Rust search engine adapter. Python's ranking stays the behavior reference.
+
+PathScout always searches with the Rust engine. The Python engine runs only when
+the extension is missing or does not support this interpreter, and that is
+reported to the user. `PATHSCOUT_SEARCH_ENGINE` selects an engine explicitly for
+tests and benchmarks: `native` fails loudly instead of falling back, `python`
+uses the reference implementation.
+"""
 
 from __future__ import annotations
 
+import functools
 import importlib
 import logging
 import os
@@ -11,6 +19,7 @@ import threading
 import unicodedata
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
 
@@ -19,70 +28,99 @@ from pathscout.catalog.store import CatalogStore
 from pathscout.search.candidates import (
     CANCEL_CHECK_INSTRUCTIONS,
     Candidate,
-    _candidate_from_row,
+    candidate_from_row,
     candidate_sql,
 )
 from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking
+from pathscout.settings import DEFAULT_CONTENT_SEARCH_THREADS
 
-API_VERSION = 7
+API_VERSION = 8
+ENGINE_VARIABLE = "PATHSCOUT_SEARCH_ENGINE"
+PHASE_VARIABLE = "PATHSCOUT_NATIVE_PHASE"
+_ENGINES = ("auto", "python", "native")
+_PHASES = ("rows", "sqlite")
 _LOGGER = logging.getLogger(__name__)
 _LOGGED: set[str] = set()
 _LOG_LOCK = threading.Lock()
 _PARAMETER = re.compile(r":([a-zA-Z_][a-zA-Z_0-9]*)")
 _CANCEL_POLL_SECONDS = 0.005
 
+# The exclusion callback the native engine calls for hits it would keep:
+# (path text, is a folder, from an application source) -> allowed.
+AllowsCallback = Callable[[str, bool, bool], bool]
 
-def _log_once(reason: str, message: str, *args: object) -> None:
+
+def _log_once(key: str, message: str, *args: object) -> None:
     with _LOG_LOCK:
-        if reason in _LOGGED:
+        if key in _LOGGED:
             return
-        _LOGGED.add(reason)
+        _LOGGED.add(key)
     _LOGGER.warning(message, *args)
 
 
-def load_native() -> ModuleType | None:
-    """Return a compatible optional module; report each unavailable state once."""
+@dataclass(frozen=True, slots=True)
+class NativeAvailability:
+    module: ModuleType | None
+    reason: str = ""
+
+
+@functools.cache
+def native_availability() -> NativeAvailability:
+    """Import the extension once and select this interpreter's Unicode tables."""
     try:
         native = importlib.import_module("pathscout_native")
     except ModuleNotFoundError as exc:
         if exc.name == "pathscout_native":
-            _log_once("missing", "Native search module is not installed; using Python.")
-        else:
-            _log_once("import", "Cannot import native search module; using Python: %s", exc)
-        return None
+            return _unavailable("The Rust search engine is not installed.")
+        return _unavailable(f"The Rust search engine cannot be loaded: {exc}")
     except Exception as exc:
-        _log_once("import", "Cannot import native search module; using Python: %s", exc)
-        return None
+        return _unavailable(f"The Rust search engine cannot be loaded: {exc}")
     version = getattr(native, "API_VERSION", None)
     if version != API_VERSION:
-        _log_once(
-            "version", "Native search API %r does not match %d; using Python.", version, API_VERSION
+        return _unavailable(
+            f"The installed Rust search engine (API {version}) does not match this "
+            f"PathScout (API {API_VERSION}); rebuild or reinstall it."
         )
-        return None
-    if getattr(native, "UNICODE_VERSION", None) != unicodedata.unidata_version:
-        _log_once("unicode", "Native search Unicode tables do not match Python; using Python.")
-        return None
-    return native
+    try:
+        native.use_unicode(unicodedata.unidata_version)
+    except ValueError as exc:
+        return _unavailable(f"The Rust search engine does not support this Python: {exc}")
+    return NativeAvailability(native)
 
 
-def select_native(backend: str = "rust") -> ModuleType | None:
-    default = "auto" if backend == "rust" else "python"
-    engine = os.environ.get("PATHSCOUT_SEARCH_ENGINE", default).strip().lower()
-    if engine not in ("auto", "python", "native"):
-        raise ValueError("PATHSCOUT_SEARCH_ENGINE must be auto, python or native.")
+def _unavailable(reason: str) -> NativeAvailability:
+    _LOGGER.warning("%s Searching with the slower Python engine.", reason)
+    return NativeAvailability(None, reason)
+
+
+def requested_engine() -> str:
+    engine = os.environ.get(ENGINE_VARIABLE, "auto").strip().lower()
+    if engine not in _ENGINES:
+        raise ValueError(f"{ENGINE_VARIABLE} must be one of {', '.join(_ENGINES)}.")
+    return engine
+
+
+def native_required() -> bool:
+    return requested_engine() == "native"
+
+
+def select_native() -> ModuleType | None:
+    """The native module to search with, or None for the Python engine."""
+    engine = requested_engine()
     if engine == "python":
         return None
-    native = load_native()
-    if engine == "native" and native is None:
-        raise RuntimeError(
-            "Native search was requested, but no compatible native module is available."
-        )
-    return native
+    availability = native_availability()
+    if engine == "native" and availability.module is None:
+        raise RuntimeError(availability.reason)
+    return availability.module
 
 
 def query_spec(
-    query: SearchQuery, ranker: Ranker, limit: int, content_search_threads: int = 4
+    query: SearchQuery,
+    ranker: Ranker,
+    limit: int,
+    content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS,
 ) -> dict[str, object]:
     return {
         "terms": list(query.terms),
@@ -91,6 +129,7 @@ def query_spec(
         "kind": str(query.kind) if query.kind is not None else None,
         "extensions": list(query.extensions),
         "scope_key": ranker.filters.scope_key,
+        "scope_search_prefix": ranker.scope_search_prefix,
         "modified_after": query.modified_after,
         "modified_before": query.modified_before,
         "min_size": query.min_size,
@@ -107,23 +146,38 @@ def query_spec(
     }
 
 
-def priority_spec(policy: PriorityPolicy) -> dict[str, list[tuple]]:
+def priority_spec(policy: PriorityPolicy) -> dict[str, list[dict[str, object]]]:
+    """Every rule by name. Filename rules carry their compiled Python pattern, which
+    the native engine uses wherever Rust's regex cannot match Python exactly."""
     return {
         "folders": [
-            (key, len(rule.path), rule.weight, str(rule.search_priority))
+            {
+                "key": key,
+                "path_length": len(rule.path),
+                "weight": rule.weight,
+                "class": str(rule.search_priority),
+            }
             for rule, key in policy.folders
         ],
         "names": [
-            (rule.pattern, rule.weight, str(rule.search_priority), rule.files, rule.folders)
-            for rule, _ in policy.names
+            {
+                "pattern": rule.pattern,
+                "python_search": pattern.search,
+                "weight": rule.weight,
+                "class": str(rule.search_priority),
+                "files": rule.files,
+                "folders": rule.folders,
+            }
+            for rule, pattern in policy.names
         ],
         "extensions": [
-            (extension, rule.weight, str(rule.search_priority))
+            {"extension": extension, "weight": rule.weight, "class": str(rule.search_priority)}
             for extension, rules in policy.extensions.items()
             for rule in rules
         ],
         "attributes": [
-            (rule.mask, rule.weight, str(rule.search_priority)) for rule in policy.attributes
+            {"mask": rule.mask, "weight": rule.weight, "class": str(rule.search_priority)}
+            for rule in policy.attributes
         ],
     }
 
@@ -141,6 +195,7 @@ def _search_sql(query: SearchQuery) -> tuple[str, dict[str, object]]:
 
 @contextmanager
 def _cancel_flag(native: ModuleType, cancel: threading.Event | None) -> Iterator[Any]:
+    """A native `CancelFlag` that follows `cancel` while the native call runs."""
     flag = native.CancelFlag()
     if cancel is None:
         yield flag
@@ -166,6 +221,13 @@ def _cancel_flag(native: ModuleType, cancel: threading.Event | None) -> Iterator
         bridge.join()
 
 
+def _native_phase() -> str:
+    phase = os.environ.get(PHASE_VARIABLE, "sqlite").strip().lower()
+    if phase not in _PHASES:
+        raise ValueError(f"{PHASE_VARIABLE} must be rows or sqlite.")
+    return phase
+
+
 def rank_with_native(
     native: ModuleType,
     store: CatalogStore,
@@ -173,15 +235,14 @@ def rank_with_native(
     priorities: PriorityPolicy,
     ranker: Ranker,
     limit: int,
-    allows: Callable[[str, bool], bool],
+    allows: AllowsCallback,
     *,
     cancel: threading.Event | None = None,
-    content_search_threads: int = 4,
+    content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS,
     candidates: list[Candidate] | None = None,
 ) -> list[tuple[Candidate, Ranking]]:
-    phase = os.environ.get("PATHSCOUT_NATIVE_PHASE", "sqlite").strip().lower()
-    if phase not in ("rows", "sqlite"):
-        raise ValueError("PATHSCOUT_NATIVE_PHASE must be rows or sqlite.")
+    """Kept candidates with their rankings, best first."""
+    phase = _native_phase()
     spec = query_spec(query, ranker, limit, content_search_threads)
     rules = priority_spec(priorities)
     sql, parameters = _search_sql(query)
@@ -198,12 +259,18 @@ def rank_with_native(
                 for index, score, band, reasons in native.rank_rows(spec, rules, rows, allows, flag)
             ]
     return [
-        (_candidate_from_row(row), Ranking(score, PriorityBand(band), tuple(reasons)))
+        (candidate_from_row(row), Ranking(score, PriorityBand(band), tuple(reasons)))
         for row, score, band, reasons in kept
     ]
 
 
-def _candidate_rows(store, sql, parameters, cancel, flag) -> list[tuple]:
+def _candidate_rows(
+    store: CatalogStore,
+    sql: str,
+    parameters: dict[str, object],
+    cancel: threading.Event | None,
+    flag: Any,
+) -> list[tuple]:
     with store.connect() as connection:
         connection.row_factory = None
         if cancel is not None:
@@ -222,4 +289,9 @@ def _candidate_rows(store, sql, parameters, cancel, flag) -> list[tuple]:
 
 
 def log_native_failure(exc: Exception) -> None:
-    _log_once("execution", "Native search failed; using Python for this search: %s", exc)
+    """Each kind of failure is logged once; an unexpected new one is never hidden."""
+    _log_once(
+        f"execution:{type(exc).__name__}",
+        "Rust search failed; using Python for this search: %s",
+        exc,
+    )

@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind
-from pathscout.catalog.priority import PriorityPolicy
+from pathscout.catalog.priority import NamePriority, PriorityPolicy
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.native_engine import API_VERSION, priority_spec, query_spec
 from pathscout.search.query_parser import parse_query, without_type_filter
@@ -73,7 +73,7 @@ class ContentQueryTest(unittest.TestCase):
             service = SearchService(store)
             query = parse_query("report contains:needle")
             with patch("pathscout.search.service.select_native", return_value=None):
-                with self.assertRaisesRegex(ValueError, "requires the Rust backend"):
+                with self.assertRaisesRegex(ValueError, "needs the Rust search engine"):
                     service.search(query, Settings(roots=()))
             with (
                 patch("pathscout.search.service.select_native", return_value=object()),
@@ -81,7 +81,7 @@ class ContentQueryTest(unittest.TestCase):
                     "pathscout.search.service.rank_with_native", side_effect=ValueError("fixture")
                 ),
                 self.assertLogs("pathscout.search.service", level="ERROR"),
-                self.assertRaisesRegex(RuntimeError, "could not complete"),
+                self.assertRaisesRegex(RuntimeError, "content search failed"),
             ):
                 service.search(query, Settings(roots=()))
 
@@ -139,6 +139,21 @@ class NativeContentTest(unittest.TestCase):
                         self.assertEqual(self.search(query, phase, threads), baseline)
                         spec = call.call_args.args[0 if phase == "rows" else 3]
                         self.assertEqual(spec["content_search_threads"], threads)
+
+    def test_name_rules_on_non_ascii_names_and_legacy_encodings_keep_content_hits(self):
+        names = ("\u00dcbersicht notiz.txt", "Gr\u00f6\u00dfe.txt", "plain.txt")
+        items = []
+        for name in names:
+            path = self.root / name
+            path.write_bytes(f"Gr\u00f6\u00dfe {name} needle".encode("cp1252"))
+            items.append(CatalogItem(path, ItemKind.FILE))
+        self.publish(items)
+        self.settings = replace(self.settings, name_priorities=(NamePriority("notiz", 9),))
+        for phase in ("rows", "sqlite"):
+            with self.subTest(phase=phase):
+                hits = self.search("contains:needle", phase)
+                self.assertEqual({hit.item.path for hit in hits}, {item.path for item in items})
+                self.assertEqual(hits[0].item.path, items[0].path)
 
     def test_native_rejects_invalid_content_thread_counts(self):
         query = parse_query("contains:needle")

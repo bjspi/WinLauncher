@@ -26,13 +26,13 @@ from pathscout.catalog.priority import (
 )
 from pathscout.catalog.store import CatalogStore
 from pathscout.search import native_engine
-from pathscout.search.candidates import Candidate, _candidate_from_row, candidate_sql
-from pathscout.search.native_engine import priority_spec, query_spec
+from pathscout.search.candidates import Candidate, candidate_from_row, candidate_sql
+from pathscout.search.native_engine import NativeAvailability, priority_spec, query_spec
 from pathscout.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
 from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import Ranker
 from pathscout.search.service import ResultOrder, SearchService, _BestHits
-from pathscout.settings import Settings, settings_from_json
+from pathscout.settings import Settings
 
 try:
     NATIVE = importlib.import_module("pathscout_native")
@@ -198,6 +198,7 @@ def row_for(item: CatalogItem) -> tuple:
         candidate.last_used,
         candidate.query_launches,
         int(candidate.pinned),
+        int(item.path.suffix == ".lnk"),  # Start-menu shortcuts come from app sources.
     )
 
 
@@ -254,7 +255,7 @@ def python_rows(rows, query, policy, limit, allows):
     best = _BestHits(limit)
     indices = {}
     for index, row in enumerate(rows):
-        candidate = _candidate_from_row(row)
+        candidate = candidate_from_row(row)
         priority = policy.evaluate(candidate)
         if not ranker.eligible(candidate, priority):
             continue
@@ -264,7 +265,10 @@ def python_rows(rows, query, policy, limit, allows):
         if ranking is None:
             continue
         key = order.key(candidate, ranking)
-        if best.would_keep(key) and allows(candidate.path_text, candidate.kind == ItemKind.FOLDER):
+        directory = candidate.kind == ItemKind.FOLDER
+        if best.would_keep(key) and allows(
+            candidate.path_text, directory, candidate.application_source
+        ):
             best.add(key, candidate, ranking)
             indices[id(candidate)] = index
     return [
@@ -279,8 +283,8 @@ def python_rows(rows, query, policy, limit, allows):
 
 
 def recorded_allows(calls):
-    def allows(path, directory):
-        calls.append((path, directory))
+    def allows(path, directory, application):
+        calls.append((path, directory, application))
         return "007-Report" not in path and "035-Report" not in path
 
     return allows
@@ -301,7 +305,7 @@ class PythonParityHarnessTest(unittest.TestCase):
         self.assertEqual(result[0], (12, 230.0, 1, ["Exact name", "Favorite"]))
         self.assertEqual(len(result), 10)
         self.assertEqual(
-            [path for path, _ in calls],
+            [call[0] for call in calls],
             [
                 item.path.as_posix() if os.name != "nt" else str(item.path)
                 for item in (*items[:10], items[-1])
@@ -323,6 +327,7 @@ class NativeParityTest(unittest.TestCase):
         with cls.store.snapshot() as connection:
             cls.store.stage(connection, ((item, source) for item in cls.items))
             cls.store.publish(connection, active_roots=(source,), preserved_roots=())
+        NATIVE.use_unicode(unicodedata.unidata_version)
         with cls.store.connect() as connection:
             for item in cls.items:
                 candidate = Candidate.from_item(item)
@@ -344,12 +349,19 @@ class NativeParityTest(unittest.TestCase):
         self.assertEqual(len(expected), len(actual))
         for reference, native in zip(expected, actual, strict=True):
             self.assertEqual(reference[0], native[0])
-            self.assertAlmostEqual(reference[1], native[1], delta=1e-9)
+            self.assertEqual(reference[1], native[1])
             self.assertEqual(reference[2:], native[2:])
 
     def test_native_api_and_unicode_versions_match(self):
         self.assertEqual(NATIVE.API_VERSION, native_engine.API_VERSION)
-        self.assertEqual(NATIVE.UNICODE_VERSION, unicodedata.unidata_version)
+        self.assertIn(unicodedata.unidata_version, NATIVE.UNICODE_VERSIONS)
+        NATIVE.use_unicode(unicodedata.unidata_version)
+        for version in (
+            "0.0.0",
+            *(v for v in NATIVE.UNICODE_VERSIONS if v != unicodedata.unidata_version),
+        ):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                NATIVE.use_unicode(version)
 
     def test_raw_rows_match_python_with_unicode_and_every_priority_kind(self):
         for use_unicode, use_names in ((True, False), (False, True)):
@@ -453,8 +465,8 @@ class NativeParityTest(unittest.TestCase):
         for phase in ("rows", "sqlite"):
             calls = []
 
-            def allows(_policy, path, *, directory=False, calls=calls):
-                calls.append((str(path), directory))
+            def allows(_policy, path, *, directory=False, application=False, calls=calls):
+                calls.append((str(path), directory, application))
                 return True
 
             with (
@@ -475,20 +487,24 @@ class NativeParityTest(unittest.TestCase):
                 self.assertEqual(expected, actual)
                 self.assertEqual(expected_calls, calls)
 
-    def test_unsupported_and_unicode_regex_cases_request_python(self):
+    def test_rules_rust_cannot_match_exactly_use_the_python_pattern(self):
         query = parse_query("report")
         spec = query_spec(query, Ranker(query, now=NOW), 10)
         for pattern, name in (
             (r"(?i:report)", "Report.txt"),
-            (r"\u0130", "I.txt"),
+            (r"İ", "İReport.txt"),
             ("report", "StraßeReport.txt"),
+            ("e", "Café Report.txt"),
         ):
-            policy = PriorityPolicy(names=(NamePriority(pattern, 7),))
+            policy = PriorityPolicy(names=(NamePriority(pattern, 7, "high"),))
             rows = [row_for(CatalogItem(self.root / name, ItemKind.FILE))]
-            with self.subTest(pattern=pattern, name=name), self.assertRaises(ValueError):
-                NATIVE.rank_rows(
+            with self.subTest(pattern=pattern, name=name):
+                expected = python_rows(rows, query, policy, 10, lambda *_: True)
+                actual = NATIVE.rank_rows(
                     spec, priority_spec(policy), rows, lambda *_: True, NATIVE.CancelFlag()
                 )
+                self.assertEqual(expected, actual)
+                self.assertIn("High search priority", expected[0][3])
 
     def test_invalid_native_size_bounds_are_rejected(self):
         spec = query_spec(parse_query("report"), Ranker(parse_query("report")), 10)
@@ -536,7 +552,7 @@ class NativeParityTest(unittest.TestCase):
                     if phase == "rows":
                         result = NATIVE.rank_rows(spec, rules, rows, allows, flag)
                     else:
-                        columns = ",".join(f":r{index}" for index in range(13))
+                        columns = ",".join(f":r{index}" for index in range(14))
                         sql = f"WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<999999) SELECT {columns} FROM n"
                         parameters = {f"r{index}": value for index, value in enumerate(first)}
                         result = NATIVE.rank_sqlite(
@@ -570,24 +586,29 @@ class NativeParityTest(unittest.TestCase):
 
 
 class NativeAdapterFallbackTest(unittest.TestCase):
-    def test_saved_backend_selection_and_environment_override(self):
-        self.assertEqual(settings_from_json({"roots": []}).search_backend, "rust")
-        for value in ("auto", "native", "unknown", 1, None):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                settings_from_json({"roots": [], "search_backend": value})
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(native_engine, "load_native", return_value=object()) as load,
-        ):
-            self.assertIsNone(native_engine.select_native("python"))
-            load.assert_not_called()
-            self.assertIsNotNone(native_engine.select_native("rust"))
-            with patch.object(native_engine, "load_native", return_value=None):
-                self.assertIsNone(native_engine.select_native("rust"))
-            with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"):
-                self.assertIsNone(native_engine.select_native("rust"))
+    def setUp(self):
+        native_engine.native_availability.cache_clear()
+        self.addCleanup(native_engine.native_availability.cache_clear)
+
+    def test_environment_selects_the_engine(self):
+        module = ModuleType("pathscout_native")
+        available = NativeAvailability(module)
+        missing = NativeAvailability(None, "The Rust search engine is not installed.")
+        with patch.object(native_engine, "native_availability", return_value=available) as load:
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertIs(native_engine.select_native(), module)
             with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"):
-                self.assertIsNotNone(native_engine.select_native("python"))
+                self.assertIs(native_engine.select_native(), module)
+            load.reset_mock()
+            with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"):
+                self.assertIsNone(native_engine.select_native())
+            load.assert_not_called()
+        with (
+            patch.object(native_engine, "native_availability", return_value=missing),
+            patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="auto"),
+        ):
+            self.assertIsNone(native_engine.select_native())
+            self.assertFalse(native_engine.native_required())
 
     def test_python_selection_does_not_import_the_optional_module(self):
         with (
@@ -598,42 +619,48 @@ class NativeAdapterFallbackTest(unittest.TestCase):
         ):
             self.assertIsNone(native_engine.select_native())
 
-    def test_missing_import_version_and_unicode_failures_are_logged_once(self):
+    def test_missing_import_version_and_unicode_failures_are_reported_once(self):
+        def stale_unicode(version):
+            raise ValueError(f"Unicode {version} is not supported")
+
         module = ModuleType("pathscout_native")
         module.API_VERSION = native_engine.API_VERSION
-        module.UNICODE_VERSION = unicodedata.unidata_version
+        module.use_unicode = lambda version: None
+        stale = ModuleType("pathscout_native")
+        stale.API_VERSION = native_engine.API_VERSION
+        stale.use_unicode = stale_unicode
+        old = ModuleType("pathscout_native")
+        old.API_VERSION = 1
         cases = (
             {"side_effect": ModuleNotFoundError("missing", name="pathscout_native")},
+            {"side_effect": ModuleNotFoundError("missing", name="sqlite3")},
             {"side_effect": ImportError("broken extension")},
             {"return_value": ModuleType("pathscout_native")},
-            {"return_value": type("OldNative", (), {"API_VERSION": 1})()},
-            {
-                "return_value": type(
-                    "StaleUnicode",
-                    (),
-                    {"API_VERSION": native_engine.API_VERSION, "UNICODE_VERSION": "0.0.0"},
-                )()
-            },
+            {"return_value": old},
+            {"return_value": stale},
         )
         for kwargs in cases:
+            native_engine.native_availability.cache_clear()
             with (
                 self.subTest(case=kwargs),
-                patch.object(native_engine, "_LOGGED", set()),
                 patch.object(native_engine.importlib, "import_module", **kwargs),
                 patch.object(native_engine._LOGGER, "warning") as warning,
                 patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="auto"),
             ):
                 self.assertIsNone(native_engine.select_native())
                 self.assertIsNone(native_engine.select_native())
+                self.assertTrue(native_engine.native_availability().reason)
                 warning.assert_called_once()
+        native_engine.native_availability.cache_clear()
         with patch.object(native_engine.importlib, "import_module", return_value=module):
-            self.assertIs(native_engine.load_native(), module)
+            self.assertEqual(native_engine.native_availability(), NativeAvailability(module))
 
     def test_forced_native_fails_loudly_and_invalid_engine_is_rejected(self):
-        with patch.object(native_engine, "load_native", return_value=None):
+        missing = NativeAvailability(None, "The Rust search engine is not installed.")
+        with patch.object(native_engine, "native_availability", return_value=missing):
             with (
                 patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"),
-                self.assertRaises(RuntimeError),
+                self.assertRaisesRegex(RuntimeError, "not installed"),
             ):
                 native_engine.select_native()
         with (
@@ -641,6 +668,21 @@ class NativeAdapterFallbackTest(unittest.TestCase):
             self.assertRaises(ValueError),
         ):
             native_engine.select_native()
+
+    def test_forced_native_execution_failure_is_not_hidden(self):
+        with tempfile.TemporaryDirectory(prefix="pathscout-native-forced-") as temporary:
+            store = CatalogStore(Path(temporary) / "catalog.sqlite3")
+            settings = Settings(roots=(), index_apps=False, marker_files=(), excluded_patterns=())
+            with (
+                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"),
+                patch("pathscout.search.service.select_native", return_value=object()),
+                patch(
+                    "pathscout.search.service.rank_with_native",
+                    side_effect=ValueError("unsupported regex"),
+                ),
+                self.assertRaisesRegex(ValueError, "unsupported regex"),
+            ):
+                SearchService(store).search(parse_query("report"), settings)
 
     def test_native_execution_failure_falls_back_to_reference_hits(self):
         with tempfile.TemporaryDirectory(prefix="pathscout-native-fallback-") as temporary:
@@ -660,6 +702,7 @@ class NativeAdapterFallbackTest(unittest.TestCase):
                 expected = service.search(query, settings)
             self.assertTrue(expected)
             with (
+                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="auto"),
                 patch("pathscout.search.service.select_native", return_value=object()),
                 patch(
                     "pathscout.search.service.rank_with_native",

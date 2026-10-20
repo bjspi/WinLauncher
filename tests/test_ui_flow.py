@@ -18,6 +18,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
 
+from pathscout.actions import ExplorerTarget
 from pathscout.catalog.model import CatalogItem, ItemKind
 from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from pathscout.platform.gesture import ExplorerTyping, InputUnavailable
@@ -217,7 +218,7 @@ class UiFlowTest(unittest.TestCase):
         self.assertTrue(self.controller.search.open_pending)
         self.tasks.finish(TaskCategory.SEARCH)
         self.tasks.finish(TaskCategory.ACTION)
-        self.launch.assert_called_once_with(second, "second")
+        self.launch.assert_called_once_with(second, "second", explorer=None)
 
     def test_results_reset_selection_for_new_query_and_preserve_for_same_query(self):
         hits = [
@@ -418,7 +419,7 @@ class UiFlowTest(unittest.TestCase):
         self.window.open_requested.emit(hit)
         self.assertFalse(self.controller.search.open_pending)
         self.tasks.finish(TaskCategory.ACTION)
-        self.launch.assert_called_once_with(path, "report")
+        self.launch.assert_called_once_with(path, "report", explorer=None)
 
     def test_invalid_query_shows_validation_message_without_searching(self):
         before = self.tasks.count(TaskCategory.SEARCH)
@@ -493,23 +494,36 @@ class UiFlowTest(unittest.TestCase):
         monitor.assert_called_once()
         self.assertEqual(self.tasks.count(TaskCategory.INDEX), before + 1)
 
-    def test_backend_selection_saves_and_refreshes_without_reindexing(self):
+    def test_number_fields_show_values_and_clamp_typed_numbers(self):
+        dialog = SettingsDialog(self.controller.settings)
+        dialog.show()
+        QApplication.processEvents()
+        field = dialog.content_threads
+        self.assertEqual(field.text(), str(self.controller.settings.content_search_threads))
+        # Qt 6.12 collapsed the text area of styled spin boxes to one pixel.
+        self.assertGreater(field.width(), 100)
+        field.setText("")
+        self.assertEqual(field.value(), self.controller.settings.content_search_threads)
+        field.setText("99")
+        self.assertEqual(field.value(), 16)
+        field.setValue(4)
+        QTest.keyClick(field, Qt.Key.Key_Up)
+        self.assertEqual(field.text(), "5")
+        dialog.deleteLater()
+
+    def test_search_settings_save_and_refresh_without_reindexing(self):
         c = self.controller
         self.window.set_scope(self.root)
         indexed = self.tasks.count(TaskCategory.INDEX)
-        for backend in ("python", "rust"):
-            with self.subTest(backend=backend):
+        for threads in (1, 8):
+            with self.subTest(threads=threads):
                 dialog = SettingsDialog(c.settings, save=c.apply_settings)
-                self.assertEqual(dialog.backend.currentData(), c.settings.search_backend)
-                dialog.backend.setCurrentIndex(dialog.backend.findData(backend))
-                threads = 1 if backend == "python" else 8
                 dialog.content_threads.setValue(threads)
                 c.search.run()
                 previous_cancel = c.search.running
                 with patch.object(c, "_start_monitor") as monitor:
                     dialog.accept()
                 self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
-                self.assertEqual(c.settings_file.load().search_backend, backend)
                 self.assertEqual(c.settings_file.load().content_search_threads, threads)
                 self.assertTrue(previous_cancel.is_set())
                 self.assertEqual(self.tasks.count(TaskCategory.INDEX), indexed)
@@ -517,7 +531,7 @@ class UiFlowTest(unittest.TestCase):
                 monitor.assert_not_called()
                 with patch("pathscout.search.service.select_native", return_value=None) as select:
                     self.tasks.finish(TaskCategory.SEARCH)
-                select.assert_called_once_with(backend)
+                select.assert_called_once_with()
                 dialog.deleteLater()
 
     def test_hiding_cancels_running_and_debounced_searches(self):
@@ -530,23 +544,23 @@ class UiFlowTest(unittest.TestCase):
         self.assertFalse(self.controller.search.debounce.isActive())
 
     def test_home_shortcut_opens_an_unindexed_folder(self):
-        folder = self.root.parent / ".myagents"
+        folder = self.root.parent / ".toolbox"
         folder.mkdir()
         with patch.dict(os.environ, USERPROFILE=str(self.root.parent), HOME=str(self.root.parent)):
-            self.window.query.setText("~/.myagents")
+            self.window.query.setText("~/.toolbox")
             self.controller.search.run()
             self.tasks.finish(TaskCategory.SEARCH)
             self.assertEqual(self.window.selected_hit().item.path, folder)
             self.window.open_selected()
             self.tasks.finish(TaskCategory.ACTION)
-        self.launch.assert_called_once_with(folder, "navigate:~/.myagents")
+        self.launch.assert_called_once_with(folder, "navigate:~/.toolbox", explorer=None)
 
     def test_explorer_typing_opens_live_folder_in_original_window_on_one_click(self):
         self.window.hide()
-        folder = self.root / "ghidra-mcp"
+        folder = self.root / "toolbox-cli"
         folder.mkdir()
         (folder / ".nobackup").touch()
-        intent = ExplorerTyping("ghidra", self.root, (0, 0, 1000, 800), (11, 22))
+        intent = ExplorerTyping("toolbox", self.root, (0, 0, 1000, 800), (11, 22))
         self.controller._search_from_explorer(intent)
         self.controller.search.run()
         self.tasks.finish(TaskCategory.SEARCH)
@@ -557,8 +571,10 @@ class UiFlowTest(unittest.TestCase):
         self.window.results.itemClicked.emit(self.window.results.item(0))
         self.assertFalse(self.window.isVisible())
         self.tasks.finish(TaskCategory.ACTION)
-        self.launch.assert_called_once_with(folder, "ghidra", explorer=(11, 22, self.root))
-        self.window.present(text="ghidra")
+        self.launch.assert_called_once_with(
+            folder, "toolbox", explorer=ExplorerTarget(11, 22, self.root)
+        )
+        self.window.present(text="toolbox")
         self.assertFalse(self.window.explorer_mode)
         self.assertIsNone(self.window.explorer_view)
         self.assertFalse(self.controller.search.current_query().explorer)

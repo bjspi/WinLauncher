@@ -1,4 +1,5 @@
-//! Priority rules, with explicit fallback when Python regex parity is uncertain.
+//! Priority rules, evaluated natively where Rust matches Python exactly and by
+//! Python's own `re` everywhere else (non-ASCII names, unsupported patterns).
 
 use std::collections::HashMap;
 
@@ -7,10 +8,12 @@ use pyo3::exceptions::{PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::query::{required, Candidate};
+use crate::query::{required, Candidate, Kind};
 
+/// Ordered so that combining two classes keeps the stronger demotion:
+/// ignored > low > high > normal.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum SearchClass {
+pub(crate) enum SearchClass {
     Normal,
     High,
     Low,
@@ -25,15 +28,6 @@ impl SearchClass {
             "low" => Ok(Self::Low),
             "ignored" => Ok(Self::Ignored),
             _ => Err(PyValueError::new_err("Invalid search priority class")),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::High => "high",
-            Self::Low => "low",
-            Self::Ignored => "ignored",
         }
     }
 }
@@ -53,6 +47,57 @@ impl Rule {
     }
 }
 
+// Rule specifications as sent by Python's `priority_spec`.
+
+#[derive(FromPyObject)]
+struct FolderSpec {
+    #[pyo3(item)]
+    key: String,
+    #[pyo3(item)]
+    path_length: usize,
+    #[pyo3(item)]
+    weight: i64,
+    #[pyo3(item("class"))]
+    class: String,
+}
+
+#[derive(FromPyObject)]
+struct NameSpec {
+    #[pyo3(item)]
+    pattern: String,
+    /// The compiled Python pattern's `search` method.
+    #[pyo3(item)]
+    python_search: Py<PyAny>,
+    #[pyo3(item)]
+    weight: i64,
+    #[pyo3(item("class"))]
+    class: String,
+    #[pyo3(item)]
+    files: bool,
+    #[pyo3(item)]
+    folders: bool,
+}
+
+#[derive(FromPyObject)]
+struct ExtensionSpec {
+    #[pyo3(item)]
+    extension: String,
+    #[pyo3(item)]
+    weight: i64,
+    #[pyo3(item("class"))]
+    class: String,
+}
+
+#[derive(FromPyObject)]
+struct AttributeSpec {
+    #[pyo3(item)]
+    mask: i64,
+    #[pyo3(item)]
+    weight: i64,
+    #[pyo3(item("class"))]
+    class: String,
+}
+
 #[derive(Debug)]
 struct FolderRule {
     key: String,
@@ -62,17 +107,47 @@ struct FolderRule {
 
 #[derive(Debug)]
 struct NameRule {
-    regex: Regex,
+    native: Option<Regex>,
+    python_search: Option<Py<PyAny>>,
     files: bool,
     folders: bool,
     rule: Rule,
 }
 
+impl NameRule {
+    fn applies_to(&self, kind: Kind) -> bool {
+        if kind == Kind::Folder {
+            self.folders
+        } else {
+            self.files
+        }
+    }
+
+    fn matches(&self, file_name: &str) -> PyResult<bool> {
+        if let (Some(regex), true) = (&self.native, file_name.is_ascii()) {
+            // fancy-regex compares backreferences literally; fold ASCII to match Python.
+            if let Ok(found) = regex.is_match(&file_name.to_ascii_lowercase()) {
+                return Ok(found);
+            }
+            // A backtracking limit was hit; Python decides instead.
+        }
+        let search = self.python_search.as_ref().ok_or_else(|| {
+            PyValueError::new_err("Filename priority rule needs its Python pattern")
+        })?;
+        Python::with_gil(|py| search.call1(py, (file_name,))?.is_truthy(py))
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct Decision {
-    pub search: String,
+    pub class: SearchClass,
     pub boost: i64,
 }
+
+const NO_PRIORITY: Decision = Decision {
+    class: SearchClass::Normal,
+    boost: 0,
+};
 
 #[derive(Debug, Default)]
 pub struct Policy {
@@ -83,81 +158,59 @@ pub struct Policy {
 }
 
 impl Policy {
-    pub fn has_name_rules(&self) -> bool {
-        !self.names.is_empty()
-    }
-
-    pub fn validate_candidate(&self, candidate: &Candidate) -> PyResult<()> {
-        // Surface regex backtracking failures before any exclusion callback runs.
-        self.evaluate(candidate).map(|_| ())
-    }
-
-    fn validate_filename(&self, file_name: &str, kind: &str) -> PyResult<()> {
-        if self.has_name_rules()
-            && !file_name.is_ascii()
-            && self.names.iter().any(|name| {
-                if kind == "folder" {
-                    name.folders
-                } else {
-                    name.files
-                }
-            })
-        {
-            // shortcut: Unicode regex uses Python, replace when native casing/classes agree.
-            return Err(regex_fallback("non-ASCII filename"));
-        }
-        Ok(())
-    }
-
     pub fn from_dict(value: &Bound<'_, PyDict>) -> PyResult<Self> {
-        let folders: Vec<(String, usize, i64, String)> = required(value, "folders")?;
-        let names: Vec<(String, i64, String, bool, bool)> = required(value, "names")?;
-        let extensions: Vec<(String, i64, String)> = required(value, "extensions")?;
-        let attributes: Vec<(i64, i64, String)> = required(value, "attributes")?;
+        let folders: Vec<FolderSpec> = required(value, "folders")?;
+        let names: Vec<NameSpec> = required(value, "names")?;
+        let extensions: Vec<ExtensionSpec> = required(value, "extensions")?;
+        let attributes: Vec<AttributeSpec> = required(value, "attributes")?;
         let mut policy = Self::default();
-        for (key, path_length, weight, class) in folders {
+        for spec in folders {
             policy.folders.push(FolderRule {
-                key,
-                path_length,
-                rule: Rule::new(weight, &class)?,
+                key: spec.key,
+                path_length: spec.path_length,
+                rule: Rule::new(spec.weight, &spec.class)?,
             });
         }
-        for (pattern, weight, class, files, folders) in names {
+        for spec in names {
             policy.names.push(NameRule {
-                regex: compile_name_pattern(&pattern)?,
-                files,
-                folders,
-                rule: Rule::new(weight, &class)?,
+                native: compile_name_pattern(&spec.pattern),
+                python_search: Some(spec.python_search),
+                files: spec.files,
+                folders: spec.folders,
+                rule: Rule::new(spec.weight, &spec.class)?,
             });
         }
-        for (extension, weight, class) in extensions {
+        for spec in extensions {
+            let rule = Rule::new(spec.weight, &spec.class)?;
             policy
                 .extensions
-                .entry(extension)
+                .entry(spec.extension)
                 .or_default()
-                .push(Rule::new(weight, &class)?);
+                .push(rule);
         }
-        for (mask, weight, class) in attributes {
-            policy.attributes.push((mask, Rule::new(weight, &class)?));
+        for spec in attributes {
+            policy
+                .attributes
+                .push((spec.mask, Rule::new(spec.weight, &spec.class)?));
         }
         Ok(policy)
     }
 
-    pub fn evaluate(&self, candidate: &Candidate) -> PyResult<Decision> {
-        if self.folders.is_empty()
+    fn is_empty(&self) -> bool {
+        self.folders.is_empty()
             && self.names.is_empty()
             && self.extensions.is_empty()
             && self.attributes.is_empty()
-        {
-            return Ok(Decision {
-                search: "normal".to_owned(),
-                boost: 0,
-            });
+    }
+
+    pub fn evaluate(&self, candidate: &Candidate) -> PyResult<Decision> {
+        if self.is_empty() {
+            return Ok(NO_PRIORITY); // Searches evaluate every candidate; skip the work.
         }
         self.evaluate_fields(
             &candidate.identity,
             candidate.file_name(),
-            &candidate.kind,
+            candidate.kind,
             &candidate.extension,
             candidate.attributes,
         )
@@ -167,78 +220,60 @@ impl Policy {
         &self,
         identity: &str,
         file_name: &str,
-        kind: &str,
+        kind: Kind,
         extension: &str,
         attributes: i64,
     ) -> PyResult<Decision> {
-        let mut class = SearchClass::Normal;
-        let mut boost = 0;
-        let mut most_specific: Option<&FolderRule> = None;
-        for folder in &self.folders {
-            if identity.starts_with(&folder.key)
-                && most_specific.is_none_or(|found| folder.path_length > found.path_length)
-            {
-                most_specific = Some(folder);
+        let mut decision = NO_PRIORITY;
+        if let Some(folder) = self.most_specific_folder(identity) {
+            add_rule(&folder.rule, &mut decision)?;
+        }
+        for name in &self.names {
+            if name.applies_to(kind) && name.matches(file_name)? {
+                add_rule(&name.rule, &mut decision)?;
             }
         }
-        if let Some(folder) = most_specific {
-            add_rule(&folder.rule, &mut class, &mut boost)?;
-        }
-        let is_folder = kind == "folder";
-        if self.has_name_rules() {
-            self.validate_filename(file_name, kind)?;
-            // fancy-regex compares backreferences literally; fold ASCII to match Python.
-            let folded_name = file_name.to_ascii_lowercase();
-            for name in &self.names {
-                if !(if is_folder { name.folders } else { name.files }) {
-                    continue;
-                }
-                if name
-                    .regex
-                    .is_match(&folded_name)
-                    .map_err(|error| regex_fallback(&error.to_string()))?
-                {
-                    add_rule(&name.rule, &mut class, &mut boost)?;
-                }
-            }
-        }
-        if !is_folder {
-            if let Some(rules) = self.extensions.get(extension) {
-                for rule in rules {
-                    add_rule(rule, &mut class, &mut boost)?;
-                }
+        if kind != Kind::Folder {
+            for rule in self.extensions.get(extension).into_iter().flatten() {
+                add_rule(rule, &mut decision)?;
             }
         }
         for (mask, rule) in &self.attributes {
             if attributes & mask == *mask {
-                add_rule(rule, &mut class, &mut boost)?;
+                add_rule(rule, &mut decision)?;
             }
         }
-        Ok(Decision {
-            search: class.as_str().to_owned(),
-            boost,
-        })
+        Ok(decision)
+    }
+
+    /// The first rule with the longest folder path among those containing the item.
+    fn most_specific_folder(&self, identity: &str) -> Option<&FolderRule> {
+        let mut found: Option<&FolderRule> = None;
+        for folder in &self.folders {
+            let longer = found.is_none_or(|best| folder.path_length > best.path_length);
+            if longer && identity.starts_with(&folder.key) {
+                found = Some(folder);
+            }
+        }
+        found
     }
 }
 
-fn add_rule(rule: &Rule, class: &mut SearchClass, boost: &mut i64) -> PyResult<()> {
-    *class = (*class).max(rule.class);
-    *boost = boost
+fn add_rule(rule: &Rule, decision: &mut Decision) -> PyResult<()> {
+    decision.class = decision.class.max(rule.class);
+    decision.boost = decision
+        .boost
         .checked_add(rule.weight)
         .ok_or_else(|| PyOverflowError::new_err("Priority boost exceeds native integer range"))?;
     Ok(())
 }
 
-fn regex_fallback(detail: &str) -> PyErr {
-    PyValueError::new_err(format!(
-        "Filename priority expression requires Python regex: {detail}"
-    ))
-}
-
-fn compile_name_pattern(pattern: &str) -> PyResult<Regex> {
-    let translated = translate_pattern(pattern).map_err(|detail| regex_fallback(&detail))?;
+/// A native regex when the pattern is in the ASCII subset whose semantics match
+/// Python `re`; otherwise None, and the rule is evaluated by Python.
+fn compile_name_pattern(pattern: &str) -> Option<Regex> {
+    let translated = translate_pattern(pattern).ok()?;
     // Builder flags do not reach fancy-regex's lookaround/backreference compiler.
-    Regex::new(&format!("(?i:{translated})")).map_err(|error| regex_fallback(&error.to_string()))
+    Regex::new(&format!("(?i:{translated})")).ok()
 }
 
 /// Translate the ASCII subset whose search semantics agree with Python `re`.
@@ -368,6 +403,16 @@ mod tests {
         Rule { weight, class }
     }
 
+    fn native_rule(pattern: &str, files: bool, folders: bool, weight: i64) -> NameRule {
+        NameRule {
+            native: compile_name_pattern(pattern),
+            python_search: None,
+            files,
+            folders,
+            rule: rule(weight, SearchClass::Normal),
+        }
+    }
+
     #[test]
     fn priorities_sum_all_rules_but_only_the_first_most_specific_folder() {
         let mut policy = Policy {
@@ -390,12 +435,9 @@ mod tests {
             ],
             ..Policy::default()
         };
-        policy.names.push(NameRule {
-            regex: compile_name_pattern(r"(?<=report)\.txt$").unwrap(),
-            files: true,
-            folders: false,
-            rule: rule(3, SearchClass::Normal),
-        });
+        policy
+            .names
+            .push(native_rule(r"(?<=report)\.txt$", true, false, 3));
         policy.extensions.insert(
             "txt".into(),
             vec![rule(7, SearchClass::High), rule(-2, SearchClass::Normal)],
@@ -405,30 +447,37 @@ mod tests {
             (6, rule(100, SearchClass::Ignored)),
             (0, rule(1, SearchClass::Normal)),
         ];
-        let decision = policy
-            .evaluate_fields("C:/WORK/DEEP/REPORT.TXT/", "REPORT.TXT", "file", "txt", 2)
-            .unwrap();
-        assert_eq!(decision.search, "low");
-        assert_eq!(decision.boost, 4);
-        let folder = policy
-            .evaluate_fields("C:/WORK/DEEP/REPORT.TXT/", "REPORT.TXT", "folder", "txt", 2)
-            .unwrap();
-        assert_eq!(folder.search, "low");
-        assert_eq!(folder.boost, -4);
-        let ignored = policy
-            .evaluate_fields("C:/WORK/DEEP/REPORT.TXT/", "REPORT.TXT", "app", "txt", 6)
-            .unwrap();
-        assert_eq!(ignored.search, "ignored");
-        assert_eq!(ignored.boost, 104);
+        let identity = "C:/WORK/DEEP/REPORT.TXT/";
+        let evaluate = |kind, attributes| {
+            policy
+                .evaluate_fields(identity, "REPORT.TXT", kind, "txt", attributes)
+                .unwrap()
+        };
         assert_eq!(
-            Policy::default()
-                .evaluate_fields("", "Straße", "file", "", 0)
-                .unwrap(),
+            evaluate(Kind::File, 2),
             Decision {
-                search: "normal".into(),
-                boost: 0
+                class: SearchClass::Low,
+                boost: 4
             }
         );
+        assert_eq!(
+            evaluate(Kind::Folder, 2),
+            Decision {
+                class: SearchClass::Low,
+                boost: -4
+            }
+        );
+        assert_eq!(
+            evaluate(Kind::App, 6),
+            Decision {
+                class: SearchClass::Ignored,
+                boost: 104
+            }
+        );
+        let empty = Policy::default()
+            .evaluate_fields("", "Straße", Kind::File, "", 0)
+            .unwrap();
+        assert_eq!(empty, NO_PRIORITY);
     }
 
     #[test]
@@ -454,34 +503,21 @@ mod tests {
             (r"([a-z]+)-\1", "Report-REPORT", true),
             (r"(?P<name>[a-z]+)-(?P=name)", "Report-REPORT", true),
         ] {
-            assert_eq!(
-                compile_name_pattern(pattern)
-                    .unwrap()
-                    .is_match(&name.to_ascii_lowercase())
-                    .unwrap(),
-                matches,
-                "{pattern:?} on {name:?}"
-            );
+            let found = native_rule(pattern, true, true, 0).matches(name).unwrap();
+            assert_eq!(found, matches, "{pattern:?} on {name:?}");
         }
         for pattern in [r"(?m)report$", r"[a&&b]", r"\B", r"\u0130", "Café"] {
             assert!(translate_pattern(pattern).is_err(), "{pattern}");
+            assert!(compile_name_pattern(pattern).is_none(), "{pattern}");
         }
-        let policy = Policy {
-            names: vec![NameRule {
-                regex: compile_name_pattern("report").unwrap(),
-                files: false,
-                folders: true,
-                rule: rule(0, SearchClass::High),
-            }],
-            ..Policy::default()
-        };
-        assert!(policy.evaluate_fields("", "Café", "folder", "", 0).is_err());
-        assert_eq!(
-            policy
-                .evaluate_fields("", "Café", "file", "", 0)
-                .unwrap()
-                .search,
-            "normal"
-        );
+    }
+
+    #[test]
+    fn non_ascii_names_and_python_only_patterns_are_left_to_python() {
+        let rule = native_rule("report", true, true, 0);
+        // Without its Python pattern the rule must refuse rather than guess.
+        assert!(rule.matches("Größe-report.txt").is_err());
+        assert!(rule.matches("report.txt").unwrap());
+        assert!(native_rule("Café", true, true, 0).matches("cafe").is_err());
     }
 }

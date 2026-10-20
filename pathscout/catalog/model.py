@@ -13,6 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 
 REGISTRY_SOURCE = "registry:apps"
+APPLICATION_SOURCE_PREFIX = "apps:"  # Start-menu sources; see `CatalogSource.id`.
 """Source id of applications discovered through the App Paths registry keys."""
 
 
@@ -23,6 +24,15 @@ def normalize(value: str) -> str:
 def normalize_extension(extension: str) -> str:
     """`.TXT`, `txt` and `Txt` all become `txt`."""
     return normalize(extension).lstrip(".")
+
+
+def file_stem(file_name: str) -> str:
+    """The name without its extension; a leading or trailing dot is no extension.
+
+    `PurePath.stem` treats a trailing dot differently since Python 3.14.
+    """
+    dot = file_name.rfind(".")
+    return file_name[:dot] if 0 < dot < len(file_name) - 1 else file_name
 
 
 def path_key(path: Path | str) -> str:
@@ -65,7 +75,7 @@ class CatalogItem:
 
     @property
     def name(self) -> str:
-        return self.path.stem if self.kind == ItemKind.APP else self.path.name
+        return file_stem(self.path.name) if self.kind == ItemKind.APP else self.path.name
 
     # The attributes below match the search's `Candidate`, so priority rules accept both.
 
@@ -95,7 +105,8 @@ class CatalogSource:
 
     @property
     def id(self) -> str:
-        return ("apps:" if self.apps_only else "files:") + path_key(self.root)
+        prefix = APPLICATION_SOURCE_PREFIX if self.apps_only else "files:"
+        return prefix + path_key(self.root)
 
     def covers(self, other: CatalogSource) -> bool:
         """A full source covers every source below it; an app-only source only app sources."""

@@ -52,7 +52,7 @@ def _is_link_or_offline(info: os.stat_result, directory: bool) -> bool:
     return directory and bool(getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_OFFLINE)
 
 
-def _classify_kind(path: Path, directory: bool) -> ItemKind:
+def classify_kind(path: Path, directory: bool) -> ItemKind:
     if directory:
         return ItemKind.FOLDER
     if path.suffix.lower() in APP_SUFFIXES:
@@ -60,7 +60,7 @@ def _classify_kind(path: Path, directory: bool) -> ItemKind:
     return ItemKind.FILE
 
 
-def _catalog_item(path: Path, info: os.stat_result, kind: ItemKind) -> CatalogItem:
+def catalog_item(path: Path, info: os.stat_result, kind: ItemKind) -> CatalogItem:
     attributes = getattr(info, "st_file_attributes", 0)
     return CatalogItem(path, kind, info.st_size, info.st_mtime, attributes=attributes)
 
@@ -81,17 +81,19 @@ class _EntryRules:
         self.exclusions = settings.exclusions(raise_marker_errors=True)
         self.priorities: PriorityPolicy = settings.priorities()
 
-    def entry_item(self, path: Path, info: os.stat_result, directory: bool) -> CatalogItem | None:
+    def entry_item(
+        self, path: Path, info: os.stat_result, directory: bool, *, application: bool = False
+    ) -> CatalogItem | None:
         if _is_link_or_offline(info, directory):
             return None
-        if not self.exclusions.allows(path, directory=directory):
+        if not self.exclusions.allows(path, directory=directory, application=application):
             return None
-        return self._unless_ignored(_catalog_item(path, info, _classify_kind(path, directory)))
+        return self._unless_ignored(catalog_item(path, info, classify_kind(path, directory)))
 
     def application_item(self, path: Path) -> CatalogItem | None:
-        if not path.is_file() or not self.exclusions.allows(path):
+        if not path.is_file() or not self.exclusions.allows(path, application=True):
             return None
-        return self._unless_ignored(_catalog_item(path, path.stat(), ItemKind.APP))
+        return self._unless_ignored(catalog_item(path, path.stat(), ItemKind.APP))
 
     def allows_scope(self, folder: Path, source_root: Path) -> bool:
         """A scoped scan inherits every pruning decision of the folders above it.
@@ -112,7 +114,7 @@ class _EntryRules:
             return False
         if not self.exclusions.allows(folder, directory=True):
             return False
-        return self._unless_ignored(_catalog_item(folder, info, ItemKind.FOLDER)) is not None
+        return self._unless_ignored(catalog_item(folder, info, ItemKind.FOLDER)) is not None
 
     def _unless_ignored(self, item: CatalogItem) -> CatalogItem | None:
         if self.priorities.evaluate(item).search == SearchPriority.IGNORED:
@@ -243,7 +245,7 @@ class _ScanSession:
                 return False
             if root != source.root and not source.apps_only:
                 # A scoped root is itself an entry of its parent folder.
-                self.rows.add(_catalog_item(root, root.stat(), ItemKind.FOLDER), source.id)
+                self.rows.add(catalog_item(root, root.stat(), ItemKind.FOLDER), source.id)
         except OSError as exc:
             self.outcome.source_unavailable(source, root, exc)
             return False
@@ -275,7 +277,8 @@ class _ScanSession:
             return None
         try:
             directory = entry.is_dir(follow_symlinks=False)
-            item = self.rules.entry_item(path, entry.stat(follow_symlinks=False), directory)
+            info = entry.stat(follow_symlinks=False)
+            item = self.rules.entry_item(path, info, directory, application=source.apps_only)
         except OSError as exc:
             self.outcome.failure(path, "Cannot read", exc)
             return None
@@ -302,7 +305,7 @@ class _ScanSession:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode):
             return None
-        item = self.rules.entry_item(path, info, directory=False)
+        item = self.rules.entry_item(path, info, directory=False, application=source.apps_only)
         if item is None or not source.accepts(item):
             return None
         return item

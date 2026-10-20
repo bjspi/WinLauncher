@@ -2,23 +2,31 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from pathscout.catalog.store import CatalogStore
 from pathscout.platform import shell
 
 
+@dataclass(frozen=True, slots=True)
+class ExplorerTarget:
+    """The Explorer tab a folder result opens in, instead of a new window."""
+
+    window: int
+    tab: int
+    folder: Path
+
+
 class ItemActions:
     def __init__(self, store: CatalogStore):
         self.store = store
 
-    def open(
-        self, path: Path, query_key: str, *, explorer: tuple[int, int, Path] | None = None
-    ) -> None:
+    def open(self, path: Path, query_key: str, *, explorer: ExplorerTarget | None = None) -> None:
         if explorer is not None and path.is_dir():
             from pathscout.platform.explorer import navigate_to
 
-            navigate_to(path, *explorer)
+            navigate_to(path, explorer.window, explorer.tab, explorer.folder)
         else:
             shell.open_path(path)
         # Only successful shell invocations count as usage.

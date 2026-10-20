@@ -22,6 +22,7 @@ DEFAULT_DOUBLE_CTRL_MS = 350
 DOUBLE_CTRL_RANGE_MS = (150, 800)
 RESCAN_RANGE_SECONDS = (30, 86400)
 RESULT_LIMIT_RANGE = (10, 200)
+DEFAULT_CONTENT_SEARCH_THREADS = 4
 CONTENT_SEARCH_THREADS_RANGE = (1, 16)
 BOOST_RANGE = (-100, 100)
 # Excluded names; matching directories also exclude their whole subtree.
@@ -124,8 +125,7 @@ class Settings:
     double_ctrl_ms: int = DEFAULT_DOUBLE_CTRL_MS
     rescan_seconds: int = 300
     max_results: int = 60
-    search_backend: str = "rust"
-    content_search_threads: int = 4
+    content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS
 
     def __post_init__(self) -> None:
         self._validate_limits()
@@ -167,8 +167,6 @@ class Settings:
         )
 
     def _validate_limits(self) -> None:
-        if self.search_backend not in ("rust", "python"):
-            raise ValueError("Search backend must be rust or python.")
         if type(self.content_search_threads) is not int:
             raise ValueError("Content search threads must be an integer.")
         _require_range(

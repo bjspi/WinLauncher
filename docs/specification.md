@@ -48,7 +48,10 @@ NTFS directory namespaces are not supported.
 Patterns without a separator match file and directory names; `*`, `?` and bracket patterns
 use Python fnmatch semantics. Patterns with `/` or `\` match the full normalized
 absolute path using `/` separators. Matching directories exclude their subtree.
-For example, `*.lnk` excludes Windows shortcuts by default. Filename/extension
+For example, `*.lnk` excludes Windows shortcuts by default. Name patterns without
+a separator do not apply to entries from application sources (Start-menu folders and
+registered App Paths), so installed applications stay searchable; folder exclusions,
+path patterns and markers still apply to them. Filename/extension
 priority rules with `search_priority: "ignored"` can also exclude files by name or type.
 
 A configured marker name found in any ancestor directory excludes that directory
@@ -98,7 +101,7 @@ backslashes remain literal. Matching is NFC-normalized and case-insensitive.
 | `after:2026-`, `after:2026-02*` | Start of the specified local year/month (January 1 / February 1) |
 | `before:2026-`, `before:2026-02*` | Through the last day of the specified local year/month |
 | `size:>5kb`, `size:<2mb` | Strict file/application size comparison; `>=` and `<=` include the boundary |
-| `contains:"invoice number"`, `contains:gsk_*` | Case-insensitive text/fnmatch content filter; Rust backend required |
+| `contains:"invoice number"`, `contains:gsk_*` | Case-insensitive text/fnmatch content filter; needs the Rust engine |
 | `content:text`, `rg:text` | Aliases for `contains:`, including its fnmatch semantics |
 | `low:true` | Include low results even when ordinary/high results exist |
 
@@ -114,12 +117,14 @@ according to the comparison. Spaces after `size:` or its comparison are allowed.
 Repeated comparisons form an intersection; invalid units, out-of-range byte bounds
 and empty ranges report validation errors. Folders are excluded by size filters;
 no recursive folder-size calculation is performed. SQL, Python and native ranking
-apply the same inclusive integer byte bounds. Old native API versions fall back
-to Python until rebuilt, so newly added filters cannot be silently ignored.
+apply the same inclusive integer byte bounds. An extension with a different API
+version is not used, so newly added filters cannot be silently ignored.
 
 Dates accept `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, with an optional trailing `*` or
 `-`. Missing parts expand to the first day for `after:` and the last day for
-`before:`; leap years and local midnight boundaries are respected.
+`before:`; leap years and local midnight boundaries are respected. Any other day
+that Python's `date.fromisoformat` accepts is also valid, such as the compact
+`20260215` and ISO week dates like `2026-W07` (its Monday) or `2026-W07-3`.
 
 Fnmatch patterns support `*`, `?`, character sets/ranges and `[!...]` negation;
 `[[]` escapes an opening bracket and an unmatched `[` is literal. `*` has no
@@ -128,7 +133,7 @@ normalization as ordinary terms, with either slash spelling accepted in paths.
 Without a separator, patterns match only the display name or actual filename,
 never a parent folder. `name:` matches the stem; `path:` matches ordered parent
 components. Patterns are not fuzzy, but accompanying ordinary terms may be.
-The Python backend uses standard-library fnmatch; Rust uses fnmatch-rs with
+The Python engine uses standard-library fnmatch; Rust uses fnmatch-rs with
 regexes compiled once per query. SQL only supplies a safe candidate superset.
 Excluded terms remain literal substrings.
 
@@ -172,7 +177,7 @@ Optional parentheses may contain spaces, for example `ext:(jpg, png)`. Each
 extension/pattern is normalized without its leading dot and matched in full;
 `ext:doc*` includes `doc`, `docx` and `docm`, while `ext:doc,docx` includes only the
 two named extensions. SQL narrows wildcard candidates conservatively, and both
-backends apply the complete fnmatch pattern before retaining a result.
+engines apply the complete fnmatch pattern before retaining a result.
 
 The footer exposes Files, Folders and Apps toggles, also reachable with Alt+1,
 Alt+2 and Alt+3. Clicking the active toggle again or using Alt+0 restores All.
@@ -332,7 +337,9 @@ directory on its background worker and matches entry names, not the common paren
 path. Direct folder names participate even when index exclusions or marker files
 exclude their contents; files still obey exclusions. Folders precede files before
 the result limit. The catalog is consulted recursively only when no direct entry
-matches, with its normal exclusions; the live listing writes nothing to it.
+matches, with its normal exclusions; it then matches the path below the searched
+folder (so `invoices 2024` finds files inside such a subfolder, while the searched
+folder's own name matches nothing). The live listing writes nothing to the catalog.
 Content filters keep their Rust requirement and use the same bounded content workers.
 The captured Explorer window and active-tab handles travel with the keyboard
 intent. A single click or Enter on a folder uses that tab's `Navigate2` method;
@@ -350,9 +357,14 @@ the same name is never replaced or deleted.
 All other settings apply on Save. Validation or save errors keep the dialog open
 with the edits intact. Changing roots, exclusions, markers, priority rules or
 application indexing restarts folder watching and rescans; changing only the result
-limit, interval, backend or input settings does not rescan and keeps an Explorer scope.
-The search backend selector offers Rust (default, with Python fallback) and Python.
-The diagnostic environment override takes precedence over the stored choice.
+limit, interval or input settings does not rescan and keeps an Explorer scope.
+
+PathScout searches with the Rust engine. When the extension is missing or does
+not support the running Python, it searches with the Python engine, shows the
+reason in the search bar and rejects `contains:` with that reason. An unexpected
+Rust error is logged once per kind, and that search is repeated in Python.
+`PATHSCOUT_SEARCH_ENGINE=python` forces the Python engine; `native` requires the
+Rust engine and reports its errors instead of falling back.
 
 User configuration (`settings.json`), catalog/history/favorites and diagnostics
 live under `%USERPROFILE%\.PathScout` by default; `--data-dir` selects an isolated
