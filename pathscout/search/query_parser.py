@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import ntpath
 import re
-import shlex
 from calendar import monthrange
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
@@ -53,33 +53,121 @@ _SIZE_UNITS = {"": 1, "b": 1, "byte": 1, "bytes": 1} | {
     for suffix in ("b", "byte", "bytes", "ib")
 }
 _MAX_SIZE = 2**63 - 1  # SQLite and the native engine store signed 64-bit sizes.
+CONTENT_FILTERS = frozenset({"contains", "content", "rg"})
+_SIZE_COMPARISONS = (">", "<", ">=", "<=")
+# Whitespace separates tokens except inside double quotes; an open quote runs to the end.
+_TOKEN = re.compile(r'(?:"[^"]*"?|[^ \t\r\n"])+')
+
+
+class SpanRole(StrEnum):
+    FILTER = "filter"
+    CONTENT = "content"
+    EXCLUSION = "exclusion"
+
+
+@dataclass(frozen=True, slots=True)
+class QuerySpan:
+    """Characters `start:end` of the typed text form a filter or an exclusion.
+
+    `valid` is False when `parse_query` would reject the filter's value.
+    """
+
+    start: int
+    end: int
+    role: SpanRole
+    valid: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _Token:
+    text: str  # Without the quotation marks.
+    start: int
+    end: int
+    closed: bool = True
+
+    def joined(self, other: _Token, separator: str = "") -> _Token:
+        return _Token(
+            self.text + separator + other.text, self.start, other.end, self.closed and other.closed
+        )
 
 
 def parse_query(text: str, scope: Path | None = None) -> SearchQuery:
     """Raise ValueError with a user-facing message for invalid input."""
     _check_raw_text(text)
     stripped = text.strip()
-    if stripped.startswith(("%", "~/", "~\\")) or stripped == "~":
+    if _is_navigation(stripped):
         return SearchQuery(navigation=stripped)
     draft = _QueryDraft(scope=scope)
-    tokens = iter(_split_tokens(text))
-    for token in tokens:
-        name, separator, value = token.partition(":")
-        if separator and normalize(name) == "size":
-            if not value:
-                value = next(tokens, "")
-            if value in (">", "<", ">=", "<="):
-                value += next(tokens, "")
-            token = "size:" + value
-        elif separator and normalize(name) == "ext" and value.startswith("("):
-            while not value.endswith(")"):
-                continuation = next(tokens, None)
-                if continuation is None:
-                    raise ValueError("Please close the ext: list with a parenthesis.")
-                value += " " + continuation
-            token = "ext:" + value
-        draft.add(token)
+    for token in _query_tokens(text):
+        if not token.closed:
+            raise ValueError("Please close the quotation mark.")
+        draft.add(token.text)
     return draft.build()
+
+
+def query_spans(text: str) -> tuple[QuerySpan, ...]:
+    """Filters and exclusions in `text`, classified as `parse_query` reads them.
+
+    Presentation only: never raises, so text being typed can be highlighted.
+    """
+    if _is_navigation(text.strip()):
+        return ()
+    spans = (_span(token) for token in _query_tokens(text))
+    return tuple(span for span in spans if span is not None)
+
+
+def _is_navigation(stripped: str) -> bool:
+    return stripped.startswith(("%", "~/", "~\\")) or stripped == "~"
+
+
+def _query_tokens(text: str) -> Iterator[_Token]:
+    """Tokens with `size: > 5kb` and `ext:(jpg, png)` joined into one filter each."""
+    tokens = _scan_tokens(text)
+    for token in tokens:
+        name, separator, value = token.text.partition(":")
+        if separator and normalize(name) == "size":
+            if not value and (following := next(tokens, None)):
+                token, value = token.joined(following), following.text
+            if value in _SIZE_COMPARISONS and (following := next(tokens, None)):
+                token = token.joined(following)
+        elif separator and normalize(name) == "ext" and value.startswith("("):
+            while not token.text.endswith(")"):
+                following = next(tokens, None)
+                if following is None:
+                    break  # `ext:` itself reports the missing parenthesis.
+                token = token.joined(following, " ")
+        yield token
+
+
+def _scan_tokens(text: str) -> Iterator[_Token]:
+    for match in _TOKEN.finditer(text):
+        raw = match.group()
+        yield _Token(raw.replace('"', ""), match.start(), match.end(), raw.count('"') % 2 == 0)
+
+
+def _span(token: _Token) -> QuerySpan | None:
+    name, separator, value = token.text.partition(":")
+    name = normalize(name)
+    if separator and name in FILTER_NAMES and not ntpath.isabs(token.text):
+        role = SpanRole.CONTENT if name in CONTENT_FILTERS else SpanRole.FILTER
+        return QuerySpan(token.start, token.end, role, _valid_filter(token, name, value))
+    if _is_exclusion(token.text):
+        return QuerySpan(token.start, token.end, SpanRole.EXCLUSION)
+    return None
+
+
+def _valid_filter(token: _Token, name: str, value: str) -> bool:
+    if not token.closed:
+        return False
+    try:
+        _QueryDraft(scope=None).add_filter(name, value)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_exclusion(token: str) -> bool:
+    return token.startswith(EXCLUSION_PREFIX) and len(token) > len(EXCLUSION_PREFIX)
 
 
 def _check_raw_text(text: str) -> None:
@@ -105,15 +193,10 @@ def without_type_filter(text: str) -> str:
 
 
 def _split_tokens(text: str) -> list[str]:
-    lexer = shlex.shlex(text, posix=True)
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    lexer.quotes = '"'
-    lexer.escape = ""
-    try:
-        return list(lexer)
-    except ValueError as exc:
-        raise ValueError("Please close the quotation mark.") from exc
+    tokens = list(_scan_tokens(text))
+    if not all(token.closed for token in tokens):
+        raise ValueError("Please close the quotation mark.")
+    return [token.text for token in tokens]
 
 
 @dataclass
@@ -142,13 +225,13 @@ class _QueryDraft:
             return  # An empty quoted string ("") is not a search term.
         name, separator, value = token.partition(":")
         if separator and normalize(name) in FILTER_NAMES and not ntpath.isabs(token):
-            self._add_filter(normalize(name), value)
-        elif token.startswith(EXCLUSION_PREFIX) and len(token) > len(EXCLUSION_PREFIX):
+            self.add_filter(normalize(name), value)
+        elif _is_exclusion(token):
             self.excluded_terms.append(normalize(token[len(EXCLUSION_PREFIX) :]))
         else:
             self.terms.append(normalize(token))
 
-    def _add_filter(self, name: str, value: str) -> None:
+    def add_filter(self, name: str, value: str) -> None:
         """Each filter is one assignment; repeated list filters accumulate."""
         if name in ("type", "t"):
             self.kind = _parse_choice(
@@ -182,7 +265,7 @@ class _QueryDraft:
                 self.min_size = max(self.min_size or 0, lower)
             if upper is not None:
                 self.max_size = upper if self.max_size is None else min(self.max_size, upper)
-        elif name in ("contains", "content", "rg"):
+        elif name in CONTENT_FILTERS:
             if not value.strip() or len(value) > MAX_TERM_LENGTH:
                 raise ValueError(f"{name}: expects 1 to {MAX_TERM_LENGTH} characters of text.")
             self.content_text = value

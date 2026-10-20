@@ -76,7 +76,7 @@ class WebsiteTest(unittest.TestCase):
         ):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 settings_from_json({"websites": value})
-        with self.assertRaisesRegex(ValueError, "unique"):
+        with self.assertRaisesRegex(ValueError, "'AZ' is used twice"):
             Settings(roots=(), websites=(AMAZON, WebsiteShortcut("AZ", "Other", YOUTUBE.url)))
 
 
@@ -85,10 +85,14 @@ class WebsiteUiTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        self.icons = WebsiteIcons()
+        self.addCleanup(self.icons.close)
+
     def test_settings_edit_add_remove_save_and_cancel(self):
         original = Settings(roots=(), websites=(AMAZON,))
         saved = []
-        dialog = SettingsDialog(original, save=saved.append)
+        dialog = SettingsDialog(original, save=saved.append, website_icons=self.icons)
         editor = dialog.websites
         editor.title.setText("Amazon DE")
         editor.add_website()
@@ -100,18 +104,18 @@ class WebsiteUiTest(unittest.TestCase):
         self.assertEqual(saved, [])
         self.assertEqual(dialog.result_settings, original)
         dialog.deleteLater()
-        dialog = SettingsDialog(original, save=saved.append)
+        dialog = SettingsDialog(original, save=saved.append, website_icons=self.icons)
         dialog.websites.title.setText("Amazon DE")
-        dialog.accept()
+        dialog.save()
         self.assertEqual(saved[0].websites[0].title, "Amazon DE")
         dialog.deleteLater()
-        dialog = SettingsDialog(original)
+        dialog = SettingsDialog(original, website_icons=self.icons)
         dialog.websites.remove_selected()
         self.assertEqual(dialog.read_settings().websites, ())
         self.assertFalse(dialog.websites.remove.isEnabled())
         dialog.websites.add_website()
         with patch("pathscout.ui.settings.QMessageBox.warning") as warning:
-            dialog.accept()
+            dialog.save()
         warning.assert_called_once()
         self.assertEqual(dialog.result_settings, original)
         dialog.deleteLater()

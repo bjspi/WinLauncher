@@ -33,12 +33,12 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
 | 🌐 **Website keywords** | Define a title, keyword and URL in Settings → Websites. `az headphones` searches Amazon; `yt Python tutorial` searches YouTube. |
-| 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more. |
+| 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more, colored as you type; invalid values are underlined. |
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
 | ⌨️ **Keyboard first** | <kbd>Enter</kbd> opens, <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> opens a numbered result, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> shows it in its folder. |
 | 🔒 **Private** | No telemetry. File searches stay local; website searches open in your browser. Settings and the catalog stay in `%USERPROFILE%\.PathScout`. |
-| ⬆️ **Self-updating** | Running from a git checkout? PathScout notices new commits and updates with one click. |
+| ⬆️ **Release updates** | PathScout notices new releases. A git checkout updates itself with one click; pipx installs get the exact command to run. |
 
 <div align="center">
 <img src="docs/images/explorer-search.png" width="440" alt="Searching inside an Explorer folder">
@@ -60,13 +60,14 @@ to the global launcher.
 a `pathscout` command that starts without a console window:
 
 ```powershell
-pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.2.2"
+pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.3.0"
 pathscout --show
 ```
 
 The `[rust]` extra downloads the matching Rust search engine wheel from the
-GitHub release — no compiler needed. Update later by running the same command
-with the new version's tag and `--force`. `pipx uninstall pathscout` removes the
+GitHub release — no compiler needed. When a new release is out, PathScout says
+so and shows the command to install it: the same line with the new tag and
+`--force`. `pipx uninstall pathscout` removes the
 program; your settings and catalog in `%USERPROFILE%\.PathScout` stay.
 
 ### From a checkout
@@ -81,7 +82,11 @@ python -m venv .venv
 
 `[rust]` adds the fast Rust search engine (needed for `contains:`) as a prebuilt
 wheel from the matching [GitHub release](https://github.com/bjspi/PathScout/releases).
-After `git pull` to a newer version, run the install line again. Without the
+PathScout updates a checkout only to release tags, never to unreleased commits,
+because only releases ship the matching engine: **Check for updates** in the tray
+menu fast-forwards to the newest release (local changes are never overwritten),
+and the next start reinstalls the packages before loading the engine. After a
+manual `git pull`, run the install line again. Without the
 extra — or on a commit newer than the latest release — PathScout still works
 with its slower Python engine and says so in the search bar; you can also
 [build the engine yourself](#rust-search-engine).
@@ -99,6 +104,11 @@ drag them from Explorer into the list. The first scan runs in the background.
 
 Tick **Start with Windows** in the tray menu or in Settings to launch PathScout at
 sign-in. It manages only its own shortcut in your Startup folder.
+
+If you open the launcher, type nothing and switch to another window, it closes
+after 3 seconds. Change the delay or turn this off in **Settings → Search &
+indexing**. A typed query keeps the launcher open. The search bar inside Explorer
+closes as soon as you click elsewhere.
 
 In **Settings → Websites**, edit or add a keyword, title and URL. Google, Amazon,
 YouTube, Google Maps, eBay, Kleinanzeigen and IMDb are included by default.

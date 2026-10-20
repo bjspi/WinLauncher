@@ -141,6 +141,10 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertTrue(allows(anchored, r"D:\Other\Tools\xyz\a.txt"))
         self.assertFalse(allows(r"\\server\share\[!a]*", r"\\server\share\bcd\a.txt"))
         self.assertTrue(allows(r"\\server\share\[!a]*", r"\\server\share\abc\a.txt"))
+        # Like fnmatch, a reversed range matches nothing instead of breaking the scan.
+        self.assertTrue(allows("Work/[z-a]", r"D:\Work\m\a.txt"))
+        self.assertFalse(allows("Work/[!z-a]", r"D:\Work\m\a.txt"))
+        self.assertFalse(allows("Work/[]x]", r"D:\Work\]\a.txt"))
 
     def test_cancelled_scan_preserves_entire_previous_snapshot(self):
         self.file("original.txt")
@@ -681,7 +685,8 @@ class BusinessRulesTest(unittest.TestCase):
                     {self.root / "toolbox-cli", self.root / "toolbox-second"},
                 )
                 self.assertEqual(hits[2].item.path, direct_file)
-                self.assertNotIn(deep, [hit.item.path for hit in hits])
+                # Subfolder matches follow every direct entry, whatever the sort order.
+                self.assertEqual([hit.item.path for hit in hits[3:]], [deep])
         # A directory created after indexing also participates immediately.
         fresh = self.root / "new-folder"
         fresh.mkdir()
@@ -692,7 +697,7 @@ class BusinessRulesTest(unittest.TestCase):
         query = replace(parse_query("secret-document", scope=self.root), explorer=True)
         self.assertFalse(self.search.search(query, self.settings))
 
-    def test_explorer_uses_recursive_catalog_only_after_direct_names_do_not_match(self):
+    def test_explorer_lists_subfolder_matches_when_no_direct_name_matches(self):
         nested = self.file("archive/unique-target.txt")
         self.file("other.txt")
         self.scan()

@@ -6,6 +6,7 @@ use std::cell::OnceCell;
 use regex::Regex;
 
 use crate::fuzzy::fuzzy_score;
+use crate::glob;
 use crate::unicode::{isalnum, normalize};
 
 pub const EXACT_NAME_SCORE: f64 = 150.0;
@@ -25,9 +26,7 @@ pub struct Term {
 impl Term {
     pub fn new(text: String) -> Result<Self, regex::Error> {
         let pattern = if text.contains(['*', '?', '[']) {
-            Some(Regex::new(&fnmatch_rs::translate(
-                &text.replace('\\', "/"),
-            ))?)
+            Some(glob::whole_match_regex(&forward_slashes(&text))?)
         } else {
             None
         };
@@ -111,7 +110,7 @@ pub fn match_term(
     fuzzy: bool,
 ) -> Option<(f64, &'static str)> {
     if let Some(pattern) = &term.pattern {
-        if pattern.is_match(&name.normalized.replace('\\', "/")) {
+        if pattern.is_match(&forward_slashes(&name.normalized)) {
             return Some((WORD_PREFIX_SCORE, "Name wildcard"));
         }
         if let Some(path) = path {
@@ -119,7 +118,7 @@ pub fn match_term(
             if pattern.is_match(filename) {
                 return Some((WORD_PREFIX_SCORE, "Name wildcard"));
             }
-            if term.text.contains(['/', '\\']) && pattern.is_match(&path.replace('\\', "/")) {
+            if term.text.contains(['/', '\\']) && pattern.is_match(&forward_slashes(path)) {
                 return Some((PATH_CONTAINS_SCORE, "Path wildcard"));
             }
         }
@@ -153,6 +152,15 @@ pub fn match_term(
         return fuzzy_score(term, name.original).map(|score| (score, "Fuzzy match"));
     }
     None
+}
+
+/// Wildcards compare `\` as `/`, like the reference; most texts need no copy.
+fn forward_slashes(text: &str) -> Cow<'_, str> {
+    if text.contains('\\') {
+        Cow::Owned(text.replace('\\', "/"))
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 pub fn best_possible_score(term: &str, normalized_name: &str) -> f64 {

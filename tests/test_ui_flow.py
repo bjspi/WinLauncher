@@ -14,10 +14,10 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QLocale, Qt, QTimer
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import QEvent, QLocale, Qt, QTimer
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QMenu, QMessageBox
 
 from pathscout.actions import ExplorerTarget
 from pathscout.catalog import long_paths
@@ -31,6 +31,8 @@ from pathscout.ui.controller import LauncherController
 from pathscout.ui.indexing import IndexJobKind
 from pathscout.ui.settings import SettingsDialog
 from pathscout.ui.tasks import TaskCategory
+from pathscout.ui.theme import Palette
+from pathscout.ui.window import EXPLORER_RIGHT_GAP
 from pathscout.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
 
 
@@ -101,22 +103,26 @@ class UiFlowTest(unittest.TestCase):
         self.tasks.finish(TaskCategory.SEARCH)
         self.window = self.controller.window
         self.indexing = self.controller.indexing
+        # Never fetch favicons from the network in tests.
+        websites = self.controller.website_icons
+        patch.object(websites, "icon_for", return_value=websites.fallback).start()
+
+    def settings_dialog(self, settings: Settings, **options) -> SettingsDialog:
+        return SettingsDialog(settings, website_icons=self.controller.website_icons, **options)
 
     def test_website_enter_waits_for_current_query_and_keeps_local_results(self):
         site = WebsiteShortcut("az", "Amazon", "https://www.amazon.de/s?k=%s")
         self.controller.settings = replace(self.controller.settings, websites=(site,))
         local = SearchHit(CatalogItem(self.root / "az Book.txt", ItemKind.FILE), 900, "Exact name")
-        patch.object(
-            self.window.delegate.icons.websites,
-            "icon_for",
-            return_value=self.window.delegate.icons.websites.fallback,
-        ).start()
-        patch.object(self.controller.search.service, "search", return_value=[local]).start()
+        search = patch.object(self.controller.search.service, "search", return_value=[local])
+        search = search.start()
         self.window.query.setText("az old")
         self.controller.search.run()
         self.tasks.finish(TaskCategory.SEARCH)
         stale = self.window.selected_hit()
         self.window.query.setText("az C++ Book & More")
+        # The old results stay visible while the new search runs; nothing flickers.
+        self.assertEqual(self.window.selected_hit(), stale)
         with patch(
             "pathscout.ui.controller.QDesktopServices.openUrl", return_value=True
         ) as browser:
@@ -128,14 +134,29 @@ class UiFlowTest(unittest.TestCase):
                 bytes(browser.call_args.args[0].toEncoded()).decode(),
                 "https://www.amazon.de/s?k=C%2B%2B%20Book%20%26%20More",
             )
+        # The catalog search is the typed text itself, so its history and highlighting work.
+        self.assertEqual(search.call_args.args[0], parse_query("az C++ Book & More"))
         first = self.window.results.item(0).data(Qt.ItemDataRole.UserRole)
-        self.assertIsInstance(first.item, WebsiteTarget)
-        self.assertEqual(first.item.name, "Search Amazon for C++ Book & More")
-        self.assertEqual(self.window.results.item(1).data(Qt.ItemDataRole.UserRole), local)
+        self.assertIsInstance(first.hit, WebsiteTarget)
+        self.assertEqual(first.name, "Search Amazon for C++ Book & More")
+        self.assertIsNone(first.file_hit)
+        self.assertEqual(self.window.results.item(1).data(Qt.ItemDataRole.UserRole).hit, local)
         self.launch.assert_not_called()
+        self.window.show()
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.window.results.setCurrentRow(1)
+        self.window.open_selected()
+        self.tasks.finish(TaskCategory.ACTION)
+        self.launch.assert_called_once()
+        self.assertEqual(
+            self.launch.call_args.args[1], parse_query("az C++ Book & More").history_key
+        )
+        self.window.show()
         self.window.results.setCurrentRow(0)
-        self.window.copy_path()
+        self.window.copy_target()
         self.assertEqual(self.app.clipboard().text(), first.target)
+        self.assertEqual(self.window.status.text(), "URL copied to clipboard")
         self.window.reveal_selected()
         self.window.favorite_selected()
         self.reveal.assert_not_called()
@@ -149,7 +170,7 @@ class UiFlowTest(unittest.TestCase):
         self.assertIsInstance(query, WebsiteQuery)
         hits, _ = self.controller.search._work(query, self.controller.settings, threading.Event())
         self.assertEqual(len(hits), 1)
-        self.assertIn("%22Unfinished%20type%3Aunknown", hits[0].target)
+        self.assertIn("%22Unfinished%20type%3Aunknown", hits[0].url)
         self.window.query.setText("yt tutorial")
         self.window.kind = ItemKind.FILE
         self.assertNotIsInstance(self.controller.search.current_query(), WebsiteQuery)
@@ -158,7 +179,7 @@ class UiFlowTest(unittest.TestCase):
         self.assertNotIsInstance(self.controller.search.current_query(), WebsiteQuery)
 
     def test_website_browser_failure_is_reported(self):
-        hit = SearchHit(WebsiteTarget("Example", "ex", "https://example.org/"), 0, "Website")
+        hit = WebsiteTarget("Example", "ex", "https://example.org/")
         with (
             patch("pathscout.ui.controller.QDesktopServices.openUrl", return_value=False),
             patch("pathscout.ui.controller.QMessageBox.warning") as warning,
@@ -187,12 +208,12 @@ class UiFlowTest(unittest.TestCase):
                     self.window.set_results([hit], 1, query=query)
                     self.assertFalse(self.window.grab().isNull())
                 item = self.window.results.item(0)
-                metadata = item.data(Qt.ItemDataRole.UserRole + 1)
+                metadata = item.data(Qt.ItemDataRole.UserRole).metadata
                 self.assertIn(QLocale().formattedDataSize(1536), metadata)
                 self.assertIn("Modified 2026-02-15 12:34", metadata)
                 self.assertIn(metadata, item.text())
         self.window.set_results([hit], 1, query=parse_query("report"))
-        self.assertFalse(self.window.results.item(0).data(Qt.ItemDataRole.UserRole + 1))
+        self.assertFalse(self.window.results.item(0).data(Qt.ItemDataRole.UserRole).metadata)
 
     def test_scan_requests_coalesce_without_cancelling_active_scan(self):
         child = self.root / "nested"
@@ -286,7 +307,8 @@ class UiFlowTest(unittest.TestCase):
         self.tasks.finish(TaskCategory.SEARCH)
         self.assertEqual(self.window.selected_hit().item.path, first)
         self.window.query.setText("second")
-        self.assertEqual(self.window.results.count(), 0)
+        # The old result stays visible, but Enter waits for the typed query's results.
+        self.assertEqual(self.window.selected_hit().item.path, first)
         self.window.open_selected()
         self.assertTrue(self.controller.search.open_pending)
         self.tasks.finish(TaskCategory.SEARCH)
@@ -397,16 +419,16 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(matched_positions("Straße", ("xyz",)), set())
 
     def test_unknown_advanced_rule_key_is_rejected(self):
-        dialog = SettingsDialog(self.controller.settings)
+        dialog = self.settings_dialog(self.controller.settings)
         dialog.rule_json.setPlainText('{"extension_priority": []}')
         with patch.object(QMessageBox, "warning") as warning:
-            dialog.accept()
+            dialog.save()
         warning.assert_called_once()
         self.assertEqual(dialog.result(), 0)
         dialog.deleteLater()
 
     def test_folder_priority_errors_name_the_line(self):
-        dialog = SettingsDialog(self.controller.settings)
+        dialog = self.settings_dialog(self.controller.settings)
         dialog.priorities.setPlainText(f"10 | {self.root}\nmany | {self.root}")
         with self.assertRaisesRegex(ValueError, "line 2"):
             dialog.read_settings()
@@ -589,7 +611,9 @@ class UiFlowTest(unittest.TestCase):
         window.query.setText("1+1")
         self.controller.search.run()
         self.tasks.finish(TaskCategory.SEARCH)
-        self.assertEqual(window.results.item(0).data(Qt.ItemDataRole.UserRole).item.path, sum_file)
+        self.assertEqual(
+            window.results.item(0).data(Qt.ItemDataRole.UserRole).hit.item.path, sum_file
+        )
         self.assertTrue(window.calculation_selected)
         self.assertIsNone(window.selected_hit())
         QTest.keyClick(window.query, Qt.Key.Key_Down)
@@ -602,7 +626,7 @@ class UiFlowTest(unittest.TestCase):
         self.assertFalse(window.calculation_selected)
 
     def test_number_fields_show_values_and_clamp_typed_numbers(self):
-        dialog = SettingsDialog(self.controller.settings)
+        dialog = self.settings_dialog(self.controller.settings)
         dialog.show()
         QApplication.processEvents()
         field = dialog.content_threads
@@ -624,13 +648,13 @@ class UiFlowTest(unittest.TestCase):
         indexed = self.tasks.count(TaskCategory.INDEX)
         for threads in (1, 8):
             with self.subTest(threads=threads):
-                dialog = SettingsDialog(c.settings, save=c.apply_settings)
+                dialog = self.settings_dialog(c.settings, save=c.apply_settings)
                 dialog.show()
                 dialog.content_threads.setValue(threads)
                 c.search.run()
                 previous_cancel = c.search.running
                 with patch.object(c, "_start_monitor") as monitor:
-                    dialog.accept()
+                    dialog.save()
                 self.assertTrue(dialog.isVisible())
                 self.assertEqual(c.settings_file.load().content_search_threads, threads)
                 self.assertTrue(previous_cancel.is_set())
@@ -687,6 +711,68 @@ class UiFlowTest(unittest.TestCase):
         self.assertIsNone(self.window.explorer_view)
         self.assertFalse(self.controller.search.current_query().explorer)
 
+    def test_explorer_bar_docks_bottom_right_and_explorer_follows_the_selection(self):
+        self.window.hide()
+        for name in ("toolbox-a", "toolbox-b"):
+            (self.root / name).mkdir()
+        select = patch.object(self.controller.actions, "select_in_explorer").start()
+        intent = ExplorerTyping("toolbox", self.root, (0, 0, 1000, 800), (11, 22))
+        self.controller._search_from_explorer(intent)
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        area = self.window.screen().availableGeometry()
+        self.assertEqual(
+            self.window.geometry().right(), min(999 - EXPLORER_RIGHT_GAP, area.right())
+        )
+        explorer = ExplorerTarget(11, 22, self.root)
+        # Explorer jumps to the best direct entry, replacing its own type-ahead pick.
+        self.assertTrue(self.controller.explorer_select.isActive())
+        self.controller.explorer_select.timeout.emit()
+        self.tasks.finish(TaskCategory.ACTION)
+        select.assert_called_once_with(self.root / "toolbox-a", explorer)
+        QTest.keyClick(self.window.query, Qt.Key.Key_Down)
+        self.assertTrue(self.controller.explorer_select.isActive())
+        self.controller.explorer_select.timeout.emit()
+        self.tasks.finish(TaskCategory.ACTION)
+        select.assert_called_with(self.root / "toolbox-b", explorer)
+        self.window.hide()
+        self.assertFalse(self.controller.explorer_select.isActive())
+
+    def test_subfolder_matches_follow_a_separator_and_never_move_explorer_alone(self):
+        self.window.hide()
+        direct = self.root / "toolbox-a"
+        nested = self.root / "archive" / "toolbox-old.txt"
+        direct.mkdir()
+        nested.parent.mkdir()
+        nested.touch()
+        self.indexing.request_full()
+        self.tasks.finish(TaskCategory.INDEX)
+        select = patch.object(self.controller.actions, "select_in_explorer").start()
+        intent = ExplorerTyping("toolbox", self.root, (0, 0, 1000, 800), (11, 22))
+        self.controller._search_from_explorer(intent)
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        rows = [self.window.results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(2)]
+        self.assertEqual([row.hit.item.path for row in rows], [direct, nested])
+        self.assertEqual([row.direct for row in rows], [True, False])
+        self.assertEqual([row.starts_subfolders for row in rows], [False, True])
+        self.assertTrue(rows[1].accessible_text.startswith("In subfolders: "))
+        self.assertFalse(self.window.grab().isNull())  # Paints the separator.
+        # Without a direct match, new results leave Explorer's selection alone.
+        self.controller.explorer_select.stop()
+        self.window.query.setText("toolbox-old.txt")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.assertFalse(self.controller.explorer_select.isActive())
+        select.assert_not_called()
+
+    def test_explorer_target_selects_the_entry_that_contains_a_result(self):
+        explorer = ExplorerTarget(11, 22, self.root)
+        self.assertEqual(explorer.entry_for(self.root / "a" / "b" / "c.txt"), self.root / "a")
+        self.assertEqual(explorer.entry_for(self.root / "a.txt"), self.root / "a.txt")
+        self.assertIsNone(explorer.entry_for(self.root))
+        self.assertIsNone(explorer.entry_for(self.root.parent / "elsewhere.txt"))
+
     def test_clearing_explorer_scope_restores_global_launcher(self):
         self.window.present(scope=self.root, near=(0, 0, 1000, 800), explorer_view=(11, 22))
         self.window.set_scope(None)
@@ -696,29 +782,127 @@ class UiFlowTest(unittest.TestCase):
 
     def test_settings_save_failure_keeps_dialog_and_edits(self):
         save = Mock(side_effect=OSError("Disk unavailable"))
-        dialog = SettingsDialog(self.controller.settings, save=save)
+        dialog = self.settings_dialog(self.controller.settings, save=save)
         dialog.show()
         dialog.limit.setValue(25)
         with patch.object(QMessageBox, "warning") as warning:
-            dialog.accept()
+            dialog.save()
         warning.assert_called_once()
         self.assertTrue(dialog.isVisible())
         self.assertEqual(dialog.limit.value(), 25)
         save.side_effect = None
-        dialog.accept()
+        dialog.save()
         self.assertTrue(dialog.isVisible())
         self.assertEqual(dialog.result_settings.max_results, 25)
         dialog.deleteLater()
 
+    def test_query_filters_are_colored_without_changing_the_text(self):
+        def shows_filter_color() -> bool:
+            image = self.window.query.grab().toImage()
+            filter_background = QColor(Palette.FILTER_BACKGROUND).rgb()
+            return any(
+                image.pixel(x, y) == filter_background
+                for x in range(image.width())
+                for y in range(image.height())
+            )
+
+        self.window.query.clear()
+        QTest.keyClicks(self.window.query, "report")
+        self.assertFalse(shows_filter_color())
+        QTest.keyClicks(self.window.query, " size:>1kb")
+        self.assertTrue(shows_filter_color())
+        self.window.query.setSelection(0, 6)
+        self.window.query_syntax.refresh()
+        self.assertEqual(self.window.query.text(), "report size:>1kb")
+        self.assertEqual(self.window.query.selectedText(), "report")
+        self.assertTrue(self.window.query.isUndoAvailable())
+        self.window.present(text="report", scope=self.root)
+        self.assertFalse(shows_filter_color())
+        self.window.present(text="ext:txt", scope=self.root)
+        self.assertTrue(shows_filter_color())
+
+    def test_invalid_filter_is_marked_only_after_the_cursor_leaves_it(self):
+        def shows_invalid_color() -> bool:
+            image = self.window.query.grab().toImage()
+            invalid = QColor(Palette.INVALID).rgb()
+            return any(
+                image.pixel(x, y) == invalid
+                for x in range(image.width())
+                for y in range(image.height())
+            )
+
+        self.window.query.clear()
+        QTest.keyClicks(self.window.query, "report after:2026-1")
+        self.assertFalse(shows_invalid_color())
+        self.window.query.setCursorPosition(0)
+        self.assertTrue(shows_invalid_color())
+        self.window.query.end(False)
+        QTest.keyClicks(self.window.query, "2")
+        self.window.query.setCursorPosition(0)
+        self.assertFalse(shows_invalid_color())
+
+    def test_empty_launcher_hides_after_focus_left_pathscout(self):
+        def lose_focus() -> None:
+            QApplication.sendEvent(self.window, QEvent(QEvent.Type.WindowDeactivate))
+
+        with patch.object(QApplication, "activeWindow", return_value=None):
+            lose_focus()
+            self.assertTrue(self.window.auto_hide.isActive())
+            self.assertEqual(self.window.auto_hide.interval(), 3000)
+            QApplication.sendEvent(self.window, QEvent(QEvent.Type.WindowActivate))
+            self.assertFalse(self.window.auto_hide.isActive())
+            self.window.query.setText("report")
+            lose_focus()
+            self.window.auto_hide.timeout.emit()
+            self.assertTrue(self.window.isVisible())
+            self.window.query.clear()
+            lose_focus()
+            self.window.auto_hide.timeout.emit()
+            self.assertFalse(self.window.isVisible())
+        self.window.show()
+        with patch.object(QApplication, "activeWindow", return_value=self.window):
+            lose_focus()
+            self.window.auto_hide.timeout.emit()
+            self.assertTrue(self.window.isVisible())
+        settings = self.controller.settings
+        self.controller.apply_settings(replace(settings, auto_hide=False, auto_hide_seconds=7))
+        self.assertEqual(self.window.auto_hide_ms, 7000)
+        lose_focus()
+        self.assertFalse(self.window.auto_hide.isActive())
+        # The Explorer bar closes right away, even with the option off and text typed.
+        self.window.present(text="report", scope=self.root, near=(0, 0, 800, 600))
+        self.assertTrue(self.window.explorer_mode)
+        with patch.object(QApplication, "activeWindow", return_value=None):
+            lose_focus()
+            self.assertTrue(self.window.auto_hide.isActive())
+            self.assertEqual(self.window.auto_hide.interval(), 0)
+            self.app.processEvents()
+        self.assertFalse(self.window.isVisible())
+
+    def test_auto_hide_settings_are_read_from_the_dialog(self):
+        dialog = self.settings_dialog(self.controller.settings)
+        self.assertTrue(dialog.auto_hide_delay.isEnabled())
+        dialog.auto_hide.setChecked(False)
+        dialog.auto_hide_delay.setValue(10)
+        self.assertFalse(dialog.auto_hide_delay.isEnabled())
+        settings = dialog.read_settings()
+        self.assertEqual((settings.auto_hide, settings.auto_hide_seconds), (False, 10))
+        with self.assertRaisesRegex(ValueError, "Auto-close"):
+            Settings(roots=(), auto_hide_seconds=0)
+        dialog.deleteLater()
+
     def test_settings_can_be_saved_repeatedly_without_closing(self):
-        dialog = SettingsDialog(self.controller.settings, save=self.controller.apply_settings)
+        dialog = self.settings_dialog(self.controller.settings, save=self.controller.apply_settings)
         dialog.show()
+        save_button = dialog.buttons.button(QDialogButtonBox.StandardButton.Save)
         for limit in (25, 30):
             dialog.limit.setValue(limit)
-            dialog.accept()
+            save_button.click()
             self.assertTrue(dialog.isVisible())
             self.assertEqual(self.controller.settings_file.load().max_results, limit)
             self.assertEqual(dialog.original.max_results, limit)
+            self.assertEqual(dialog.saved_message.text(), "Settings saved.")
+            self.assertTrue(dialog.saved_message_timer.isActive())
         dialog.limit.setValue(40)
         dialog.reject()
         self.assertFalse(dialog.isVisible())
@@ -782,7 +966,9 @@ class UiFlowTest(unittest.TestCase):
         c.tray.autostart.trigger()
         startup.set_enabled.assert_called_once_with(True)
         self.assertTrue(c.tray.autostart.isChecked())
-        dialog = SettingsDialog(c.settings, startup_enabled=True, set_startup=c._set_autostart)
+        dialog = self.settings_dialog(
+            c.settings, startup_enabled=True, set_startup=c._set_autostart
+        )
         startup.set_enabled.side_effect = OSError("Access denied")
         with patch.object(QMessageBox, "warning") as warning:
             dialog.autostart.click()

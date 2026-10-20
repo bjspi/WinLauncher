@@ -47,8 +47,10 @@ flowchart TD
 | `settings.py` | Validated settings value object and atomic JSON file |
 | `actions.py` | Open, reveal and favorite use cases; only successful opens are learned |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
-| `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, git updater, worker delivery |
+| `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
 | `platform/git.py` | Read-only git queries for self-updating a source checkout |
+| `releases.py` | Release tags, installation kinds and their update commands |
+| `install.py` | The reinstall that finishes a checkout update at the next start |
 | `__main__.py` | CLI, logging, crash logging, per-data-directory single instance and restart handover |
 
 `catalog/` and `search/` do not import Qt or Win32. Their behavior is tested with

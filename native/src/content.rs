@@ -7,6 +7,7 @@ use grep_matcher::LineTerminator;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
 
+use crate::glob;
 use crate::query::{Candidate, Kind};
 use crate::CancelFlag;
 
@@ -101,17 +102,13 @@ pub struct ContentFilter {
 
 impl ContentFilter {
     pub fn new(text: &str) -> Result<Self, grep_regex::Error> {
-        let pattern = fnmatch_rs::translate(text);
-        // Content patterns match substrings within lines, not a whole filename or stream.
-        let pattern = pattern
-            .strip_prefix(r"(?s)\A")
-            .and_then(|body| body.strip_suffix(r"\z"))
-            .expect("fnmatch translation has documented whole-string anchors");
+        // Unanchored: content patterns match substrings within lines, not whole files.
+        let pattern = glob::translate(text);
         Ok(Self {
             matcher: RegexMatcherBuilder::new()
                 .case_insensitive(true)
                 .crlf(true)
-                .build(pattern)?,
+                .build(&pattern)?,
             searcher: SearcherBuilder::new()
                 .line_terminator(LineTerminator::crlf())
                 .binary_detection(BinaryDetection::quit(b'\0'))
@@ -230,6 +227,8 @@ mod tests {
             ("gsk_?", "gsk_\r\nend", false),
             ("[!x]", "\n", false),
             ("[z-a]", "z", false),
+            ("x[ab[]", "see X[ here", true),
+            ("[!]-a]", "-", true),
             (r"\z", r"value=\z", true),
         ] {
             let mut filter = ContentFilter::new(pattern).unwrap();

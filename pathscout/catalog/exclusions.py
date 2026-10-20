@@ -140,12 +140,47 @@ def _segment_regex(segment: str) -> str:
             regex.append("[^/]*")
         elif char == "?":
             regex.append("[^/]")
-        elif char == "[" and (end := segment.find("]", index + 1)) > index:
-            body = segment[index:end]
+        elif char == "[" and (end := _set_end(segment, index)) is not None:
+            regex.append(_set_regex(segment[index:end]))
             index = end + 1
-            negated = body.startswith("!")
-            body = re.escape(body[1:] if negated else body).replace("\\-", "-")
-            regex.append(f"[^/{body}]" if negated else f"[{body}]")
         else:
             regex.append(re.escape(char))
     return "".join(regex)
+
+
+def _set_end(segment: str, start: int) -> int | None:
+    """Index of the `]` closing a set that starts at `start`, as fnmatch reads it.
+
+    A `]` directly after `[` or `[!` is a member, not the end.
+    """
+    index = start
+    if segment.startswith("!", index):
+        index += 1
+    if segment.startswith("]", index):
+        index += 1
+    end = segment.find("]", index)
+    return end if end >= 0 else None
+
+
+def _set_regex(body: str) -> str:
+    """A regex class for an fnmatch set such as `a-z`, `!0-9` or `]x`.
+
+    Like fnmatch, reversed ranges such as `z-a` match nothing instead of failing,
+    and `-` at either end is literal. A negated set never matches `/`.
+    """
+    negated = body.startswith("!")
+    if negated:
+        body = body[1:]
+    members, index = [], 0
+    while index < len(body):
+        if index + 2 < len(body) and body[index + 1] == "-":
+            low, high = body[index], body[index + 2]
+            if low <= high:
+                members.append(f"{re.escape(low)}-{re.escape(high)}")
+            index += 3
+        else:
+            members.append(re.escape(body[index]))
+            index += 1
+    if negated:
+        return f"[^/{''.join(members)}]"
+    return f"[{''.join(members)}]" if members else "(?!)"

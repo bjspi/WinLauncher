@@ -314,10 +314,18 @@ shortcut that opens that row. Messages (no matches, invalid query, failures),
 the result count and persistent problems appear below the results only when
 present. The bar can be dragged by its empty areas.
 
-Typing in Explorer opens a smaller one-line variant docked near the bottom of that
-Explorer window; it grows upwards and shows each result's subfolder relative to the
-searched folder. Explorer completion shows matching direct folders and files,
-with recursive results only as a fallback. A regular `in:` query lists direct
+Typing in Explorer opens a smaller one-line variant docked to the bottom right of
+that Explorer window, over the date and type columns rather than the names; it
+grows upwards and shows each result's subfolder relative to the searched folder.
+When the best result is a direct entry, Explorer selects it and scrolls it into
+view without taking the keyboard focus, replacing whatever Explorer's own
+type-ahead picked. Moving through the results with the arrow keys selects the same
+entry in Explorer, or the subfolder that contains a deeper match. The bar closes as
+soon as another program comes to the foreground: PathScout watches foreground
+changes through Windows itself, because Qt misses the activation of a window that
+PathScout forced to the front. Explorer completion shows matching direct folders and files
+first, then matches from subfolders below a separator line; subfolder matches
+always rank below every direct entry. A regular `in:` query lists direct
 entries before deeper matches; relevance orders each group, and priority classes
 still come first.
 
@@ -348,23 +356,33 @@ status, Clear search history, Check for updates, About, Restart and Quit. A sing
 click opens the launcher. Restart starts a replacement process that waits for the
 running one to release its instance lock, so two keyboard hooks never run at once.
 
-When PathScout runs from a git checkout and git is installed, it fetches in the
-background shortly after start and every 30 minutes and announces new upstream
-commits. **Check for updates** (or **Install update**) runs `git pull --ff-only`,
-which refuses diverged or modified checkouts instead of merging, and offers a
-restart after a real update. Git never prompts for credentials; a stalled git is
-stopped after two minutes. Installed packages are updated with pip.
+Updates follow release tags (`vX.Y.Z`), never unreleased commits, because only a
+release ships the matching prebuilt Rust engine. When git is installed, PathScout
+asks the remote for its tags (`git ls-remote`) shortly after start and every 30
+minutes and announces a release newer than its own version. A git checkout asks
+its `origin`; an installed package asks the project repository.
+
+**Check for updates** (or **Install update**) in a checkout fetches the tags and
+runs `git merge --ff-only` to the release, which refuses diverged or modified
+checkouts instead of merging and leaves a checkout already past the release where
+it is. After a real update it marks a reinstall as pending and offers a restart;
+the next start runs `pip install -e ".[rust]"` before anything loads the old
+engine, whose `.pyd` Windows locks while it runs. For pipx and other installed
+packages, PathScout shows the exact install command to copy instead of replacing
+its own running environment. Git never prompts for credentials; a stalled git is
+stopped after two minutes.
 
 Search folders and excluded directories accept folders dragged from Explorer,
 several at once; dropped files are ignored and duplicates are skipped.
 
-Explorer typing uses a 440-pixel-wide surface with 28-pixel one-line rows, 16-pixel
+Explorer typing uses a 396-pixel-wide surface with 25-pixel one-line rows, 16-pixel
 icons and up to six visible results. The search enumerates only the current
 directory on its background worker and matches entry names, not the common parent
 path. Direct folder names participate even when index exclusions or marker files
 exclude their contents; files still obey exclusions. Folders precede files before
-the result limit. The catalog is consulted recursively only when no direct entry
-matches, with its normal exclusions; it then matches the path below the searched
+the result limit. Subfolder matches come from the catalog,
+with its normal exclusions, and leave out the catalog's copies of direct entries;
+they match the path below the searched
 folder (so `invoices 2024` finds files inside such a subfolder, while the searched
 folder's own name matches nothing). The live listing writes nothing to the catalog.
 Content filters keep their Rust requirement and use the same bounded content workers.

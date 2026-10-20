@@ -1,4 +1,4 @@
-"""Checks for folder pickers, drag and drop, restart and the git self-updater."""
+"""Checks for folder pickers, drag and drop, restart and the release updater."""
 
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from pathscout.releases import Release
 from pathscout.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from pathscout.ui.settings import PathList, dropped_folders
-from pathscout.ui.updater import GitUpdater
+from pathscout.ui.updater import ReleaseUpdater
 
 
 class FolderFeaturesTest(unittest.TestCase):
@@ -62,7 +63,7 @@ class FolderFeaturesTest(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("git"), "git is required")
-class GitUpdaterTest(unittest.TestCase):
+class ReleaseUpdaterTest(unittest.TestCase):
     """A real local git remote; nothing leaves this computer."""
 
     @classmethod
@@ -103,31 +104,61 @@ class GitUpdaterTest(unittest.TestCase):
             QTest.qWait(50)
         self.fail("Timed out waiting for git")
 
-    def test_detects_and_pulls_an_upstream_update(self):
-        self.commit(self.author, "second")
-        self.git(self.author, "push", "origin", "HEAD:main")
-        updater = GitUpdater()
+    def updater(self) -> ReleaseUpdater:
+        updater = ReleaseUpdater()
         updater.root = self.checkout
-        updater._fetch_in_background()
-        self.assertEqual(updater._fetch.processEnvironment().value("GCM_INTERACTIVE"), "Never")
+        updater.current = Release(1, 0, 0)
+        self.addCleanup(updater.stop)
+        return updater
+
+    def release(self, text: str, tag: str) -> None:
+        self.commit(self.author, text)
+        self.git(self.author, "tag", tag)
+        self.git(self.author, "push", "origin", "HEAD:main", tag)
+
+    def test_detects_and_applies_a_newer_release(self):
+        self.release("second", "v1.1.0")
+        self.commit(self.author, "unreleased")
+        self.git(self.author, "push", "origin", "HEAD:main")
+        updater = self.updater()
+        updater._check_in_background()
+        self.assertEqual(updater._check.processEnvironment().value("GCM_INTERACTIVE"), "Never")
         self.wait_for(lambda: updater.available)
+        self.assertEqual(updater.latest, Release(1, 1, 0))
         results = []
-        updater.pull_finished.connect(lambda *result: results.append(result))
-        updater.pull()
+        updater.update_finished.connect(lambda *result: results.append(result))
+        updater.apply()
         self.wait_for(lambda: results)
         succeeded, moved, _output = results[0]
         self.assertTrue(succeeded and moved)
         self.assertFalse(updater.available)
+        # The release, not the newer unreleased commit.
         self.assertEqual((self.checkout / "file.txt").read_text(), "second")
 
-    def test_pull_without_new_commits_reports_up_to_date(self):
-        updater = GitUpdater()
-        updater.root = self.checkout
+    def test_unreleased_commits_and_older_tags_are_no_update(self):
+        self.release("old", "v0.9.0")
+        self.commit(self.author, "unreleased")
+        self.git(self.author, "push", "origin", "HEAD:main")
+        updater = self.updater()
+        checks = []
+        updater.checked.connect(checks.append)
+        updater.check_now()
+        self.wait_for(lambda: checks)
+        self.assertEqual(checks, [True])
+        self.assertFalse(updater.available)
+
+    def test_checkout_past_the_release_stays_where_it_is(self):
+        self.release("second", "v1.1.0")
+        self.git(self.checkout, "pull", "--ff-only")
+        self.commit(self.checkout, "local work")
+        updater = self.updater()
+        updater.latest = Release(1, 1, 0)
         results = []
-        updater.pull_finished.connect(lambda *result: results.append(result))
-        updater.pull()
+        updater.update_finished.connect(lambda *result: results.append(result))
+        updater.apply()
         self.wait_for(lambda: results)
         self.assertEqual(results[0][:2], (True, False))
+        self.assertEqual((self.checkout / "file.txt").read_text(), "local work")
 
 
 if __name__ == "__main__":

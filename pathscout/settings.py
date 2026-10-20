@@ -22,6 +22,8 @@ from pathscout.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
 DEFAULT_DOUBLE_CTRL_MS = 350
 DOUBLE_CTRL_RANGE_MS = (150, 800)
+DEFAULT_AUTO_HIDE_SECONDS = 3
+AUTO_HIDE_RANGE_SECONDS = (1, 60)
 RESCAN_RANGE_SECONDS = (30, 86400)
 RESULT_LIMIT_RANGE = (10, 200)
 DEFAULT_CONTENT_SEARCH_THREADS = 4
@@ -125,6 +127,9 @@ class Settings:
     index_apps: bool = True
     explorer_typing: bool = True
     double_ctrl_ms: int = DEFAULT_DOUBLE_CTRL_MS
+    # Hide the launcher when it lost focus with nothing typed.
+    auto_hide: bool = True
+    auto_hide_seconds: int = DEFAULT_AUTO_HIDE_SECONDS
     rescan_seconds: int = 300
     max_results: int = 60
     content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS
@@ -135,9 +140,7 @@ class Settings:
         self._validate_paths()
         self._validate_markers()
         self._validate_priority_rules()
-        keywords = [normalize(site.keyword) for site in self.websites]
-        if len(set(keywords)) != len(keywords):
-            raise ValueError("Website keywords must be unique (ignoring letter case).")
+        self._validate_websites()
 
     @property
     def indexing_key(self) -> tuple:
@@ -186,6 +189,11 @@ class Settings:
             "Double-Ctrl interval must be between {low} and {high} ms.",
         )
         _require_range(
+            self.auto_hide_seconds,
+            AUTO_HIDE_RANGE_SECONDS,
+            "Auto-close delay must be between {low} and {high} seconds.",
+        )
+        _require_range(
             self.rescan_seconds,
             RESCAN_RANGE_SECONDS,
             "Scan interval must be between {low} and {high} seconds.",
@@ -204,6 +212,17 @@ class Settings:
         for marker in self.marker_files:
             if not marker or marker in (".", "..") or any(c in marker for c in "/\\:*?"):
                 raise ValueError("Markers must be simple file names.")
+
+    def _validate_websites(self) -> None:
+        keywords = set()
+        for site in self.websites:
+            keyword = normalize(site.keyword)
+            if keyword in keywords:
+                raise ValueError(
+                    f"The website keyword {site.keyword!r} is used twice; "
+                    "keywords must differ in more than letter case."
+                )
+            keywords.add(keyword)
 
     def _validate_priority_rules(self) -> None:
         for rule in self._all_priority_rules():

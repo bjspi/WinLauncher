@@ -5,18 +5,20 @@ from __future__ import annotations
 import importlib
 import itertools
 import os
+import random
 import tempfile
 import threading
 import time
 import unicodedata
 import unittest
 from dataclasses import replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
 from pathscout.catalog.exclusions import ExclusionPolicy
-from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind
+from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind, normalize
 from pathscout.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
@@ -27,6 +29,7 @@ from pathscout.catalog.priority import (
 from pathscout.catalog.store import CatalogStore
 from pathscout.search import native_engine
 from pathscout.search.candidates import Candidate, candidate_from_row, candidate_sql
+from pathscout.search.matching import is_wildcard
 from pathscout.search.native_engine import NativeAvailability, priority_spec, query_spec
 from pathscout.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
 from pathscout.search.query_parser import parse_query
@@ -138,6 +141,71 @@ QUERY_TEXTS = (
     "ab",
     "aab",
 )
+# fnmatch sets that Rust's regex syntax reads differently unless every member is
+# escaped: `[` inside a set, `]` starting a range, reversed and edge ranges,
+# set operators, unclosed or empty sets and multibyte members.
+WILDCARD_SET_PATTERNS = (
+    "[a[]",
+    "[!![]",
+    "x[ab[]",
+    "[]-a]",
+    "[!]-a]",
+    "[z-a]",
+    "[!z-a]",
+    "[az-a]",
+    "[-a]",
+    "[a-]",
+    "[--a]",
+    "[a-b-c]",
+    "[!]",
+    "[]",
+    "[ab",
+    "[^a]",
+    "[&&a]",
+    "[a~~b]",
+    "[a||b]",
+    "[é]*",
+    "[!é]*",
+    "[é-ë]*",
+    "*[🙂]",
+    "[!🙂]?",
+    "[🙂-🙃]*",
+)
+WILDCARD_SET_NAMES = (
+    "[",
+    "a",
+    "b",
+    "c",
+    "x",
+    "z",
+    "!",
+    "-",
+    "^",
+    "_",
+    "]",
+    "&",
+    "~",
+    "|",
+    "x[",
+    "xa",
+    "[!]",
+    "[]",
+    "[ab",
+    "é",
+    "ê.txt",
+    "ë",
+    "🙂",
+    "🙃x",
+    "a🙂",
+)
+# The randomized differential test: deterministic, and small enough to run quickly.
+WILDCARD_FUZZ_SEED = 20261020
+WILDCARD_FUZZ_PATTERNS = 300
+WILDCARD_FUZZ_NAMES = 40
+WILDCARD_FUZZ_MAX_LENGTH = 6
+WILDCARD_PATTERN_ALPHABET = "ab-]![*?^&é🙂"
+WILDCARD_NAME_ALPHABET = "ab-]![^&é🙂"
+WILDCARD_LIMIT = 200
 
 
 def corpus(root: Path, *, unicode: bool) -> list[CatalogItem]:
@@ -505,6 +573,44 @@ class NativeParityTest(unittest.TestCase):
                 )
                 self.assertEqual(expected, actual)
                 self.assertIn("High search priority", expected[0][3])
+
+    def assert_wildcard_parity(self, pattern, names):
+        """Native and Python rank `names` alike and keep exactly fnmatch's matches."""
+        query = SearchQuery(terms=(normalize(pattern),))
+        rows = [row_for(CatalogItem(self.root / name, ItemKind.FILE)) for name in names]
+        expected = python_rows(rows, query, PriorityPolicy(), WILDCARD_LIMIT, lambda *_: True)
+        actual = NATIVE.rank_rows(
+            query_spec(query, Ranker(query, now=NOW), WILDCARD_LIMIT),
+            priority_spec(PriorityPolicy()),
+            rows,
+            lambda *_: True,
+            NATIVE.CancelFlag(),
+        )
+        self.assertEqual(expected, actual)
+        matched = [
+            index
+            for index, name in enumerate(names)
+            if fnmatchcase(normalize(name), normalize(pattern))
+        ]
+        self.assertEqual(sorted(index for index, *_ in actual), matched)
+
+    def test_wildcard_sets_match_python_fnmatch(self):
+        for pattern in WILDCARD_SET_PATTERNS:
+            with self.subTest(pattern=pattern):
+                self.assert_wildcard_parity(pattern, WILDCARD_SET_NAMES)
+
+    def test_random_wildcards_match_python_fnmatch(self):
+        generator = random.Random(WILDCARD_FUZZ_SEED)
+
+        def text(alphabet):
+            length = generator.randint(1, WILDCARD_FUZZ_MAX_LENGTH)
+            return "".join(generator.choices(alphabet, k=length))
+
+        patterns = (text(WILDCARD_PATTERN_ALPHABET) for _ in itertools.count())
+        for pattern in itertools.islice(filter(is_wildcard, patterns), WILDCARD_FUZZ_PATTERNS):
+            names = sorted({text(WILDCARD_NAME_ALPHABET) for _ in range(WILDCARD_FUZZ_NAMES)})
+            with self.subTest(pattern=pattern):
+                self.assert_wildcard_parity(pattern, names)
 
     def test_invalid_native_size_bounds_are_rejected(self):
         spec = query_spec(parse_query("report"), Ranker(parse_query("report")), 10)

@@ -20,12 +20,19 @@ from contextlib import closing
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile
+from PySide6.QtCore import QEventLoop, QLockFile, QProcess, QTimer
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog, QSystemTrayIcon
 
 from pathscout import __version__
 from pathscout.catalog.model import path_key
+from pathscout.install import (
+    REINSTALL_TIMEOUT_MS,
+    reinstall_arguments,
+    reinstall_command,
+    take_pending_reinstall,
+)
+from pathscout.platform.git import checkout_root
 from pathscout.ui.controller import LauncherController
 from pathscout.ui.theme import STYLESHEET, app_icon
 
@@ -163,6 +170,35 @@ def _log_uncaught_exceptions() -> None:
     threading.excepthook = log_thread_exception
 
 
+def _finish_update(root: Path) -> None:
+    """Reinstall the updated checkout before anything loads the old Rust engine."""
+    progress = QProgressDialog("Finishing the PathScout update…", None, 0, 0)
+    progress.setWindowTitle("PathScout")
+    progress.setMinimumDuration(0)
+    progress.show()
+    process = QProcess()
+    process.setWorkingDirectory(str(root))
+    process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+    waiting = QEventLoop()
+    process.finished.connect(waiting.quit)
+    process.errorOccurred.connect(waiting.quit)  # A failed start emits no `finished`.
+    QTimer.singleShot(REINSTALL_TIMEOUT_MS, process.kill)
+    process.start(sys.executable, reinstall_arguments())
+    waiting.exec()
+    progress.close()
+    output = bytes(process.readAll().data()).decode("utf-8", errors="replace").strip()
+    succeeded = process.exitStatus() == QProcess.ExitStatus.NormalExit and process.exitCode() == 0
+    logging.info("Update reinstall finished: succeeded=%s output=%s", succeeded, output)
+    if not succeeded:
+        QMessageBox.warning(
+            None,
+            "PathScout update incomplete",
+            "The new version runs, but its packages could not be reinstalled, so the "
+            f"Rust search engine may be unavailable.\n\n{output}\n\n"
+            f"Run this once to finish:\n{reinstall_command(root)}",
+        )
+
+
 def _instance_name(data_dir: Path) -> str:
     return "pathscout-" + hashlib.sha256(path_key(data_dir).encode()).hexdigest()[:20]
 
@@ -252,6 +288,8 @@ def main() -> int:
             data_dir,
             not args.no_hooks,
         )
+        if take_pending_reinstall(data_dir) and (root := checkout_root()) is not None:
+            _finish_update(root)
         server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         if not server.listen(instance):
             raise OSError(server.errorString())

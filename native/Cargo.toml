@@ -1,6 +1,6 @@
 [package]
 name = "pathscout_native"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 description = "Optional native search engine for PathScout"
@@ -13,7 +13,6 @@ crate-type = ["cdylib", "rlib"]
 pyo3 = { version = "0.23", features = ["abi3-py311"] }  # extension-module: via maturin
 fancy-regex = "0.14"
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
-fnmatch-rs = "0.1.0"
 regex = "1.12.4"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"

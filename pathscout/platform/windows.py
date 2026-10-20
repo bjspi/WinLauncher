@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
 
@@ -13,6 +14,16 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 LRESULT = ctypes.c_ssize_t
 ULONG_PTR = ctypes.c_size_t
 HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+WINEVENTPROC = ctypes.WINFUNCTYPE(
+    None,
+    wintypes.HANDLE,  # Hook
+    wintypes.DWORD,  # Event
+    wintypes.HWND,
+    wintypes.LONG,  # Object id
+    wintypes.LONG,  # Child id
+    wintypes.DWORD,  # Event thread
+    wintypes.DWORD,  # Event time
+)
 
 # Hooks and messages
 WH_KEYBOARD_LL = 13
@@ -26,6 +37,9 @@ MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_NOREPEAT = 0x4000
 PM_NOREMOVE = 0x0000
+EVENT_SYSTEM_FOREGROUND = 0x0003
+WINEVENT_OUTOFCONTEXT = 0x0000  # Deliver through the installing thread's message loop.
+WINEVENT_SKIPOWNPROCESS = 0x0002
 
 # Virtual keys
 VK_SHIFT = 0x10
@@ -124,6 +138,22 @@ _bind(
 )
 _bind(user32, "RegisterHotKey", [_HWND, _INT, _UINT, _UINT], wintypes.BOOL)
 _bind(user32, "UnregisterHotKey", [_HWND, _INT], wintypes.BOOL)
+_bind(
+    user32,
+    "SetWinEventHook",
+    # Event range, module, callback, process and thread filters, flags.
+    [
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HMODULE,
+        WINEVENTPROC,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ],
+    wintypes.HANDLE,
+)
+_bind(user32, "UnhookWinEvent", [wintypes.HANDLE], wintypes.BOOL)
 _dwmapi = ctypes.WinDLL("dwmapi")
 _bind(
     _dwmapi,
@@ -187,6 +217,44 @@ def activate_window(hwnd: int) -> bool:
             "Foreground request denied: target=%#x foreground=%s", hwnd, foreground_details()
         )
     return active
+
+
+def foreground_is_own_process() -> bool:
+    """Whether a window of this process, such as the launcher or a dialog, is in front."""
+    process_id = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(process_id))
+    return process_id.value == os.getpid()
+
+
+class ForegroundWatcher:
+    """Calls `on_other_process` when a window of another process comes to the front.
+
+    Qt can miss activation changes of a window that `activate_window` forced to
+    the foreground; Windows reports every change. Install it on a thread with a
+    message loop, such as Qt's main thread, which then receives the callbacks.
+    """
+
+    def __init__(self, on_other_process: Callable[[], None]):
+        # Keep the ctypes callback alive as long as the hook exists.
+        self._callback = WINEVENTPROC(lambda *_event: on_other_process())
+        self._hook = user32.SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            self._callback,
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        )
+        if not self._hook:
+            logger.warning(
+                "Foreground changes cannot be observed: error=%d", ctypes.get_last_error()
+            )
+
+    def close(self) -> None:
+        if self._hook:
+            user32.UnhookWinEvent(self._hook)
+            self._hook = None
 
 
 def round_corners(hwnd: int) -> None:

@@ -3,6 +3,7 @@
 mod content;
 mod content_workers;
 mod fuzzy;
+mod glob;
 mod heap;
 mod matching;
 mod priority;

@@ -21,11 +21,13 @@ from PySide6.QtCore import QObject, QProcess, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from pathscout import __version__
 from pathscout.actions import ExplorerTarget, ItemActions
 from pathscout.catalog.indexer import CatalogIndexer
 from pathscout.catalog.model import ScanReport, is_within
 from pathscout.catalog.sources import catalog_sources
 from pathscout.catalog.store import CatalogStore
+from pathscout.install import mark_reinstall_pending
 from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from pathscout.platform.gesture import (
     ExplorerTyping,
@@ -35,6 +37,7 @@ from pathscout.platform.gesture import (
 )
 from pathscout.platform.shell import application_roots
 from pathscout.platform.startup import PACKAGE_PARENT, StartupShortcut
+from pathscout.releases import Release, install_command
 from pathscout.search.native_engine import native_availability
 from pathscout.search.ranking import SearchHit
 from pathscout.search.service import SearchService
@@ -42,12 +45,15 @@ from pathscout.settings import Settings, SettingsFile
 from pathscout.ui.about import AboutDialog
 from pathscout.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from pathscout.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
+from pathscout.ui.result_rows import LauncherHit
 from pathscout.ui.search_session import SearchSession
 from pathscout.ui.settings import SettingsDialog
 from pathscout.ui.status import ProblemTopic, StatusBoard
 from pathscout.ui.tasks import BackgroundTasks, TaskCategory
 from pathscout.ui.tray import TrayMenu
-from pathscout.ui.updater import GitUpdater
+from pathscout.ui.update_dialog import UpdateCommandDialog
+from pathscout.ui.updater import ReleaseUpdater
+from pathscout.ui.website_icons import WebsiteIcons
 from pathscout.ui.window import LauncherWindow
 from pathscout.websites import WebsiteTarget
 
@@ -57,6 +63,8 @@ UI_DELAY_WARNING_MS = 250
 KEYBOARD_POLL_MS = 20
 WATCH_POLL_MS = 500
 HIDDEN_SCOPE_CLEANUP_MS = 500
+# Explorer follows the result where arrow-key repeats stop, not every row passed.
+EXPLORER_SELECT_DELAY_MS = 120
 
 _Event = TypeVar("_Event")
 
@@ -93,7 +101,9 @@ class LauncherController(QObject):
         self.favorite_pending = False
         self._closed = False
 
-        self.window = LauncherWindow()
+        # Shared by the result list and the Websites settings.
+        self.website_icons = WebsiteIcons(self)
+        self.window = LauncherWindow(self.website_icons)
         self.tasks = BackgroundTasks(self)
         self.tray = TrayMenu(self, autostart_available=os.name == "nt")
         self.status = StatusBoard(self.window.set_activity, self.tray.icon)
@@ -108,13 +118,21 @@ class LauncherController(QObject):
             self._explorer_session_open,
             self,
         )
-        self.updater = GitUpdater(self)
+        self.updater = ReleaseUpdater(self)
+        self.update_check_requested = False  # The user asked; report the answer.
+        self.updater.checked.connect(self._update_checked)
         self.updater.availability_changed.connect(self._update_available)
-        self.updater.pull_finished.connect(self._update_finished)
+        self.updater.update_finished.connect(self._update_finished)
         self._update_catalog_count()
+        self._apply_window_settings(self.settings)
         self._connect_window()
         self._connect_tray()
         self._connect_indexing()
+        self.explorer_hit: SearchHit | None = None  # Waiting for `explorer_select`.
+        self.explorer_select = QTimer(self)
+        self.explorer_select.setSingleShot(True)
+        self.explorer_select.setInterval(EXPLORER_SELECT_DELAY_MS)
+        self.explorer_select.timeout.connect(self._select_in_explorer)
         self.keyboard_timer = self._poll(self._drain_keyboard, KEYBOARD_POLL_MS)
         self.watch_timer = self._poll(self._drain_watch_events, WATCH_POLL_MS)
         self._ui_tick = time.monotonic()
@@ -137,6 +155,7 @@ class LauncherController(QObject):
         window.open_requested.connect(self.search.request_open)
         window.reveal_requested.connect(self.reveal_item)
         window.favorite_requested.connect(self.favorite_item)
+        window.explorer_selection.connect(self.follow_in_explorer)
         window.exclude_requested.connect(self.exclude_folder)
         window.settings_requested.connect(self.edit_settings)
         window.rescan_requested.connect(self.rescan)
@@ -333,6 +352,8 @@ class LauncherController(QObject):
 
     def _after_hide(self) -> None:
         self.search.window_hidden()
+        self.explorer_select.stop()
+        self.explorer_hit = None
         scope = self.window.scope
         if self._closed or scope is None:
             return
@@ -370,27 +391,44 @@ class LauncherController(QObject):
 
     # Item actions -------------------------------------------------------------
 
-    def open_item(self, hit: SearchHit, history_key: str) -> None:
-        if isinstance(hit.item, WebsiteTarget):
+    def open_item(self, hit: LauncherHit, history_key: str) -> None:
+        if isinstance(hit, WebsiteTarget):
             self.window.hide()
-            if not QDesktopServices.openUrl(QUrl(hit.item.url)):
+            if not QDesktopServices.openUrl(QUrl(hit.url)):
                 self._action_failed("The website could not be opened in your default browser.")
             return
-        view, scope = self.window.explorer_view, self.window.scope
-        explorer = ExplorerTarget(*view, scope) if view is not None and scope else None
+        explorer = self._explorer_target()
         self.window.hide()
         self._run_action(partial(self.actions.open, hit.item.path, history_key, explorer=explorer))
 
-    def reveal_item(self, hit: SearchHit) -> None:
-        if isinstance(hit.item, WebsiteTarget):
+    def follow_in_explorer(self, hit: SearchHit) -> None:
+        self.explorer_hit = hit
+        self.explorer_select.start()
+
+    def _select_in_explorer(self) -> None:
+        hit, self.explorer_hit = self.explorer_hit, None
+        explorer = self._explorer_target()
+        if hit is None or explorer is None or not self.window.isVisible():
             return
+        self.tasks.submit(
+            TaskCategory.ACTION,
+            partial(self.actions.select_in_explorer, hit.item.path, explorer),
+            lambda _result: None,
+            # A preview that fails, e.g. after the user switched tabs, is no error to show.
+            lambda message: logger.info("Explorer selection skipped: %s", message),
+        )
+
+    def _explorer_target(self) -> ExplorerTarget | None:
+        """The Explorer tab the bar belongs to, if the search started in Explorer."""
+        view, scope = self.window.explorer_view, self.window.scope
+        return ExplorerTarget(*view, scope) if view is not None and scope else None
+
+    def reveal_item(self, hit: SearchHit) -> None:
         self.window.hide()
         self._run_action(partial(self.actions.reveal, hit.item.path))
 
     def favorite_item(self, hit: SearchHit) -> None:
         """Toggle once; repeated requests wait until the stored state is visible again."""
-        if isinstance(hit.item, WebsiteTarget):
-            return
         if self.favorite_pending:
             return
         self.favorite_pending = True
@@ -448,7 +486,7 @@ class LauncherController(QObject):
             startup_enabled=self.tray.autostart.isChecked(),
             set_startup=self._set_autostart if os.name == "nt" else None,
             startup_state=self.tray.autostart.isChecked,
-            website_icons=self.window.delegate.icons.websites,
+            website_icons=self.website_icons,
         )
         dialog.exec()
         dialog.deleteLater()
@@ -478,6 +516,7 @@ class LauncherController(QObject):
         self.search.refresh()
 
     def _apply_changes(self, previous: Settings, settings: Settings) -> None:
+        self._apply_window_settings(settings)
         if previous.input_key != settings.input_key:
             self._stop_keyboard()
             self._start_keyboard()
@@ -485,6 +524,9 @@ class LauncherController(QObject):
             self._restart_indexing()
         elif previous.rescan_seconds != settings.rescan_seconds:
             self.indexing.restart_periodic_timer()
+
+    def _apply_window_settings(self, settings: Settings) -> None:
+        self.window.set_auto_hide(settings.auto_hide, settings.auto_hide_seconds)
 
     def _restart_indexing(self) -> None:
         self._stop_monitor()
@@ -525,31 +567,61 @@ class LauncherController(QObject):
         dialog.deleteLater()
 
     def check_for_updates(self) -> None:
+        if self.updater.updating:
+            return
         if not self.updater.supported:
             QMessageBox.information(
                 self.window,
                 "Updates",
-                "PathScout updates itself when it runs from a git checkout and git is "
-                "installed. Update installed packages with pip.",
+                "PathScout looks for new releases with git. Install git to get update notices.",
             )
             return
-        if self.updater.pulling:
+        if self.updater.latest is not None:
+            self._offer_update(self.updater.latest)
+            return
+        self.update_check_requested = True
+        self.status.set_activity("Checking for updates…")
+        self.updater.check_now()
+
+    def _update_checked(self, reachable: bool) -> None:
+        if not self.update_check_requested:
+            return
+        self.update_check_requested = False
+        self.status.set_activity("")
+        if not reachable:
+            QMessageBox.warning(
+                self.window, "Updates", "The release list could not be loaded. Try again later."
+            )
+        elif self.updater.latest is None:
+            QMessageBox.information(
+                self.window, "Updates", f"PathScout {__version__} is the newest release."
+            )
+        else:
+            self._offer_update(self.updater.latest)
+
+    def _offer_update(self, release: Release) -> None:
+        """A checkout updates itself; other installations get the command to run."""
+        if not self.updater.can_apply:
+            UpdateCommandDialog(
+                release, install_command(self.updater.installation, release), self.window
+            ).exec()
             return
         answer = QMessageBox.question(
             self.window,
-            "Check for updates",
-            f"Download and apply the latest version into\n{self.updater.root}?\n\n"
-            "Local changes are never overwritten; git refuses instead.",
+            "Update PathScout",
+            f"Update to PathScout {release.tag}?\n\nThe checkout in {self.updater.root} moves "
+            "to the release. Local changes are never overwritten; git refuses instead.",
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.status.set_activity("Updating PathScout…")
-            self.updater.pull()
+            self.updater.apply()
 
     def _update_available(self, available: bool) -> None:
         self.tray.set_update_available(available)
-        if available:
+        if available and not self.update_check_requested:
             self.tray.icon.showMessage(
-                "PathScout", "An update is available. Install it from the tray menu."
+                "PathScout",
+                f"PathScout {self.updater.latest.tag} is available. Install it from the tray menu.",
             )
 
     def _update_finished(self, succeeded: bool, changed: bool, output: str) -> None:
@@ -561,8 +633,12 @@ class LauncherController(QObject):
         if not changed:
             QMessageBox.information(self.window, "Updates", "PathScout is up to date.")
             return
+        # The new release's packages, including its Rust engine, install at the next start.
+        mark_reinstall_pending(self.data_dir)
         answer = QMessageBox.question(
-            self.window, "Update installed", f"{details}\n\nRestart PathScout now?"
+            self.window,
+            "Update downloaded",
+            "PathScout finishes the update when it starts again. Restart now?",
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.restart()
@@ -595,5 +671,7 @@ class LauncherController(QObject):
         self.updater.stop()
         self.tasks.close()
         self.window.delegate.icons.close()
+        self.window.close_focus_watch()
+        self.website_icons.close()
         self.tray.hide()
         self.window.hide()

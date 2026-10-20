@@ -5,16 +5,16 @@ Widgets emit intents and never access the catalog.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass
-from datetime import datetime
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PySide6.QtCore import (
     QEvent,
-    QLocale,
     QObject,
     QPoint,
     QRect,
@@ -32,6 +32,7 @@ from PySide6.QtGui import (
     QFont,
     QFontMetrics,
     QGuiApplication,
+    QIcon,
     QKeyEvent,
     QKeySequence,
     QPainter,
@@ -63,17 +64,21 @@ from pathscout.search.ranking import SearchHit
 from pathscout.ui.highlight import matched_positions
 from pathscout.ui.icons import ResultIcons
 from pathscout.ui.menus import Menu
+from pathscout.ui.query_syntax import QuerySyntax
+from pathscout.ui.result_rows import LauncherHit, ResultRow, result_row
 from pathscout.ui.theme import Palette, app_icon
-from pathscout.websites import WebsiteQuery, WebsiteTarget
+from pathscout.ui.website_icons import WebsiteIcons
+from pathscout.websites import WebsiteTarget
 
 COMPACT_WIDTH = 640
 EXPANDED_WIDTH = 900
-EXPLORER_WIDTH = 440
+EXPLORER_WIDTH = 396
 EXPANDED_ROWS = 14
 SHADOW_MARGIN = 14
 SHADOW_OFFSET = 4
 SURFACE_RADIUS = 10  # Matches QFrame#surface in the theme.
 EXPLORER_BOTTOM_GAP = 56  # Keep Explorer's status bar visible below the bar.
+EXPLORER_RIGHT_GAP = 12  # With the shadow margin, keeps the scrollbar beside the bar visible.
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,8 +93,9 @@ class RowLayout:
 
 
 LAUNCHER_ROWS = RowLayout(height=52, icon=32, name_points=11, two_lines=True, visible_rows=9)
-EXPLORER_ROWS = RowLayout(height=28, icon=16, name_points=9, two_lines=False, visible_rows=6)
+EXPLORER_ROWS = RowLayout(height=25, icon=16, name_points=8, two_lines=False, visible_rows=6)
 NUMBERED_ROWS = 9  # Ctrl+1 … Ctrl+9 open these rows.
+SEPARATOR_INSET = 12  # Where the line before subfolder matches starts.
 FILTERS = (
     ("All", None),
     ("Apps", ItemKind.APP),
@@ -98,39 +104,42 @@ FILTERS = (
 )
 NO_MATCHES = "No matches. Try a shorter name, another spelling or fewer filters."
 logger = logging.getLogger(__name__)
-_METADATA_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class ResultDelegate(QStyledItemDelegate):
-    """Paints one result row: icon, highlighted name, folder, shortcut and favorite star."""
+    """Paints one `ResultRow`: icon, highlighted name, location, shortcut and favorite star."""
 
-    def __init__(self, parent: QListWidget):
+    def __init__(self, parent: QListWidget, website_icons: WebsiteIcons):
         super().__init__(parent)
         self.icons = ResultIcons(self)
-        self.icons.changed.connect(parent.viewport().update)
+        self.website_icons = website_icons
+        for icons in (self.icons, website_icons):
+            icons.changed.connect(parent.viewport().update)
         self.terms: tuple[str, ...] = ()
         self.rows = LAUNCHER_ROWS
-        self.scope: Path | None = None
 
     def sizeHint(self, option, index) -> QSize:
         return QSize(400, self.rows.height)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
-        hit: SearchHit | None = index.data(Qt.ItemDataRole.UserRole)
-        if hit is None:
+        result: ResultRow | None = index.data(Qt.ItemDataRole.UserRole)
+        if result is None:
             super().paint(painter, option, index)
             return
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         row, size = option.rect, self.rows.icon
         self._paint_background(painter, row, option.state)
+        if result.starts_subfolders:
+            painter.setPen(QColor(Palette.DIVIDER))
+            painter.drawLine(row.left() + SEPARATOR_INSET, row.top(), row.right(), row.top())
         icon = QRect(row.left() + 16, row.center().y() - size // 2, size, size)
-        self.icons.icon_for(hit.item).paint(painter, icon)
-        shortcut_width = self._paint_shortcut(painter, row, index.row(), hit.item.pinned)
+        self._icon(result.hit).paint(painter, icon)
+        shortcut_width = self._paint_shortcut(painter, row, index.row(), result.pinned)
         left = icon.right() + 14
         text = QRect(left, row.top(), row.right() - left - shortcut_width - 8, row.height())
         baseline = text.top() + 41 if self.rows.two_lines else text.center().y() + 6
-        metadata = index.data(_METADATA_ROLE) or ""
+        metadata = result.metadata
         metadata_width = (
             min(text.width(), QFontMetrics(QFont("Segoe UI", 8)).horizontalAdvance(metadata) + 12)
             if metadata
@@ -140,27 +149,18 @@ class ResultDelegate(QStyledItemDelegate):
         self._paint_folder(painter, metadata_area, metadata, baseline=baseline)
         location_area = text.adjusted(0, 0, -metadata_width, 0)
         if self.rows.two_lines:
-            self._paint_name(painter, text, hit.item.name, baseline=text.top() + 23)
-            self._paint_folder(painter, location_area, self._location(hit), baseline=baseline)
+            self._paint_name(painter, text, result.name, baseline=text.top() + 23)
+            self._paint_folder(painter, location_area, result.location, baseline=baseline)
         else:
-            name_end = self._paint_name(painter, location_area, hit.item.name, baseline=baseline)
+            name_end = self._paint_name(painter, location_area, result.name, baseline=baseline)
             location = location_area.adjusted(name_end - text.left() + 12, 0, 0, 0)
-            self._paint_folder(painter, location, self._location(hit), baseline=baseline)
+            self._paint_folder(painter, location, result.location, baseline=baseline)
         painter.restore()
 
-    def _location(self, hit: SearchHit) -> str:
-        """In an Explorer search, the subfolder below the searched folder; else the folder."""
-        if isinstance(hit.item, WebsiteTarget):
-            return f"{hit.item.keyword}  ·  {hit.item.url}"
-        parent = hit.item.path.parent
-        if self.scope is None:
-            return str(parent)
-        if parent == self.scope:
-            return ""
-        try:
-            return str(parent.relative_to(self.scope))
-        except ValueError:
-            return str(parent)
+    def _icon(self, hit: LauncherHit) -> QIcon:
+        if isinstance(hit, WebsiteTarget):
+            return self.website_icons.icon_for(hit.url)
+        return self.icons.icon_for(hit.item)
 
     @staticmethod
     def _paint_background(painter: QPainter, row: QRect, state: QStyle.StateFlag) -> None:
@@ -227,33 +227,17 @@ def _runs(text: str, highlighted: set[int]) -> Iterator[tuple[int, int, bool]]:
             start = index
 
 
-def _accessible_text(hit: SearchHit, metadata: str = "") -> str:
-    """What screen readers announce for a row the delegate paints."""
-    if isinstance(hit.item, WebsiteTarget):
-        return f"{hit.item.name}, website, keyword {hit.item.keyword}\n{hit.item.url}"
-    favorite = ", favorite" if hit.item.pinned else ""
-    details = f"\n{metadata}" if metadata else ""
-    return f"{hit.item.name}, {hit.item.kind.value}{favorite}{details}\n{hit.item.path}"
-
-
-def _result_metadata(hit: SearchHit, query: SearchQuery | WebsiteQuery | None) -> str:
-    if not isinstance(query, SearchQuery) or isinstance(hit.item, WebsiteTarget):
-        return ""
-    parts = []
-    if query.min_size is not None or query.max_size is not None:
-        parts.append(QLocale().formattedDataSize(hit.item.size))
-    if query.modified_after is not None or query.modified_before is not None:
-        parts.append(f"Modified {_format_modified(hit.item.modified)}")
-    return " · ".join(parts)
-
-
-def _format_modified(timestamp: float) -> str:
-    if not timestamp:
-        return "Unknown"
-    try:
-        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
-    except (OSError, OverflowError, ValueError):
-        return "Unknown"  # Outside the range Windows can represent.
+def _with_subfolder_separator(rows: list[ResultRow]) -> list[ResultRow]:
+    """Mark the first subfolder match that follows direct entries of the folder."""
+    for index, (before, row) in enumerate(itertools.pairwise(rows), start=1):
+        if before.direct and not row.direct:
+            rows[index] = replace(
+                row,
+                starts_subfolders=True,
+                accessible_text=f"In subfolders: {row.accessible_text}",
+            )
+            break
+    return rows
 
 
 def _containing_folder(hit: SearchHit) -> Path:
@@ -339,6 +323,8 @@ class LauncherWindow(QWidget):
     open_requested = Signal(object)
     reveal_requested = Signal(object)
     favorite_requested = Signal(object)
+    # SearchHit the user moved to in the Explorer bar, for Explorer to select.
+    explorer_selection = Signal(object)
     exclude_requested = Signal(object)
     settings_requested = Signal()
     rescan_requested = Signal()
@@ -347,7 +333,7 @@ class LauncherWindow(QWidget):
     hidden = Signal()
     shown = Signal()
 
-    def __init__(self):
+    def __init__(self, website_icons: WebsiteIcons):
         flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
         super().__init__(None, flags | Qt.WindowType.WindowStaysOnTopHint)
         self.scope: Path | None = None
@@ -356,11 +342,26 @@ class LauncherWindow(QWidget):
         self.catalog_count = 0
         self.explorer_mode = False  # Compact bar next to the Explorer window.
         self.explorer_view: tuple[int, int] | None = None
+        self.website_icons = website_icons
+        # Result locations are relative to this folder in an Explorer search.
+        self.result_scope: Path | None = None
         self.calculation: Calculation | None = None
         # The calculation, not a result, receives Enter while it is selected.
         self.calculation_selected = False
         self._bottom_anchor: int | None = None
         self._resize_pending = False
+        self._refreshing_results = False
+        # Started when focus leaves the launcher; see `set_auto_hide` and `_hide_if_unused`.
+        self.auto_hide = QTimer(self)
+        self.auto_hide.setSingleShot(True)
+        self.auto_hide.timeout.connect(self._hide_if_unused)
+        self.auto_hide_enabled = False
+        self.auto_hide_ms = 0
+        self.foreground_watcher = None
+        if self._native_focus():
+            from pathscout.platform.windows import ForegroundWatcher
+
+            self.foreground_watcher = ForegroundWatcher(self._focus_left)
         self.setObjectName("launcher")
         self.setWindowTitle("PathScout")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -410,6 +411,7 @@ class LauncherWindow(QWidget):
         self.query.textChanged.connect(self.query_changed)
         self.query.textChanged.connect(self._update_calculation)
         self.query.installEventFilter(self)
+        self.query_syntax = QuerySyntax(self.query)
         row.addWidget(self.query, 1)
         self.clear_scope = QToolButton()
         self.clear_scope.setObjectName("scope")
@@ -454,7 +456,7 @@ class LauncherWindow(QWidget):
         self.results = QListWidget()
         self.results.setObjectName("results")
         self.results.setAccessibleName("Search results")
-        self.delegate = ResultDelegate(self.results)
+        self.delegate = ResultDelegate(self.results, self.website_icons)
         self.results.setItemDelegate(self.delegate)
         self.results.setMouseTracking(True)
         self.results.setUniformItemSizes(True)
@@ -470,6 +472,7 @@ class LauncherWindow(QWidget):
             lambda _item: self.open_selected() if self.explorer_mode else None
         )
         self.results.currentItemChanged.connect(self.update_detail)
+        self.results.currentItemChanged.connect(self._selection_moved)
         self.results.installEventFilter(self)
         return self.results
 
@@ -518,7 +521,7 @@ class LauncherWindow(QWidget):
             ("Ctrl+L", self.focus_query),
             ("Ctrl+Return", self.reveal_selected),
             ("Ctrl+Enter", self.reveal_selected),  # Keypad Enter.
-            ("Ctrl+Shift+C", self.copy_path),
+            ("Ctrl+Shift+C", self.copy_target),
             ("Ctrl+D", self.favorite_selected),
             ("Ctrl+,", self.settings_requested),
             ("Shift+F10", self.keyboard_context_menu),
@@ -546,6 +549,10 @@ class LauncherWindow(QWidget):
 
     def event(self, event: QEvent) -> bool:
         handled = super().event(event)
+        if event.type() == QEvent.Type.WindowDeactivate:
+            self._focus_left()
+        elif event.type() == QEvent.Type.WindowActivate:
+            self.auto_hide.stop()
         if (
             event.type() in (QEvent.Type.WindowActivate, QEvent.Type.WindowDeactivate)
             and self._native_focus()
@@ -627,40 +634,48 @@ class LauncherWindow(QWidget):
 
     # Result state -------------------------------------------------------------
 
-    def selected_hit(self) -> SearchHit | None:
+    def selected_row(self) -> ResultRow | None:
         item = self.results.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def selected_hit(self) -> LauncherHit | None:
+        row = self.selected_row()
+        return row.hit if row else None
 
     def set_catalog_count(self, count: int) -> None:
         self.catalog_count = count
 
     def set_results(
         self,
-        hits: list[SearchHit],
+        hits: list[LauncherHit],
         elapsed_ms: float,
         *,
         preserve_selection: bool = True,
-        query: SearchQuery | WebsiteQuery | None = None,
+        query: SearchQuery | None = None,
     ) -> None:
-        """Show new results; keep the selected path only when the query is unchanged."""
-        previous = self.selected_hit() if preserve_selection else None
+        """Show new results; keep the selected target only when the query is unchanged.
+
+        `query` is the file search behind the catalog hits; it drives the name
+        highlighting and the size and date details.
+        """
+        previous = self.selected_row() if preserve_selection else None
         self.delegate.terms = query.terms if query is not None else ()
-        self.results.clear()
-        selected_row = 0
-        for row, hit in enumerate(hits):
-            metadata = _result_metadata(hit, query)
-            item = QListWidgetItem(_accessible_text(hit, metadata))
-            item.setData(Qt.ItemDataRole.UserRole, hit)
-            item.setData(_METADATA_ROLE, metadata)
-            tooltip = f"{hit.target}\n{hit.reason}"
-            if not isinstance(hit.item, WebsiteTarget):
-                tooltip += f"\nRelevance: {hit.score:.1f}"
-            item.setToolTip(tooltip)
-            self.results.addItem(item)
-            if previous is not None and hit.target == previous.target:
-                selected_row = row
-        if hits and not self.calculation_selected:
-            self.results.setCurrentRow(selected_row)
+        rows = _with_subfolder_separator(
+            [result_row(hit, query, self.result_scope) for hit in hits]
+        )
+        selected_index = 0
+        with self._replacing_results():
+            self.results.clear()
+            for index, row in enumerate(rows):
+                item = QListWidgetItem(row.accessible_text)
+                item.setData(Qt.ItemDataRole.UserRole, row)
+                item.setToolTip(row.tooltip)
+                self.results.addItem(item)
+                if previous is not None and row.target == previous.target:
+                    selected_index = index
+            if hits and not self.calculation_selected:
+                self.results.setCurrentRow(selected_index)
+        self._follow_in_explorer(direct_only=True)
         # An empty query without history stays a bare search bar.
         self.empty.setText(NO_MATCHES)
         self.empty.setVisible(
@@ -674,7 +689,12 @@ class LauncherWindow(QWidget):
         self._show_results_area(bool(hits))
 
     def show_searching(self) -> None:
-        self._show_message("Searching…")
+        """Keep shown results until new ones replace them; clearing them per key flickers.
+
+        Enter still opens a result of the typed query: the search session waits for it.
+        """
+        if self.results.count() == 0:
+            self._show_message("Searching…")
 
     def show_query_error(self, message: str) -> None:
         self._show_message(message)
@@ -689,7 +709,8 @@ class LauncherWindow(QWidget):
         self._fit_height()
 
     def _show_message(self, message: str) -> None:
-        self.results.clear()
+        with self._replacing_results():
+            self.results.clear()
         self.empty.setText(message)
         self.empty.show()
         self.status.hide()
@@ -730,15 +751,20 @@ class LauncherWindow(QWidget):
 
     # Filters and scope ----------------------------------------------------------
 
+    def _replace_query(self, text: str) -> None:
+        """Set the text without starting a search; the caller decides when to search."""
+        self.query.blockSignals(True)
+        self.query.setText(text)
+        self.query.blockSignals(False)
+        self.query_syntax.refresh()
+
     def set_kind(self, kind: ItemKind | None) -> None:
         self.kind = kind
         try:
             text = without_type_filter(self.query.text())
         except ValueError:
             text = self.query.text()  # Keep an unfinished quoted query editable.
-        self.query.blockSignals(True)
-        self.query.setText(text)
-        self.query.blockSignals(False)
+        self._replace_query(text)
         self.show_kind(kind)
         self.query_changed.emit()
         self.query.setFocus()
@@ -794,9 +820,7 @@ class LauncherWindow(QWidget):
         if explorer_view is not None or near is not None:
             self.kind = None  # Explorer completion always searches the whole folder.
             self.show_kind(None)
-        self.query.blockSignals(True)
-        self.query.setText(text)
-        self.query.blockSignals(False)
+        self._replace_query(text)
         self._set_explorer_mode(near is not None or explorer_view is not None, scope)
         self._update_calculation()
         anchor = _logical_rect(near) if near is not None else None
@@ -817,6 +841,49 @@ class LauncherWindow(QWidget):
             QTimer.singleShot(100, self._check_activation)
         self.query.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
         self.query_changed.emit()
+
+    def set_auto_hide(self, enabled: bool, seconds: int) -> None:
+        """Hide `seconds` after focus left PathScout, unless something was typed.
+
+        Independent of this setting, the Explorer bar hides as soon as focus leaves
+        PathScout, typed or not: it serves only the search started in Explorer.
+        """
+        self.auto_hide_enabled = enabled
+        self.auto_hide_ms = seconds * 1000
+        if not enabled:
+            self.auto_hide.stop()
+
+    def close_focus_watch(self) -> None:
+        if self.foreground_watcher is not None:
+            self.foreground_watcher.close()
+            self.foreground_watcher = None
+
+    def _focus_left(self) -> None:
+        """Qt or Windows reports that focus moved away; start closing as configured."""
+        if not self.isVisible():
+            return
+        if self.explorer_mode:
+            # On the next event loop pass, once the new foreground window is known.
+            self.auto_hide.start(0)
+        elif self.auto_hide_enabled:
+            self.auto_hide.start(self.auto_hide_ms)
+
+    def _hide_if_unused(self) -> None:
+        unused = self.explorer_mode or not self.query.text()
+        if unused and not self._pathscout_in_front():
+            self.hide()
+
+    def _pathscout_in_front(self) -> bool:
+        """Whether the launcher or one of PathScout's menus or dialogs is in front.
+
+        On Windows the native answer counts: Qt may miss activation changes of a
+        window that `activate_window` forced to the front.
+        """
+        if self._native_focus():
+            from pathscout.platform.windows import foreground_is_own_process
+
+            return foreground_is_own_process()
+        return QApplication.activeWindow() is not None
 
     def _check_activation(self) -> None:
         if self.isVisible() and self._native_focus():
@@ -839,7 +906,7 @@ class LauncherWindow(QWidget):
     def _set_explorer_mode(self, enabled: bool, scope: Path | None) -> None:
         self.explorer_mode = enabled
         self.delegate.rows = EXPLORER_ROWS if enabled else LAUNCHER_ROWS
-        self.delegate.scope = scope if enabled else None
+        self.result_scope = scope if enabled else None
         self.results.doItemsLayout()
         for widget in (
             self.query,
@@ -870,12 +937,15 @@ class LauncherWindow(QWidget):
         self.move(area.x() + (area.width() - self.width()) // 2, area.y() + area.height() // 5)
 
     def _place_in(self, explorer: QRect) -> None:
-        """Centered near the bottom of the Explorer window, inside its screen."""
+        """Docked to the bottom right of the Explorer window, inside its screen.
+
+        There it covers the date and type columns rather than the names.
+        """
         screen = QApplication.screenAt(explorer.center()) or QApplication.primaryScreen()
         area = screen.availableGeometry()
         self.resize(min(self._bar_width(), area.width()), self.height())
-        left = explorer.center().x() - self.width() // 2
-        self.move(max(area.left(), min(left, area.right() - self.width())), self.y())
+        right = min(explorer.right() - EXPLORER_RIGHT_GAP, area.right())
+        self.move(max(area.left(), right - self.width() + 1), self.y())  # right() is inclusive.
         bottom = min(explorer.bottom() - EXPLORER_BOTTOM_GAP, area.bottom())
         self._bottom_anchor = max(area.top() + self.height(), bottom)
         self.move(self.x(), self._bottom_anchor - self.height())
@@ -891,16 +961,8 @@ class LauncherWindow(QWidget):
         self._show_results_area(self.results.count() > 0)
 
     def update_detail(self, *_changed) -> None:
-        hit = self.selected_hit()
-        if not hit:
-            self.detail.clear()
-            return
-        if isinstance(hit.item, WebsiteTarget):
-            self.detail.setText(f"{hit.item.url}\n{hit.reason}")
-            return
-        size = QLocale().formattedDataSize(hit.item.size)
-        modified = _format_modified(hit.item.modified)
-        self.detail.setText(f"{hit.item.path}\n{size}  ·  Modified {modified}  ·  {hit.reason}")
+        row = self.selected_row()
+        self.detail.setText(row.detail if row else "")
 
     # Actions ------------------------------------------------------------------
 
@@ -912,26 +974,51 @@ class LauncherWindow(QWidget):
         if item is None:
             return
         self.results.setCurrentRow(row)
-        self.open_requested.emit(item.data(Qt.ItemDataRole.UserRole))
+        self.open_requested.emit(item.data(Qt.ItemDataRole.UserRole).hit)
+
+    @contextmanager
+    def _replacing_results(self) -> Iterator[None]:
+        """While PathScout itself fills or clears the list, Explorer does not follow.
+
+        Clearing moves the current row through the remaining rows first.
+        """
+        self._refreshing_results = True
+        try:
+            yield
+        finally:
+            self._refreshing_results = False
+
+    def _selection_moved(self, *_items) -> None:
+        if not self._refreshing_results:
+            self._follow_in_explorer(direct_only=False)
+
+    def _follow_in_explorer(self, *, direct_only: bool) -> None:
+        """In the Explorer bar, Explorer selects the selected result.
+
+        New results move Explorer only to a direct entry of the folder, replacing
+        whatever Explorer's own type-ahead picked; arrow keys move it to any result.
+        """
+        row = self.selected_row()
+        if not self.explorer_mode or row is None or (direct_only and not row.direct):
+            return
+        if (hit := row.file_hit) is not None:
+            self.explorer_selection.emit(hit)
 
     def reveal_selected(self) -> None:
-        if (hit := self.selected_hit()) and not isinstance(hit.item, WebsiteTarget):
+        if (row := self.selected_row()) and (hit := row.file_hit):
             self.reveal_requested.emit(hit)
 
     def favorite_selected(self) -> None:
-        if (hit := self.selected_hit()) and not isinstance(hit.item, WebsiteTarget):
+        if (row := self.selected_row()) and (hit := row.file_hit):
             self.favorite_requested.emit(hit)
 
-    def copy_path(self, hit: SearchHit | None = None) -> None:
-        hit = hit or self.selected_hit()
-        if hit is None:
+    def copy_target(self, row: ResultRow | None = None) -> None:
+        """Copy the path or URL of `row`, by default of the selected row."""
+        row = row or self.selected_row()
+        if row is None:
             return
-        QApplication.clipboard().setText(hit.target)
-        self.status.setText(
-            "URL copied to clipboard"
-            if isinstance(hit.item, WebsiteTarget)
-            else "Path copied to clipboard"
-        )
+        QApplication.clipboard().setText(row.target)
+        self.status.setText(f"{row.target_noun} copied to clipboard")
         self.status.show()
         self._fit_height()
 
@@ -945,21 +1032,27 @@ class LauncherWindow(QWidget):
         if item is None:
             return
         self.results.setCurrentItem(item)
-        hit: SearchHit = item.data(Qt.ItemDataRole.UserRole)
-        clipboard = QApplication.clipboard()
+        row: ResultRow = item.data(Qt.ItemDataRole.UserRole)
         menu = Menu(self)
-        if isinstance(hit.item, WebsiteTarget):
-            menu.addAction("Open in browser", lambda: self.open_requested.emit(hit))
-            menu.addAction("Copy URL", lambda: self.copy_path(hit))
-            menu.addSeparator()
-            menu.addAction("Settings…", self.settings_requested.emit)
-            menu.exec(self.results.viewport().mapToGlobal(point))
-            menu.deleteLater()
-            return
+        if (hit := row.file_hit) is not None:
+            self._add_file_actions(menu, row, hit)
+        else:
+            self._add_website_actions(menu, row)
+        menu.exec(self.results.viewport().mapToGlobal(point))
+        menu.deleteLater()
+
+    def _add_website_actions(self, menu: QMenu, row: ResultRow) -> None:
+        menu.addAction("Open in browser", lambda: self.open_requested.emit(row.hit))
+        menu.addAction("Copy URL", lambda: self.copy_target(row))
+        menu.addSeparator()
+        menu.addAction("Settings…", self.settings_requested.emit)
+
+    def _add_file_actions(self, menu: QMenu, row: ResultRow, hit: SearchHit) -> None:
+        clipboard = QApplication.clipboard()
         menu.addAction("Open", lambda: self.open_requested.emit(hit))
         menu.addAction("Show in containing folder", lambda: self.reveal_requested.emit(hit))
         menu.addSeparator()
-        menu.addAction("Copy path", lambda: self.copy_path(hit))
+        menu.addAction("Copy path", lambda: self.copy_target(row))
         menu.addAction("Copy file name", lambda: clipboard.setText(hit.item.path.name))
         menu.addAction(
             "Copy parent folder path", lambda: clipboard.setText(str(hit.item.path.parent))
@@ -971,8 +1064,6 @@ class LauncherWindow(QWidget):
         menu.addAction(
             "Exclude this or a parent folder…", lambda: self.exclude_requested.emit(folder)
         )
-        menu.exec(self.results.viewport().mapToGlobal(point))
-        menu.deleteLater()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -980,6 +1071,7 @@ class LauncherWindow(QWidget):
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
+        self.auto_hide.stop()
         self.hidden.emit()
 
     def closeEvent(self, event) -> None:

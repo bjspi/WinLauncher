@@ -21,7 +21,7 @@ from pathlib import Path
 from types import ModuleType
 
 from pathscout.catalog.exclusions import ExclusionPolicy
-from pathscout.catalog.model import ItemKind
+from pathscout.catalog.model import ItemKind, path_key
 from pathscout.catalog.priority import PriorityDecision
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.candidates import Candidate, read_candidates
@@ -161,12 +161,39 @@ class SearchService:
                 search_paths(query, settings, cancel, self.store), query
             )
         if query.explorer and query.scope is not None:
-            candidates = list(directory_candidates(query.scope, cancel))
-            hits = self._rank(query, settings, cancel, candidates)
-            logger.info("Explorer direct search: entries=%d hits=%d", len(candidates), len(hits))
-            if hits or (cancel is not None and cancel.is_set()):
-                return hits
+            return self._search_explorer_folder(query, query.scope, settings, cancel)
         return self._rank(query, settings, cancel)
+
+    def _search_explorer_folder(
+        self,
+        query: SearchQuery,
+        folder: Path,
+        settings: Settings,
+        cancel: threading.Event | None,
+    ) -> list[SearchHit]:
+        """The folder's direct entries first, then matches from its subfolders.
+
+        Direct entries are listed live, so they are current even before indexing.
+        Subfolder matches come from the catalog and always rank below every direct
+        entry; the catalog's copies of direct entries are left out.
+        """
+        candidates = list(directory_candidates(folder, cancel))
+        direct = self._rank(query, settings, cancel, candidates)
+        if cancel is not None and cancel.is_set():
+            return []
+        folder_key = path_key(folder)
+        deeper = [
+            hit
+            for hit in self._rank(query, settings, cancel)
+            if path_key(hit.item.path.parent) != folder_key
+        ]
+        logger.info(
+            "Explorer search: entries=%d direct_hits=%d deeper_hits=%d",
+            len(candidates),
+            len(direct),
+            len(deeper),
+        )
+        return [*direct, *deeper][: settings.max_results]
 
     def _rank(
         self,

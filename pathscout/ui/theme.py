@@ -15,6 +15,15 @@ class Palette:
     ACCENT = "#2f7de1"
     SELECTED = "#e2e7ee"
     HOVER = "#edf0f4"
+    DIVIDER = "#d5dae1"  # Between an Explorer folder's direct entries and subfolder matches.
+    # Query syntax in the search field: filters, content searches, exclusions, errors.
+    FILTER = "#1f5fb8"
+    FILTER_BACKGROUND = "#e3edfb"
+    CONTENT = "#6a3fc1"
+    CONTENT_BACKGROUND = "#eee8fb"
+    EXCLUSION = "#a15c00"
+    EXCLUSION_BACKGROUND = "#fbf0e1"
+    INVALID = "#c62828"
 
 
 # Stylesheets replace the native indicator, so the check mark is PathScout's own SVG.
@@ -32,7 +41,7 @@ QFrame#calculation[selected="true"] { background: #e2e7ee; }
 QLabel#calculationResult { font-size: 15pt; color: #1f2329; }
 QLabel#calculationHint { font-size: 8pt; color: #a3a9b1; }
 QLineEdit#query { background: transparent; border: 0; padding: 4px 0; font-size: 18pt; color: #1f2329; selection-background-color: #bcd5f5; selection-color: #1f2329; }
-QLineEdit#query[explorer="true"] { font-size: 10pt; padding: 1px 0; }
+QLineEdit#query[explorer="true"] { font-size: 9pt; padding: 1px 0; }
 QToolButton#menuButton { background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 3px; }
 QToolButton#menuButton:hover { background: #e9edf2; }
 QToolButton#menuButton:focus { border-color: #2f7de1; }
@@ -48,7 +57,7 @@ QToolButton#kindFilter:focus { border-color: #2f7de1; }
 QToolButton#kindFilter[explorer="true"] { padding: 2px 4px; }
 QListWidget#results { background: transparent; border: 0; outline: none; padding: 0; }
 QLabel#message { color: #5f6670; padding: 14px 22px; }
-QLabel#message[explorer="true"] { font-size: 9pt; padding: 8px 10px; }
+QLabel#message[explorer="true"] { font-size: 8pt; padding: 8px 10px; }
 QLabel#detail { color: #5f6670; font-size: 9pt; padding: 6px 22px 0 22px; }
 QLabel#status { color: #9aa0a8; font-size: 8pt; padding: 0; }
 QLabel#activity { color: #a15c00; font-size: 8pt; padding: 4px 22px 0 22px; }

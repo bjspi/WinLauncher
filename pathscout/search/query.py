@@ -47,7 +47,7 @@ class SearchQuery:
     min_size: int | None = None  # Inclusive byte bounds; folders have no searchable size.
     max_size: int | None = None
     content_text: str | None = None  # Case-insensitive fnmatch text; native backend only.
-    explorer: bool = False  # Live direct entries first; recursive catalog search is a fallback.
+    explorer: bool = False  # Live direct entries first, then catalog matches in subfolders.
 
     @property
     def uses_learned_items_only(self) -> bool:

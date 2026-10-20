@@ -14,8 +14,6 @@ from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileIconProvider
 
 from pathscout.catalog.model import CatalogItem, ItemKind
-from pathscout.ui.website_icons import WebsiteIcons
-from pathscout.websites import WebsiteTarget
 
 CACHE_SIZE = 512
 logger = logging.getLogger(__name__)
@@ -38,12 +36,8 @@ class ResultIcons(QObject):
         self._worker: threading.Thread | None = None
         self._closed = False
         self._loaded.connect(self._remember, Qt.ConnectionType.QueuedConnection)
-        self.websites = WebsiteIcons(self)
-        self.websites.changed.connect(self.changed)
 
-    def icon_for(self, item: CatalogItem | WebsiteTarget) -> QIcon:
-        if isinstance(item, WebsiteTarget):
-            return self.websites.icon_for(item.url)
+    def icon_for(self, item: CatalogItem) -> QIcon:
         if item.kind == ItemKind.FOLDER:
             return self._folder
         key = str(item.path) if item.kind == ItemKind.APP else item.path.suffix.lower()
@@ -70,7 +64,6 @@ class ResultIcons(QObject):
 
     def close(self) -> None:
         self._closed = True
-        self.websites.close()
         self._requests.put(None)
 
     def _load(self) -> None:

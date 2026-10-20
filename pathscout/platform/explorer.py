@@ -12,6 +12,13 @@ from pathscout.platform.windows import activate_window, active_tab, explorer_fil
 
 logger = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
+# IShellFolderView::SelectItem flags (SVSI_*): select only this item, scroll to it
+# and give it the focus rectangle.
+SVSI_SELECT = 0x01
+SVSI_DESELECTOTHERS = 0x04
+SVSI_ENSUREVISIBLE = 0x08
+SVSI_FOCUSED = 0x10
+SELECT_ONLY_AND_REVEAL = SVSI_SELECT | SVSI_DESELECTOTHERS | SVSI_ENSUREVISIBLE | SVSI_FOCUSED
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,32 +63,54 @@ def _window_folder(window, hwnd: int, tab: int) -> tuple[Path | None, bool]:
 def navigate_to(path: Path, hwnd: int, tab: int, original_folder: Path) -> None:
     """Navigate the captured Explorer tab, refusing stale or ambiguous targets."""
     import pythoncom
-    import win32com.client
 
     pythoncom.CoInitialize()
     try:
-        if active_tab(hwnd) != tab:
-            raise OSError(
-                "The original Explorer tab is no longer active. Search again in Explorer."
-            )
-        exact, fallback = [], []
-        for window in win32com.client.Dispatch("Shell.Application").Windows():
-            folder, active = _window_folder(window, hwnd, tab)
-            if folder != original_folder:
-                continue
-            fallback.append(window)
-            if active:
-                exact.append(window)
-        choices = exact or fallback
-        if len(choices) != 1:
-            raise OSError(
-                "The original Explorer folder is no longer available. Search again in Explorer."
-            )
-        choices[0].Navigate2(str(path), 0)
+        _captured_window(hwnd, tab, original_folder).Navigate2(str(path), 0)
         activate_window(hwnd)
         logger.info("Explorer navigated: window=%#x tab=%#x path=%s", hwnd, tab, path)
     finally:
         pythoncom.CoUninitialize()
+
+
+def select_item(entry: Path, hwnd: int, tab: int, original_folder: Path) -> None:
+    """Select and reveal `entry`, a child of the captured folder, in its Explorer tab.
+
+    Explorer keeps its keyboard focus where it is, so the search bar stays usable.
+    """
+    import pythoncom
+
+    pythoncom.CoInitialize()
+    try:
+        view = _captured_window(hwnd, tab, original_folder).Document
+        item = view.Folder.ParseName(entry.name)
+        if item is None:
+            raise OSError(f"{entry.name} is not shown in this Explorer folder.")
+        view.SelectItem(item, SELECT_ONLY_AND_REVEAL)
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def _captured_window(hwnd: int, tab: int, original_folder: Path):
+    """The shell window of the Explorer tab a search started in, if it still shows its folder."""
+    import win32com.client
+
+    if active_tab(hwnd) != tab:
+        raise OSError("The original Explorer tab is no longer active. Search again in Explorer.")
+    exact, fallback = [], []
+    for window in win32com.client.Dispatch("Shell.Application").Windows():
+        folder, active = _window_folder(window, hwnd, tab)
+        if folder != original_folder:
+            continue
+        fallback.append(window)
+        if active:
+            exact.append(window)
+    choices = exact or fallback
+    if len(choices) != 1:
+        raise OSError(
+            "The original Explorer folder is no longer available. Search again in Explorer."
+        )
+    return choices[0]
 
 
 class ExplorerTracker(threading.Thread):

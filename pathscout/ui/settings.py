@@ -41,6 +41,7 @@ from pathscout.catalog.priority import (
     SearchPriority,
 )
 from pathscout.settings import (
+    AUTO_HIDE_RANGE_SECONDS,
     CONTENT_SEARCH_THREADS_RANGE,
     DOUBLE_CTRL_RANGE_MS,
     RESCAN_RANGE_SECONDS,
@@ -52,6 +53,7 @@ from pathscout.ui.website_icons import WebsiteIcons
 from pathscout.ui.websites import WebsiteList
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
+SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
 FOLDER_PRIORITY_FORMAT = "25 | D:\\Projects | high"
 
 
@@ -268,12 +270,12 @@ class SettingsDialog(QDialog):
         startup_enabled: bool | None = None,
         set_startup: Callable[[bool], None] | None = None,
         startup_state: Callable[[], bool] | None = None,
-        website_icons: WebsiteIcons | None = None,
+        website_icons: WebsiteIcons,
     ):
         super().__init__(parent)
         self.original = settings
         self.result_settings = settings
-        self.save = save
+        self.persist = save
         self.set_startup = set_startup
         self.startup_state = startup_state
         self.setWindowTitle("PathScout settings")
@@ -281,9 +283,6 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._indexing_tab(settings, startup_enabled), "Search && indexing")
         tabs.addTab(self._exclusions_tab(settings), "Exclusions")
-        if website_icons is None:
-            website_icons = WebsiteIcons(self)
-            self.finished.connect(website_icons.close)
         self.websites = WebsiteList(settings.websites, website_icons)
         tabs.addTab(self.websites, "Websites")
         tabs.addTab(self._ranking_tab(settings), "Ranking")
@@ -291,9 +290,14 @@ class SettingsDialog(QDialog):
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
-        self.buttons.accepted.connect(self.accept)
+        # Save keeps the dialog open; Cancel (Close after a save) leaves it.
+        self.buttons.accepted.connect(self.save)
         self.buttons.rejected.connect(self.reject)
         self.saved_message = _note("")
+        self.saved_message_timer = QTimer(self)
+        self.saved_message_timer.setSingleShot(True)
+        self.saved_message_timer.setInterval(SAVED_MESSAGE_MS)
+        self.saved_message_timer.timeout.connect(self.saved_message.clear)
         footer = QHBoxLayout()
         footer.addWidget(self.saved_message, 1)
         footer.addWidget(self.buttons)
@@ -325,6 +329,19 @@ class SettingsDialog(QDialog):
         self.scan_interval = NumberField(RESCAN_RANGE_SECONDS, settings.rescan_seconds, "seconds")
         self.limit = NumberField(RESULT_LIMIT_RANGE, settings.max_results)
         form.addRow("Double-Ctrl interval (ms)", self.ctrl_interval)
+        self.auto_hide = QCheckBox("Close the empty launcher when it loses focus")
+        self.auto_hide.setChecked(settings.auto_hide)
+        self.auto_hide.setToolTip(
+            "The search bar inside Explorer closes as soon as it loses focus."
+        )
+        self.auto_hide_delay = NumberField(
+            AUTO_HIDE_RANGE_SECONDS, settings.auto_hide_seconds, "seconds"
+        )
+        self.auto_hide_delay.setAccessibleName("Close the empty launcher after seconds")
+        self.auto_hide_delay.setEnabled(settings.auto_hide)
+        self.auto_hide.toggled.connect(self.auto_hide_delay.setEnabled)
+        form.addRow(self.auto_hide)
+        form.addRow("Close after (s)", self.auto_hide_delay)
         form.addRow("Refresh catalog every (s)", self.scan_interval)
         form.addRow("Maximum results", self.limit)
         self.content_threads = NumberField(
@@ -431,13 +448,16 @@ class SettingsDialog(QDialog):
             index_apps=self.apps.isChecked(),
             explorer_typing=self.explorer.isChecked(),
             double_ctrl_ms=self.ctrl_interval.value(),
+            auto_hide=self.auto_hide.isChecked(),
+            auto_hide_seconds=self.auto_hide_delay.value(),
             rescan_seconds=self.scan_interval.value(),
             max_results=self.limit.value(),
             content_search_threads=self.content_threads.value(),
             websites=self.websites.websites(),
         )
 
-    def accept(self) -> None:
+    def save(self) -> None:
+        """Validate and store the edits; the dialog stays open for further changes."""
         self.saved_message.clear()
         try:
             settings = self.read_settings()
@@ -445,8 +465,8 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Check settings", str(exc))
             return
         try:
-            if self.save:
-                self.save(settings)
+            if self.persist:
+                self.persist(settings)
         except OSError as exc:
             QMessageBox.warning(self, "Cannot save settings", str(exc))
             return
@@ -454,4 +474,4 @@ class SettingsDialog(QDialog):
         self.original = settings
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         self.saved_message.setText("Settings saved.")
-        QTimer.singleShot(2500, self.saved_message.clear)
+        self.saved_message_timer.start()

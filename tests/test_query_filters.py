@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import unittest
 
-from pathscout.search.query_parser import parse_query, without_type_filter
+from pathscout.search.query_parser import (
+    QuerySpan,
+    SpanRole,
+    parse_query,
+    query_spans,
+    without_type_filter,
+)
 
 
 class QueryFiltersTest(unittest.TestCase):
@@ -28,6 +34,45 @@ class QueryFiltersTest(unittest.TestCase):
         for text in ("ext:", "ext:()", "ext:( )", "ext:(jpg,png"):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, "ext:"):
                 parse_query(text)
+
+    def test_query_spans_mark_filters_as_the_parser_reads_them(self):
+        def spans(text: str) -> list[tuple[str, SpanRole]]:
+            found = query_spans(text)
+            self.assertTrue(all(span.valid for span in found), text)
+            return [(text[span.start : span.end], span.role) for span in found]
+
+        filter_, content, exclusion = SpanRole.FILTER, SpanRole.CONTENT, SpanRole.EXCLUSION
+        self.assertEqual(
+            spans("report contains:todo size: > 10mb !old ext:(jpg, png)"),
+            [
+                ("contains:todo", content),
+                ("size: > 10mb", filter_),
+                ("!old", exclusion),
+                ("ext:(jpg, png)", filter_),
+            ],
+        )
+        self.assertEqual(
+            spans(r'in:"D:\Work Projects" RG:"two words" after:2026-02*'),
+            [
+                (r'in:"D:\Work Projects"', filter_),
+                ('RG:"two words"', content),
+                ("after:2026-02*", filter_),
+            ],
+        )
+        # The parser rejects these values; the field marks them once the cursor leaves.
+        for text, role in (
+            ("size:", filter_),
+            ("after:2026-13", filter_),
+            ("ext:(jpg", filter_),
+            (r'in:"D:\Wo', filter_),
+            ("type:x", filter_),
+            ("contains:", content),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(query_spans(text), (QuerySpan(0, len(text), role, False),))
+        for text in (r"C:\Work t", "report", "! alone", "%TEMP%", "~/Projects size:>1kb"):
+            with self.subTest(text=text):
+                self.assertEqual(spans(text), [])
 
     def test_type_aliases_share_kind_history_and_ui_replacement(self):
         for prefix in ("type", "t", "T"):
