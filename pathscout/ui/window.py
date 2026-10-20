@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -61,6 +62,7 @@ from PySide6.QtWidgets import (
 
 from pathscout.calculator import Calculation, calculate
 from pathscout.catalog.model import ItemKind
+from pathscout.platform.gesture import ViewKind
 from pathscout.search.query import SearchQuery
 from pathscout.search.query_parser import without_type_filter
 from pathscout.search.ranking import SearchHit
@@ -111,6 +113,37 @@ FILTERS = (
 )
 NO_MATCHES = "No matches. Try a shorter name, another spelling or fewer filters."
 logger = logging.getLogger(__name__)
+
+
+class ElidedLabel(QLabel):
+    """One right-aligned line that shortens its text with … instead of widening the window.
+
+    It reports no width of its own, so it takes only the space the layout has left.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._full_text = ""
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+    def text(self) -> str:
+        return self._full_text
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt override.
+        self._full_text = text
+        self.setToolTip(text)
+        self._elide()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override.
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        metrics = self.fontMetrics()
+        super().setText(
+            metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, self.width())
+        )
 
 
 class ResultList(QListWidget):
@@ -271,7 +304,9 @@ def _runs(text: str, highlighted: set[int]) -> Iterator[tuple[int, int, bool]]:
             start = index
 
 
-def _shortcut_hint(row: ResultRow | None, *, explorer: bool, calculation: bool) -> str:
+def _shortcut_hint(
+    row: ResultRow | None, *, explorer: bool, calculation: bool, dialog: bool = False
+) -> str:
     """The most useful keys for what Enter would act on now."""
     if calculation:
         return "↵ copy result"
@@ -279,6 +314,10 @@ def _shortcut_hint(row: ResultRow | None, *, explorer: bool, calculation: bool) 
         return ""
     if row.file_hit is None:
         return "↵ open in browser · Ctrl+C copy URL"
+    if dialog:
+        if row.file_hit.item.kind == ItemKind.FOLDER:
+            return "↵ open in the dialog"
+        return "↵ enter as file name"
     if explorer:
         return "↵ open · ↑↓ select in Explorer"
     return "↵ open · Ctrl+↵ show in folder · Ctrl+C copy file · Ctrl+1–9"
@@ -399,6 +438,8 @@ class LauncherWindow(QWidget):
         self.catalog_count = 0
         self.explorer_mode = False  # Compact bar next to the Explorer window.
         self.explorer_view: tuple[int, int] | None = None
+        # Whether `explorer_view` is an Explorer tab or an Open/Save dialog (Quick Switch).
+        self.view_kind = ViewKind.EXPLORER
         self.website_icons = website_icons
         # Result locations are relative to this folder in an Explorer search.
         self.result_scope: Path | None = None
@@ -448,9 +489,10 @@ class LauncherWindow(QWidget):
         self.detail = self._label("detail")
         self.status = self._label("status")
         self.status.setWordWrap(False)
-        self.hint = self._label("hint")
-        self.hint.setWordWrap(False)
+        self.hint = ElidedLabel()
+        self.hint.setObjectName("hint")
         self.hint.setAccessibleName("Keyboard shortcuts")
+        self.hint.hide()
         self.activity = self._label("activity")
         layout.addWidget(self.detail)
         layout.addWidget(self._build_footer())
@@ -544,8 +586,7 @@ class LauncherWindow(QWidget):
         row.setContentsMargins(22, 2, 14, 2)
         row.setSpacing(4)
         row.addWidget(self.status)
-        row.addStretch(1)
-        row.addWidget(self.hint)
+        row.addWidget(self.hint, 1)  # Takes the space left over, right-aligned.
         row.addSpacing(HINT_SPACING)
         self.kind_buttons: dict[ItemKind, QToolButton] = {}
         for number, (kind, label, icon) in enumerate(
@@ -880,6 +921,7 @@ class LauncherWindow(QWidget):
     def set_scope(self, folder: Path | None) -> None:
         if folder is None and self.explorer_mode:
             self.explorer_view = None
+            self.view_kind = ViewKind.EXPLORER
             self._set_explorer_mode(False, None)
             self._place_on_cursor_screen()
         self._show_scope(folder)
@@ -909,15 +951,18 @@ class LauncherWindow(QWidget):
         scope: Path | None = None,
         near: tuple[int, int, int, int] | None = None,
         explorer_view: tuple[int, int] | None = None,
+        view_kind: ViewKind = ViewKind.EXPLORER,
     ) -> None:
         """Show with `text` typed below `scope`.
 
-        With `near` (an Explorer window in physical pixels) the compact Explorer
-        bar opens at the bottom of that window; otherwise the launcher opens on
-        the cursor's screen.
+        With `near` (an Explorer window or file dialog in physical pixels) the
+        compact Explorer bar opens at the bottom of that window; otherwise the
+        launcher opens on the cursor's screen. `view_kind` says what
+        `explorer_view` belongs to.
         """
         self._show_scope(scope)
         self.explorer_view = explorer_view
+        self.view_kind = view_kind
         if explorer_view is not None or near is not None:
             self.kind = None  # Explorer completion always searches the whole folder.
             self.show_kind(None)
@@ -1098,6 +1143,7 @@ class LauncherWindow(QWidget):
             None if self.results.isHidden() else self.selected_row(),
             explorer=self.explorer_mode,
             calculation=self.calculation_selected,
+            dialog=self.serves_file_dialog,
         )
         self.hint.setText(hint)
         self.hint.setVisible(bool(hint))
@@ -1123,12 +1169,20 @@ class LauncherWindow(QWidget):
 
         New results move Explorer only to a direct entry of the folder, replacing
         whatever Explorer's own type-ahead picked; arrow keys move it to any result.
+        A file dialog does not follow.
         """
         row = self.selected_row()
-        if not self.explorer_mode or row is None or (direct_only and not row.direct):
+        if not self.explorer_mode or self.serves_file_dialog:
+            return
+        if row is None or (direct_only and not row.direct):
             return
         if (hit := row.file_hit) is not None:
             self.explorer_selection.emit(hit)
+
+    @property
+    def serves_file_dialog(self) -> bool:
+        """Whether the bar was opened by typing in an Open or Save dialog."""
+        return self.explorer_view is not None and self.view_kind is ViewKind.FILE_DIALOG
 
     def reveal_selected(self) -> None:
         if (row := self.selected_row()) and (hit := row.file_hit):

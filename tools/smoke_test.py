@@ -157,7 +157,10 @@ def check_native_keyboard_hook() -> None:
     from pathscout.platform.keyboard import KeyboardListener
 
     listener = KeyboardListener(
-        queue.SimpleQueue(), interval_ms=DEFAULT_DOUBLE_CTRL_MS, explorer_typing=False
+        queue.SimpleQueue(),
+        interval_ms=DEFAULT_DOUBLE_CTRL_MS,
+        explorer_typing=False,
+        quick_switch=False,
     )
     listener.start()
     try:

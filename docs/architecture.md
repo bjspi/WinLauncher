@@ -47,6 +47,7 @@ flowchart TD
 | `settings.py` | Validated settings value object and atomic JSON file |
 | `actions.py` | Open, reveal and favorite use cases; only successful opens are learned |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
+| `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
 | `platform/git.py` | Read-only git queries for self-updating a source checkout |
 | `releases.py` | Release tags, installation kinds and their update commands |
@@ -199,6 +200,17 @@ PathScout uses an out-of-process low-level keyboard hook, pointer-sized ctypes
 declarations, and `Shell.Application` to resolve a filesystem folder. It accepts
 typing only in a recognized Explorer file view and never injects code into Explorer.
 After a dead key, the next key stays with Explorer so accent composition is not broken.
+
+Quick Switch treats Open and Save dialogs of other programs like Explorer tabs.
+The `ExplorerTracker` also resolves a focused dialog file list, reading the folder
+from the dialog's breadcrumb toolbar text, and remembers the most recently focused
+Explorer tab, whose folder it reads again while a dialog is in front. Both reach
+the hook as cached values. `ExplorerTyping` carries a `ViewKind`, so the controller
+opens the same compact bar and routes a chosen result to
+`ItemActions.choose_in_dialog` instead of `navigate_to`; Ctrl+G queues a
+`FolderJumpRequested`. `platform/file_dialog.py` drives the dialog on the action
+worker with `WM_GETTEXT`, `WM_SETTEXT` and the default button's `WM_COMMAND`, all
+with timeouts, so a hung dialog cannot block PathScout.
 
 `StartupShortcut` manages only `PathScout.lnk` in the user's Startup known folder.
 The shortcut file is the source of truth for the tray and the settings dialog. It

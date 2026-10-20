@@ -325,6 +325,16 @@ class SettingsDialog(QDialog):
         self.explorer = QCheckBox("Search when typing in Explorer's file view")
         self.explorer.setChecked(settings.explorer_typing)
         form.addRow(self.explorer)
+        self.quick_switch = QCheckBox(
+            "Quick Switch in Open and Save dialogs: type to search, "
+            "Ctrl+G jumps to the open Explorer folder"
+        )
+        self.quick_switch.setChecked(settings.quick_switch)
+        self.quick_switch.setToolTip(
+            "Choosing a folder opens it in the dialog; choosing a file enters its name "
+            "without confirming."
+        )
+        form.addRow(self.quick_switch)
         self.ctrl_interval = NumberField(DOUBLE_CTRL_RANGE_MS, settings.double_ctrl_ms, "ms")
         self.scan_interval = NumberField(RESCAN_RANGE_SECONDS, settings.rescan_seconds, "seconds")
         self.limit = NumberField(RESULT_LIMIT_RANGE, settings.max_results)
@@ -447,6 +457,7 @@ class SettingsDialog(QDialog):
             attribute_priorities=advanced.attributes,
             index_apps=self.apps.isChecked(),
             explorer_typing=self.explorer.isChecked(),
+            quick_switch=self.quick_switch.isChecked(),
             double_ctrl_ms=self.ctrl_interval.value(),
             auto_hide=self.auto_hide.isChecked(),
             auto_hide_seconds=self.auto_hide_delay.value(),

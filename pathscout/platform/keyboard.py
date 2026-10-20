@@ -1,4 +1,4 @@
-"""Global keyboard adapter: double Ctrl, Ctrl+Alt+Space and Explorer type-to-search.
+"""Global keyboard adapter: double Ctrl, Ctrl+Alt+Space, type-to-search and Quick Switch.
 
 The hook callback runs on this thread's message loop and must return quickly;
 it reads cached Explorer context and never waits for COM or disk I/O.
@@ -17,9 +17,11 @@ from pathscout.platform.explorer import ExplorerTracker
 from pathscout.platform.gesture import (
     DoubleCtrlGesture,
     ExplorerTyping,
+    FolderJumpRequested,
     InputUnavailable,
     KeyboardIntent,
     ShowRequested,
+    ViewKind,
 )
 from pathscout.platform.windows import (
     HOOKPROC,
@@ -29,6 +31,7 @@ from pathscout.platform.windows import (
     MOD_CONTROL,
     MOD_NOREPEAT,
     PM_NOREMOVE,
+    VK_G,
     VK_SPACE,
     WH_KEYBOARD_LL,
     WM_HOTKEY,
@@ -36,8 +39,11 @@ from pathscout.platform.windows import (
     WM_QUIT,
     WM_SYSKEYDOWN,
     KeyboardData,
+    dialog_file_view,
     explorer_file_view,
+    foreground_file_dialog,
     kernel32,
+    only_ctrl_held,
     typed_key,
     user32,
     window_rect,
@@ -54,12 +60,14 @@ class KeyboardListener(threading.Thread):
         *,
         interval_ms: int,
         explorer_typing: bool = True,
+        quick_switch: bool = True,
     ):
         super().__init__(name="global-keyboard", daemon=True)
         self.events = events
         self.gesture = DoubleCtrlGesture(interval_ms)
         self.explorer_typing = explorer_typing
-        self.tracker = ExplorerTracker(on_failure=self._report)
+        self.quick_switch = quick_switch  # Typing and Ctrl+G in Open and Save dialogs.
+        self.tracker = ExplorerTracker(on_failure=self._report, dialogs=quick_switch)
         self.ready = threading.Event()
         self._thread_id = 0
         self._hook = None
@@ -104,7 +112,7 @@ class KeyboardListener(threading.Thread):
         self._hotkey_registered = bool(user32.RegisterHotKey(None, HOTKEY_ID, modifiers, VK_SPACE))
         if not self._hotkey_registered:
             self._report("Ctrl+Alt+Space is already registered by another application.")
-        if self.explorer_typing:
+        if self.explorer_typing or self.quick_switch:
             self.tracker.start()
         logger.info(
             "Keyboard ready: hook=%s hotkey=%s double_ctrl_ms=%.0f",
@@ -156,7 +164,7 @@ class KeyboardListener(threading.Thread):
             self.events.put(ShowRequested(source="double_ctrl"))
         if not pressed:
             return self._release_swallowed_key(data.vkCode)
-        return self._capture_explorer_typing(data)
+        return self._capture_folder_jump(data) or self._capture_explorer_typing(data)
 
     def _release_swallowed_key(self, key: int) -> bool:
         """A key whose press went to PathScout must not release into Explorer."""
@@ -165,12 +173,28 @@ class KeyboardListener(threading.Thread):
         self._swallowed_keys.remove(key)
         return True
 
+    def _capture_folder_jump(self, data: KeyboardData) -> bool:
+        """Ctrl+G in a file dialog with a known Explorer folder; Ctrl+G elsewhere passes."""
+        if not self.quick_switch or data.vkCode != VK_G or not only_ctrl_held():
+            return False
+        if data.vkCode in self._swallowed_keys:
+            return True  # Auto-repeat of a jump already requested.
+        folder = self.tracker.explorer_folder
+        dialog = foreground_file_dialog() if folder is not None else None
+        if dialog is None:
+            return False
+        self.events.put(FolderJumpRequested(dialog, folder))
+        self._swallowed_keys.add(data.vkCode)
+        return True
+
     def _capture_explorer_typing(self, data: KeyboardData) -> bool:
-        context = self.tracker.context if self.explorer_typing else None
-        if context is None or explorer_file_view() != (context.hwnd, context.tab):
+        context = self.tracker.context
+        if context is None or not self._types_into(context.kind):
+            return False
+        if self._focused_view(context.kind) != (context.hwnd, context.tab):
             return False
         if self._dead_key_pending:
-            # This key completes an accent in Explorer; PathScout stays out of it.
+            # This key completes an accent in the file view; PathScout stays out of it.
             self._dead_key_pending = False
             return False
         key = typed_key(data)
@@ -181,8 +205,19 @@ class KeyboardListener(threading.Thread):
             return False
         self.events.put(
             ExplorerTyping(
-                key.text, context.folder, window_rect(context.hwnd), (context.hwnd, context.tab)
+                key.text,
+                context.folder,
+                window_rect(context.hwnd),
+                (context.hwnd, context.tab),
+                context.kind,
             )
         )
         self._swallowed_keys.add(data.vkCode)
         return True
+
+    def _types_into(self, kind: ViewKind) -> bool:
+        return self.quick_switch if kind is ViewKind.FILE_DIALOG else self.explorer_typing
+
+    @staticmethod
+    def _focused_view(kind: ViewKind) -> tuple[int, int] | None:
+        return dialog_file_view() if kind is ViewKind.FILE_DIALOG else explorer_file_view()

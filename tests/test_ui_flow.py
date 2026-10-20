@@ -24,7 +24,12 @@ from pathscout.actions import ExplorerTarget
 from pathscout.catalog import long_paths
 from pathscout.catalog.model import CatalogItem, ItemKind
 from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
-from pathscout.platform.gesture import ExplorerTyping, InputUnavailable
+from pathscout.platform.gesture import (
+    ExplorerTyping,
+    FolderJumpRequested,
+    InputUnavailable,
+    ViewKind,
+)
 from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import SearchHit
 from pathscout.settings import Settings, SettingsFile
@@ -34,8 +39,10 @@ from pathscout.ui.indexing import IndexJobKind
 from pathscout.ui.settings import SettingsDialog
 from pathscout.ui.tasks import TaskCategory
 from pathscout.ui.theme import Palette
-from pathscout.ui.window import EXPLORER_RIGHT_GAP
+from pathscout.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MARGIN
 from pathscout.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
+
+DIALOG = ViewKind.FILE_DIALOG
 
 
 @dataclass
@@ -868,12 +875,88 @@ class UiFlowTest(unittest.TestCase):
         self.assertIsNone(explorer.entry_for(self.root))
         self.assertIsNone(explorer.entry_for(self.root.parent / "elsewhere.txt"))
 
+    def test_explorer_bar_keeps_its_width_after_the_expanded_launcher(self):
+        # The expanded launcher's long footer hint once held the Explorer bar at its width.
+        hits = [
+            SearchHit(CatalogItem(self.root / f"report {i}.txt", ItemKind.FILE), 100, "x")
+            for i in range(20)
+        ]
+        self.window.set_catalog_count(412_345)
+        self.window.toggle_expanded()
+        self.window.set_results(hits, 3)
+        self.app.processEvents()
+        self.assertIn("Ctrl+C copy file", self.window.hint.text())
+        self.window.present(
+            text="rep", scope=self.root, near=(0, 0, 1000, 800), explorer_view=(1, 2)
+        )
+        self.window.set_results(hits, 3)
+        self.app.processEvents()
+        self.assertEqual(self.window.width(), EXPLORER_WIDTH + 2 * SHADOW_MARGIN)
+        self.assertEqual(self.window.hint.text(), "↵ open · ↑↓ select in Explorer")
+
     def test_clearing_explorer_scope_restores_global_launcher(self):
         self.window.present(scope=self.root, near=(0, 0, 1000, 800), explorer_view=(11, 22))
         self.window.set_scope(None)
         self.assertFalse(self.window.explorer_mode)
         self.assertIsNone(self.window.explorer_view)
         self.assertFalse(self.controller.search.current_query().explorer)
+
+    def test_quick_switch_bar_chooses_folders_and_files_in_the_dialog(self):
+        self.window.hide()
+        folder = self.root / "toolbox-cli"
+        folder.mkdir()
+        file = self.root / "toolbox.txt"
+        file.touch()
+        choose = patch.object(self.controller.actions, "choose_in_dialog").start()
+        select = patch.object(self.controller.actions, "select_in_explorer").start()
+        dialog = ExplorerTyping("toolbox", self.root, (0, 0, 900, 600), (33, 44), DIALOG)
+        for row, path, hint in ((0, folder, "↵ open in the dialog"), (1, file, "↵ enter as file")):
+            self.controller._search_from_explorer(dialog)
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            # The same compact bar as in Explorer, but the dialog does not follow arrow keys.
+            self.assertTrue(self.window.explorer_mode)
+            self.assertTrue(self.controller.search.current_query().explorer)
+            self.assertFalse(self.controller.explorer_select.isActive())
+            self.window.results.setCurrentRow(row)
+            self.assertFalse(self.controller.explorer_select.isActive())
+            self.assertTrue(self.window.hint.text().startswith(hint))
+            self.window.open_row(row)
+            self.assertFalse(self.window.isVisible())
+            self.tasks.finish(TaskCategory.ACTION)
+            choose.assert_called_with(path, "toolbox", 33)
+        self.launch.assert_not_called()
+        select.assert_not_called()
+        # An Explorer search afterwards targets Explorer again.
+        self.controller._search_from_explorer(
+            ExplorerTyping("toolbox", self.root, (0, 0, 900, 600), (11, 22))
+        )
+        self.assertEqual(self.controller._explorer_target(), ExplorerTarget(11, 22, self.root))
+        self.assertIsNone(self.controller._dialog_target())
+
+    def test_ctrl_g_jump_navigates_the_dialog_in_the_background(self):
+        show = patch.object(self.controller.actions, "show_in_dialog").start()
+        self.controller.keyboard_events.put(FolderJumpRequested(33, self.root))
+        self.controller._drain_keyboard()
+        self.tasks.finish(TaskCategory.ACTION)
+        show.assert_called_once_with(self.root, 33)
+
+    def test_quick_switch_setting_is_shown_and_restarts_the_keyboard(self):
+        dialog = self.settings_dialog(self.controller.settings)
+        self.assertTrue(dialog.quick_switch.isChecked())
+        self.assertIn("Ctrl+G", dialog.quick_switch.text())
+        dialog.quick_switch.setChecked(False)
+        settings = dialog.read_settings()
+        self.assertFalse(settings.quick_switch)
+        dialog.deleteLater()
+        with (
+            patch.object(self.controller, "_stop_keyboard") as stop,
+            patch.object(self.controller, "_start_keyboard") as start,
+        ):
+            self.controller.apply_settings(settings)
+        stop.assert_called_once()
+        start.assert_called_once()
+        self.assertFalse(self.controller.settings_file.load().quick_switch)
 
     def test_settings_save_failure_keeps_dialog_and_edits(self):
         save = Mock(side_effect=OSError("Disk unavailable"))

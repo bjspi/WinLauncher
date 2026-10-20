@@ -328,6 +328,27 @@ Qt query field. Virtual shell folders and ambiguous tabs are not intercepted.
 After a dead key, the next key is left to Explorer, so accented type-ahead remains
 Explorer's. IME composition needs target-system validation.
 
+Quick Switch (setting `quick_switch`, on by default) extends Explorer typing to the
+common Open and Save dialogs of other programs: a `#32770` dialog that hosts a
+`SHELLDLL_DefView` file list. Typing starts only while that file list has the
+focus; the file-name box, address bar, search box and navigation pane keep their
+keys. `Shell.Application` does not list dialogs, so the folder is read from the
+dialog's breadcrumb toolbar, whose text is a localized label followed by the path
+(`Address: C:\…`, `Adresse: C:\…`). The path is recognized by its drive letter or
+UNC prefix and must be an existing directory; virtual folders such as This PC are
+not intercepted. The same compact bar opens, docked to the dialog, without
+arrow-key selection in the dialog. Choosing a folder enters its path into the
+dialog's file-name box (control 1148 in Open dialogs, otherwise the first visible
+edit outside the address bar and file list), sends the default button's command as
+Enter would, waits up to three seconds for the address bar to show the folder and
+then restores the file name the user had typed. Choosing a file does the same for
+its folder and then enters the file's name and focuses the box without confirming.
+Ctrl+G with a file dialog in front, and no other modifier, navigates the dialog to
+the current folder of the most recently focused Explorer tab, keeping the typed
+file name; it is swallowed only then and passes through everywhere else, also when
+that tab shows a virtual folder or has closed. Only window messages that Windows
+marshals between processes are used; nothing is injected into the dialog's process.
+
 Open uses the Windows file association or shortcut; reveal selects the result in
 Explorer. Applications receive their containing directory as the working directory.
 Clipboard actions copy path, filename or parent path. Enter during an outstanding
@@ -439,6 +460,8 @@ All other settings apply on Save. Validation or save errors keep the dialog open
 with the edits intact. Changing roots, exclusions, markers, priority rules or
 application indexing restarts folder watching and rescans; changing only the result
 limit, interval or input settings does not rescan and keeps an Explorer scope.
+Input settings (double-Ctrl interval, Explorer typing, Quick Switch) restart the
+keyboard listener.
 
 PathScout searches with the Rust engine. When the extension is missing or does
 not support the running Python, it searches with the Python engine, shows the

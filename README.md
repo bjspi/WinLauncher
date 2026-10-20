@@ -29,6 +29,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | --- | --- |
 | ⚡ **Instant launcher** | Double-tap <kbd>Ctrl</kbd> or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere. A compact bar opens; results appear as you type. |
 | 📂 **Type-to-search in Explorer** | Start typing in an Explorer file list and a slim bar docks to that window, searching the folder you are in — its own entries first. |
+| 🔀 **Quick Switch in Open/Save dialogs** | Type in a dialog's file list to search its folder: a folder opens in the dialog, a file fills in its name. <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps the dialog to the folder of your last Explorer window. |
 | 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. |
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
@@ -51,6 +52,15 @@ folders containing `.nobackup` or `.no-backup`; their contents stay excluded fro
 indexing and recursive search. Clicking a folder or pressing Enter navigates the
 original Explorer tab, without opening another window. Clearing the scope returns
 to the global launcher.
+
+**Quick Switch** brings the same bar to the Open and Save dialogs of other
+programs. Click into the dialog's file list and start typing: choosing a folder
+opens it in the dialog, choosing a file opens its folder and enters its name in
+the file-name box. PathScout never confirms the dialog for you, so a Save dialog
+cannot overwrite anything until you press <kbd>Enter</kbd> yourself. In any Open or
+Save dialog, <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps to the folder of the Explorer window
+you used last; the file name you had typed stays. Turn it off in **Settings →
+Search & indexing**.
 
 ## 🚀 Quick start
 
@@ -147,6 +157,8 @@ Favicons load in the background directly from each site's
 | <kbd>Ctrl</kbd> <kbd>Ctrl</kbd> | Show or hide the search bar |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> | Alternative global shortcut |
 | Typing in Explorer | Complete direct folder/file names; search below only without a direct match |
+| Typing in an Open/Save dialog's file list | Quick Switch: open a folder in the dialog or enter a file's name |
+| <kbd>Ctrl</kbd>+<kbd>G</kbd> in an Open/Save dialog | Jump to the folder of the last used Explorer window |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Select a result |
 | <kbd>Enter</kbd> | Open the selected result |
 | <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>Ctrl</kbd>+<kbd>9</kbd> | Open the numbered result |
@@ -521,6 +533,10 @@ The finished release appears under [Releases](https://github.com/bjspi/PathScout
   broad one-letter searches over 50,000 entries take around half a second.
 - Input methods (IME), Windows 11 tab edge cases, high-DPI multi-monitor setups and
   screen readers still need more real-world testing.
+- Quick Switch works with the standard Windows Open and Save dialogs that show an
+  address bar. Virtual folders such as This PC or Libraries, old-style dialogs and
+  applications with their own file dialogs are left alone. In a "Select Folder"
+  dialog, choosing a folder selects it, as typing its path would.
 
 ## 📄 License
 

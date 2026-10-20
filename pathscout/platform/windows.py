@@ -24,6 +24,7 @@ WINEVENTPROC = ctypes.WINFUNCTYPE(
     wintypes.DWORD,  # Event thread
     wintypes.DWORD,  # Event time
 )
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 # Hooks and messages
 WH_KEYBOARD_LL = 13
@@ -47,6 +48,7 @@ VK_CONTROL = 0x11
 VK_MENU = 0x12
 VK_CAPITAL = 0x14
 VK_SPACE = 0x20
+VK_G = 0x47
 VK_LWIN = 0x5B
 VK_RWIN = 0x5C
 VK_LSHIFT = 0xA0
@@ -65,6 +67,7 @@ EXPLORER_WINDOW_CLASSES = ("CabinetWClass", "ExploreWClass")
 FILE_VIEW_FOCUS_CLASSES = ("DirectUIHWND", "SysListView32", "SHELLDLL_DefView")
 FILE_VIEW_CLASS = "SHELLDLL_DefView"
 TAB_CLASS = "ShellTabWindowClass"
+DIALOG_CLASS = "#32770"  # Every dialog box, including the common Open and Save dialogs.
 MAX_FOCUS_ANCESTORS = 20
 
 
@@ -115,6 +118,24 @@ _bind(user32, "GetClassNameW", [_HWND, wintypes.LPWSTR, _INT], _INT)
 _bind(user32, "GetGUIThreadInfo", [wintypes.DWORD, ctypes.POINTER(GuiThreadInfo)], wintypes.BOOL)
 _bind(user32, "FindWindowExW", [_HWND, _HWND, wintypes.LPCWSTR, wintypes.LPCWSTR], _HWND)
 _bind(user32, "IsWindowVisible", [_HWND], wintypes.BOOL)
+_bind(user32, "IsWindow", [_HWND], wintypes.BOOL)
+_bind(user32, "EnumChildWindows", [_HWND, WNDENUMPROC, wintypes.LPARAM], wintypes.BOOL)
+_bind(user32, "GetDlgItem", [_HWND, _INT], _HWND)
+_bind(
+    user32,
+    "SendMessageTimeoutW",
+    [
+        _HWND,
+        _UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+        _UINT,  # SMTO_* flags
+        _UINT,  # Timeout in milliseconds
+        ctypes.POINTER(ULONG_PTR),
+    ],
+    LRESULT,
+)
+_bind(user32, "PostMessageW", [_HWND, _UINT, wintypes.WPARAM, wintypes.LPARAM], wintypes.BOOL)
 _bind(user32, "GetWindowRect", [_HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL)
 _bind(user32, "GetAsyncKeyState", [_INT], ctypes.c_short)
 _bind(user32, "GetKeyState", [_INT], ctypes.c_short)
@@ -291,6 +312,49 @@ def active_tab(hwnd: int) -> int:
     return hwnd
 
 
+def only_ctrl_held() -> bool:
+    """Ctrl is down without Shift, Alt (which includes AltGr) or a Windows key."""
+    if not is_key_down(VK_CONTROL):
+        return False
+    return not any(is_key_down(key) for key in (VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN))
+
+
+def descendants(hwnd: int) -> list[int]:
+    """All windows below `hwnd`, depth first in Z order, as EnumChildWindows reports them."""
+    found: list[int] = []
+
+    def collect(child: int, _parameter: int) -> bool:
+        found.append(child)
+        return True
+
+    user32.EnumChildWindows(hwnd, WNDENUMPROC(collect), 0)
+    return found
+
+
+def foreground_explorer() -> tuple[int, int] | None:
+    """`(window, tab)` of the Explorer window in front, wherever its focus is."""
+    hwnd = user32.GetForegroundWindow()
+    if class_name(hwnd) not in EXPLORER_WINDOW_CLASSES:
+        return None
+    return hwnd, active_tab(hwnd)
+
+
+def is_file_dialog(hwnd: int) -> bool:
+    """Whether `hwnd` is a dialog box that hosts a shell file list.
+
+    Common Open and Save dialogs are ordinary `#32770` dialogs that embed the same
+    `SHELLDLL_DefView` as Explorer; message boxes and other dialogs embed none.
+    """
+    if not hwnd or class_name(hwnd) != DIALOG_CLASS:
+        return False
+    return any(class_name(child) == FILE_VIEW_CLASS for child in descendants(hwnd))
+
+
+def foreground_file_dialog() -> int | None:
+    hwnd = user32.GetForegroundWindow()
+    return hwnd if is_file_dialog(hwnd) else None
+
+
 def explorer_file_view() -> tuple[int, int] | None:
     """`(window, tab)` when Explorer's file list has keyboard focus, else None.
 
@@ -300,12 +364,31 @@ def explorer_file_view() -> tuple[int, int] | None:
     hwnd = user32.GetForegroundWindow()
     if class_name(hwnd) not in EXPLORER_WINDOW_CLASSES:
         return None
+    if _focused_file_view(hwnd) is None:
+        return None
+    return hwnd, active_tab(hwnd)
+
+
+def dialog_file_view() -> tuple[int, int] | None:
+    """`(dialog, file view)` when the file list of an Open or Save dialog has focus.
+
+    The file-name box, address bar, search box and navigation pane never count.
+    A dialog recreates its file view when it changes folder, so the pair also
+    identifies the folder shown when it was captured.
+    """
+    hwnd = user32.GetForegroundWindow()
+    if class_name(hwnd) != DIALOG_CLASS:
+        return None
+    view = _focused_file_view(hwnd)
+    return (hwnd, view) if view is not None else None
+
+
+def _focused_file_view(top_level: int) -> int | None:
+    """The `SHELLDLL_DefView` that contains the idle keyboard focus below `top_level`."""
     focus = _idle_focus_window()
     if not focus or class_name(focus) not in FILE_VIEW_FOCUS_CLASSES:
         return None
-    if not _inside_file_view(focus, hwnd):
-        return None
-    return hwnd, active_tab(hwnd)
+    return _file_view_ancestor(focus, top_level)
 
 
 def _idle_focus_window() -> int | None:
@@ -320,14 +403,14 @@ def _idle_focus_window() -> int | None:
     return info.hwndFocus
 
 
-def _inside_file_view(focus: int, top_level: int) -> bool:
+def _file_view_ancestor(focus: int, top_level: int) -> int | None:
     for _ in range(MAX_FOCUS_ANCESTORS):
         if class_name(focus) == FILE_VIEW_CLASS:
-            return True
+            return focus
         focus = user32.GetParent(focus)
         if not focus or focus == top_level:
-            return False
-    return False
+            return None
+    return None
 
 
 @dataclass(frozen=True, slots=True)

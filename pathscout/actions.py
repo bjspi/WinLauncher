@@ -40,6 +40,27 @@ class ItemActions:
         # Only successful shell invocations count as usage.
         self.store.record_launch(path, query_key)
 
+    def choose_in_dialog(self, path: Path, query_key: str, dialog: int) -> None:
+        """Quick Switch: a folder opens in the file dialog; a file becomes its file name.
+
+        The dialog is never confirmed for a file, so a Save dialog cannot overwrite it.
+        """
+        from pathscout.platform.file_dialog import FileDialog, choose_file, open_folder
+
+        target = FileDialog(dialog)
+        if path.is_dir():
+            open_folder(target, path)
+        else:
+            choose_file(target, path)
+        self.store.record_launch(path, query_key)
+
+    def show_in_dialog(self, folder: Path, dialog: int) -> None:
+        """Ctrl+G: show `folder` in the file dialog, keeping the typed file name."""
+        from pathscout.platform.file_dialog import FileDialog, open_folder
+
+        if folder.is_dir():  # Explorer's folder may have been removed since it was read.
+            open_folder(FileDialog(dialog), folder)
+
     def reveal(self, path: Path) -> None:
         shell.show_in_folder(path)
 

@@ -126,6 +126,8 @@ class Settings:
     attribute_priorities: tuple[AttributePriority, ...] = ()
     index_apps: bool = True
     explorer_typing: bool = True
+    # Open and Save dialogs: typing searches their folder, Ctrl+G shows Explorer's folder.
+    quick_switch: bool = True
     double_ctrl_ms: int = DEFAULT_DOUBLE_CTRL_MS
     # Hide the launcher when it lost focus with nothing typed.
     auto_hide: bool = True
@@ -160,7 +162,7 @@ class Settings:
     @property
     def input_key(self) -> tuple:
         """Settings that the global keyboard listener reads at start."""
-        return self.double_ctrl_ms, self.explorer_typing
+        return self.double_ctrl_ms, self.explorer_typing, self.quick_switch
 
     def exclusions(self, *, raise_marker_errors: bool = False) -> ExclusionPolicy:
         return ExclusionPolicy(

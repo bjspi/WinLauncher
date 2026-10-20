@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 # VK_CONTROL and the left/right specific codes the low-level hook reports.
@@ -18,18 +19,35 @@ class ShowRequested:
     requested_at: float = field(default_factory=time.monotonic)
 
 
+class ViewKind(Enum):
+    """Where a shell file view lives, which decides what choosing a result does."""
+
+    EXPLORER = "explorer"  # Folders navigate the Explorer tab.
+    FILE_DIALOG = "file_dialog"  # Quick Switch: folders navigate the dialog, files fill its name.
+
+
 @dataclass(frozen=True, slots=True)
 class ExplorerTyping:
-    """Text typed into Explorer's file view, searching below `folder`.
+    """Text typed into a file view of Explorer or an Open/Save dialog, searching below `folder`.
 
-    `window` is the Explorer window's (left, top, right, bottom) in physical
-    screen pixels, so the launcher can open next to it.
+    `window` is that window's (left, top, right, bottom) in physical screen
+    pixels, so the launcher can open next to it.
     """
 
     text: str
     folder: Path
     window: tuple[int, int, int, int] | None = None
-    view: tuple[int, int] | None = None  # Originating Explorer window and tab handles.
+    # Originating window and tab handles; for a dialog, the dialog and its file view.
+    view: tuple[int, int] | None = None
+    kind: ViewKind = ViewKind.EXPLORER
+
+
+@dataclass(frozen=True, slots=True)
+class FolderJumpRequested:
+    """Ctrl+G in a file dialog: show `folder`, the most recent Explorer folder, in `dialog`."""
+
+    dialog: int
+    folder: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +55,7 @@ class InputUnavailable:
     message: str
 
 
-KeyboardIntent = ShowRequested | ExplorerTyping | InputUnavailable
+KeyboardIntent = ShowRequested | ExplorerTyping | FolderJumpRequested | InputUnavailable
 
 
 class DoubleCtrlGesture:

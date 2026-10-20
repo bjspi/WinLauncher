@@ -8,7 +8,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from pathscout.platform.windows import activate_window, active_tab, explorer_file_view
+from pathscout.platform.file_dialog import dialog_folder
+from pathscout.platform.gesture import ViewKind
+from pathscout.platform.windows import (
+    activate_window,
+    active_tab,
+    dialog_file_view,
+    explorer_file_view,
+    foreground_explorer,
+    foreground_file_dialog,
+)
 
 logger = logging.getLogger(__name__)
 POLL_SECONDS = 0.25
@@ -23,9 +32,15 @@ SELECT_ONLY_AND_REVEAL = SVSI_SELECT | SVSI_DESELECTOTHERS | SVSI_ENSUREVISIBLE 
 
 @dataclass(frozen=True, slots=True)
 class ExplorerContext:
+    """A focused file view and its folder; for a dialog, `tab` is its file view."""
+
     hwnd: int
     tab: int
     folder: Path
+    kind: ViewKind = ViewKind.EXPLORER
+
+
+FocusedView = tuple[ViewKind, tuple[int, int]]
 
 
 def resolve_folder(shell_windows, hwnd: int, tab: int) -> Path | None:
@@ -114,12 +129,20 @@ def _captured_window(hwnd: int, tab: int, original_folder: Path):
 
 
 class ExplorerTracker(threading.Thread):
-    """Keeps `context` current so the keyboard hook only reads a cached value."""
+    """Keeps `context` current so the keyboard hook only reads a cached value.
 
-    def __init__(self, on_failure: Callable[[str], None]):
+    With `dialogs`, file lists of Open and Save dialogs count as well, and
+    `explorer_folder` holds the folder of the most recently focused Explorer tab
+    while a file dialog is in front, for Ctrl+G.
+    """
+
+    def __init__(self, on_failure: Callable[[str], None], *, dialogs: bool = True):
         super().__init__(name="explorer-context", daemon=True)
         self.context: ExplorerContext | None = None
+        self.explorer_folder: Path | None = None
+        self.dialogs = dialogs
         self.on_failure = on_failure
+        self._last_explorer: tuple[int, int] | None = None
         self._stop_event = threading.Event()
 
     def stop(self) -> None:
@@ -137,33 +160,70 @@ class ExplorerTracker(threading.Thread):
             self.on_failure(f"Explorer type-to-search unavailable: {exc}")
         finally:
             self.context = None
+            self.explorer_folder = None
             pythoncom.CoUninitialize()
 
     def _track(self, shell) -> None:
         import pythoncom
 
         while not self._stop_event.is_set():
-            view = explorer_file_view()
+            view = self._focused_view()
             self._forget_unless_focused(view)
             self.context = self._resolve(shell, view) if view else None
+            if self.dialogs:
+                self._follow_explorer(shell)
             pythoncom.PumpWaitingMessages()
             self._stop_event.wait(POLL_SECONDS)
 
-    def _forget_unless_focused(self, view: tuple[int, int] | None) -> None:
-        """Drop a stale context before the slow COM lookup, so keys are never misrouted."""
-        if self.context and view != (self.context.hwnd, self.context.tab):
+    def _focused_view(self) -> FocusedView | None:
+        if view := explorer_file_view():
+            return ViewKind.EXPLORER, view
+        if self.dialogs and (view := dialog_file_view()):
+            return ViewKind.FILE_DIALOG, view
+        return None
+
+    def _forget_unless_focused(self, view: FocusedView | None) -> None:
+        """Drop a stale context before the slow lookup, so keys are never misrouted."""
+        context = self.context
+        if context and view != (context.kind, (context.hwnd, context.tab)):
             self.context = None
 
+    @classmethod
+    def _resolve(cls, shell, focused: FocusedView) -> ExplorerContext | None:
+        kind, view = focused
+        if kind is ViewKind.FILE_DIALOG:
+            folder = dialog_folder(view[0])
+            current = dialog_file_view
+        else:
+            folder = cls._explorer_folder(shell, view)
+            current = explorer_file_view
+        if folder is None:
+            return None
+        # The user may have switched views while the folder was being resolved.
+        return ExplorerContext(*view, folder, kind) if current() == view else None
+
     @staticmethod
-    def _resolve(shell, view: tuple[int, int]) -> ExplorerContext | None:
+    def _explorer_folder(shell, view: tuple[int, int]) -> Path | None:
         import pythoncom
 
         try:
             folder = resolve_folder(shell.Windows(), *view)
-            if folder is None or not folder.is_dir():
-                return None
+            return folder if folder is not None and folder.is_dir() else None
         except (pythoncom.com_error, OSError):
             logger.debug("Explorer context temporarily unavailable", exc_info=True)
             return None
-        # The user may have switched views while COM was resolving the folder.
-        return ExplorerContext(*view, folder) if explorer_file_view() == view else None
+
+    def _follow_explorer(self, shell) -> None:
+        """Remember the last Explorer tab; read its folder again while a file dialog is in front.
+
+        That tab may have navigated, or closed, since it had the focus.
+        """
+        context = self.context
+        if context is not None and context.kind is ViewKind.EXPLORER:
+            self._last_explorer = context.hwnd, context.tab
+            self.explorer_folder = context.folder
+        elif explorer := foreground_explorer():
+            # Focus is in Explorer's address bar or tree; resolve once a dialog is in front.
+            self._last_explorer, self.explorer_folder = explorer, None
+        elif self._last_explorer is not None and foreground_file_dialog():
+            self.explorer_folder = self._explorer_folder(shell, self._last_explorer)

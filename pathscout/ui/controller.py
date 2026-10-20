@@ -31,9 +31,11 @@ from pathscout.install import mark_reinstall_pending
 from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from pathscout.platform.gesture import (
     ExplorerTyping,
+    FolderJumpRequested,
     InputUnavailable,
     KeyboardIntent,
     ShowRequested,
+    ViewKind,
 )
 from pathscout.platform.shell import application_roots
 from pathscout.platform.startup import PACKAGE_PARENT, StartupShortcut
@@ -214,6 +216,7 @@ class LauncherController(QObject):
             self.keyboard_events,
             interval_ms=self.settings.double_ctrl_ms,
             explorer_typing=self.settings.explorer_typing,
+            quick_switch=self.settings.quick_switch,
         )
         self.keyboard.start()
 
@@ -237,6 +240,8 @@ class LauncherController(QObject):
                 self._toggle_launcher()
             elif isinstance(intent, ExplorerTyping):
                 self._search_from_explorer(intent)
+            elif isinstance(intent, FolderJumpRequested):
+                self._jump_in_dialog(intent)
             elif isinstance(intent, InputUnavailable):
                 self.status.show_problem(ProblemTopic.KEYBOARD, intent.message, intent.message)
 
@@ -275,13 +280,27 @@ class LauncherController(QObject):
             and self.window.explorer_mode
             and self.window.scope == typing.folder
             and self.window.explorer_view == typing.view
+            and self.window.view_kind is typing.kind
         ):
             self.window.query.insert(typing.text)
             return
         self.window.present(
-            text=typing.text, scope=typing.folder, near=typing.window, explorer_view=typing.view
+            text=typing.text,
+            scope=typing.folder,
+            near=typing.window,
+            explorer_view=typing.view,
+            view_kind=typing.kind,
         )
         self.indexing.request_folder(typing.folder)
+
+    def _jump_in_dialog(self, jump: FolderJumpRequested) -> None:
+        """Ctrl+G in a file dialog; a dialog that closed meanwhile is no error to show."""
+        self.tasks.submit(
+            TaskCategory.ACTION,
+            partial(self.actions.show_in_dialog, jump.folder, jump.dialog),
+            lambda _result: None,
+            lambda message: logger.info("Quick Switch jump skipped: %s", message),
+        )
 
     # Folder watching ----------------------------------------------------------
 
@@ -402,9 +421,13 @@ class LauncherController(QObject):
             self.window.report_missing(hit.item.name)
             self.indexing.request_folder(hit.item.path.parent)
             return
-        explorer = self._explorer_target()
+        dialog, explorer = self._dialog_target(), self._explorer_target()
         self.window.hide()
-        self._run_action(partial(self.actions.open, hit.item.path, history_key, explorer=explorer))
+        if dialog is not None:
+            work = partial(self.actions.choose_in_dialog, hit.item.path, history_key, dialog)
+        else:
+            work = partial(self.actions.open, hit.item.path, history_key, explorer=explorer)
+        self._run_action(work)
 
     def follow_in_explorer(self, hit: SearchHit) -> None:
         self.explorer_hit = hit
@@ -426,7 +449,13 @@ class LauncherController(QObject):
     def _explorer_target(self) -> ExplorerTarget | None:
         """The Explorer tab the bar belongs to, if the search started in Explorer."""
         view, scope = self.window.explorer_view, self.window.scope
-        return ExplorerTarget(*view, scope) if view is not None and scope else None
+        if view is None or not scope or self.window.view_kind is not ViewKind.EXPLORER:
+            return None
+        return ExplorerTarget(*view, scope)
+
+    def _dialog_target(self) -> int | None:
+        """The Open or Save dialog the bar belongs to, if the search started in one."""
+        return self.window.explorer_view[0] if self.window.serves_file_dialog else None
 
     def reveal_item(self, hit: SearchHit) -> None:
         self.window.hide()
