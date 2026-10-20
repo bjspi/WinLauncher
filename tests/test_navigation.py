@@ -29,12 +29,20 @@ class PathNavigationTest(unittest.TestCase):
         (self.home / "notes.txt").write_text("fixture")
         self.settings = Settings(roots=(), index_apps=False)
         self.service = SearchService(CatalogStore(self.home / "state" / "catalog.sqlite3"))
+        # Only these variables, so suggestions do not depend on the machine's own.
+        system = {name: os.environ[name] for name in ("SYSTEMROOT", "WINDIR") if name in os.environ}
         self.environment = patch.dict(
             os.environ,
-            USERPROFILE=str(self.home),
-            LOCALAPPDATA=str(self.home / "Local Data"),
-            TEMP=str(self.home / "Temporary"),
-            TMP=str(self.home / "Temporary"),
+            {
+                **system,
+                "USERPROFILE": str(self.home),
+                "LOCALAPPDATA": str(self.home / "Local Data"),
+                "TEMP": str(self.home / "Temporary"),
+                "TMP": str(self.home / "Temporary"),
+                "API_TOKEN": "secret-value",
+                "DEVTOOLS": str(self.toolbox),
+            },
+            clear=True,
         )
         self.environment.start()
         self.addCleanup(self.environment.stop)
@@ -84,6 +92,29 @@ class PathNavigationTest(unittest.TestCase):
         self.assertNotIn(self.toolbox / "nested", self.paths("~/"))
         self.assertIn(self.toolbox / "nested", self.paths("~/.toolbox/"))
         self.assertEqual(self.paths("%USERPROFILE%/missing/"), [])
+
+    def test_folder_names_complete_by_prefix_from_variables_and_shortcuts(self):
+        downloads = self.home / "Downloads"
+        downloads.mkdir()
+        (downloads / "setup.exe").write_text("fixture")
+        self.service = SearchService(self.service.store, lambda: {"DOWNLOADS": downloads})
+
+        def names(text):
+            return [
+                hit.reason.split(" · ")[0]
+                for hit in self.service.search(parse_query(text), self.settings)
+            ]
+
+        # Only names starting with the typed text; TMP reaches TEMP's folder and is left out.
+        self.assertEqual(names("%t"), ["Windows folder: %TEMP%"])
+        self.assertEqual(names("%dev"), ["Windows folder: %DEVTOOLS%"])
+        self.assertEqual(names("%user"), ["Windows folder: %USERPROFILE%"])
+        self.assertEqual(names("%DOWN"), ["Windows folder: %DOWNLOADS%"])
+        # A variable whose value is no folder, such as a token, is never shown.
+        self.assertEqual(names("%api"), [])
+        self.assertEqual(self.paths("%Downloads%\\"), [downloads / "setup.exe"])
+        with self.assertRaisesRegex(ValueError, "Unknown"):
+            self.service.search(parse_query("%NOWHERE%\\"), self.settings)
 
     def test_navigation_honors_exclusions_markers_priorities_and_type(self):
         (self.home / "Report.LNK").touch()

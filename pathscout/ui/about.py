@@ -7,14 +7,16 @@ from html import escape
 from pathlib import Path
 
 import PySide6
-from PySide6.QtCore import Qt, qVersion
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtCore import QUrl, qVersion
+from PySide6.QtGui import QDesktopServices
 
 from pathscout import __version__
 from pathscout.platform.git import checkout_root, current_head, remote_url
 from pathscout.ui.theme import app_icon
+from pathscout.ui.widgets import InfoDialog
 
 TAGLINE = "Fast local search for apps, files and folders on Windows."
+ABOUT_WIDTH = 540  # Room for the runtime versions on one line.
 
 
 def _source_line() -> str:
@@ -29,31 +31,25 @@ def _source_line() -> str:
     return f"Source checkout{revision} in {escape(str(root))}"
 
 
-class AboutDialog(QDialog):
+class AboutDialog(InfoDialog):
     def __init__(self, data_dir: Path, parent=None):
-        super().__init__(parent)
+        super().__init__(f"PathScout {__version__}", TAGLINE, app_icon(), parent, width=ABOUT_WIDTH)
         self.setWindowTitle("About PathScout")
-        icon = QLabel()
-        icon.setPixmap(app_icon().pixmap(56, 56))
-        icon.setAlignment(Qt.AlignmentFlag.AlignTop)
-        text = QLabel(
-            f'<p style="font-size:15pt; font-weight:600; margin:0">PathScout {__version__}</p>'
-            f"<p>{TAGLINE}</p>"
-            f"<p>{_source_line()}<br>"
-            f"Data: {escape(str(data_dir))}<br>"
-            f"Python {platform.python_version()} · PySide6 {PySide6.__version__}"
-            f" · Qt {qVersion()}</p>"
-            "<p>Open source under the MIT License.</p>"
+        self.data_dir = data_dir
+        self.add_facts(
+            [
+                ("Source", _source_line()),
+                ("Data folder", escape(str(data_dir))),
+                (
+                    "Runtime",
+                    f"Python {platform.python_version()} · PySide6 {PySide6.__version__}"
+                    f" · Qt {qVersion()}",
+                ),
+                ("License", "MIT, open source"),
+            ]
         )
-        text.setWordWrap(True)
-        text.setOpenExternalLinks(True)
-        text.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        row = QHBoxLayout()
-        row.addWidget(icon)
-        row.addWidget(text, 1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addLayout(row)
-        layout.addWidget(buttons)
-        self.resize(480, 0)
+        self.add_button("Open data folder", self.open_data_folder)
+        self.add_button("Close", self.accept, primary=True)
+
+    def open_data_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))

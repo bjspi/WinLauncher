@@ -71,7 +71,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--entries", type=int, default=50000)
     parser.add_argument("--engine", choices=("python", "native"), default="python")
-    parser.add_argument("--phase", choices=("rows", "sqlite"), default="sqlite")
+    parser.add_argument("--phase", choices=("rows", "sqlite", "memory"), default="memory")
     parser.add_argument(
         "--directories",
         type=int,

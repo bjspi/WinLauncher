@@ -8,12 +8,16 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+from PySide6.QtCore import QObject, QPoint
+
 from pathscout.__main__ import _create_application
 from pathscout.catalog.model import CatalogItem, ItemKind
 from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import SearchHit
 from pathscout.settings import Settings
+from pathscout.ui.about import AboutDialog
 from pathscout.ui.settings import SettingsDialog
+from pathscout.ui.tray import TrayMenu
 from pathscout.ui.website_icons import WebsiteIcons
 from pathscout.ui.window import LauncherWindow
 
@@ -80,13 +84,56 @@ settle(explorer)
 explorer.grab().save(str(OUT / "explorer-search.png"))
 explorer.hide()
 
+launcher = LauncherWindow(website_icons)
+launcher.set_catalog_count(48213)
+launcher.present(text="invoice ext:pdf date:year !draft")
+launcher.set_results(
+    hits(
+        [
+            (r"D:\Work\Finance\Invoice 2026-031.pdf", ItemKind.FILE, 12, False),
+            (r"D:\Work\Finance\Invoice 2026-024.pdf", ItemKind.FILE, 40, False),
+            (r"D:\Work\Clients\Acme\Invoice March.pdf", ItemKind.FILE, 75, False),
+        ]
+    ),
+    6,
+    query=parse_query("invoice ext:pdf date:year !draft"),
+)
+settle(launcher)
+launcher.grab().save(str(OUT / "query-syntax.png"))
+launcher.hide()
+
 dialog = SettingsDialog(
-    Settings(roots=(r"D:\Work", r"D:\Projects")),
+    Settings(roots=(r"D:\Work", r"D:\Projects", r"C:\Users\you\Desktop")),
     startup_enabled=True,
     set_startup=lambda _enabled: None,
     website_icons=website_icons,
 )
 dialog.show()
-settle(dialog)
-dialog.grab().save(str(OUT / "settings.png"))
+# The shortcuts page scrolls; its screenshot gets the height to show every key.
+for row, name, height in (
+    (0, "settings", 660),
+    (1, "settings-folders", 660),
+    (7, "settings-shortcuts", 1010),
+):
+    dialog.resize(dialog.width(), height)
+    dialog.nav.setCurrentRow(row)
+    settle(dialog)
+    dialog.grab().save(str(OUT / f"{name}.png"))
+dialog.hide()
+
+owner = QObject()
+tray = TrayMenu(owner, autostart_available=True)
+tray.set_catalog_count(48213)
+tray.autostart.setChecked(True)
+tray.menu.popup(QPoint(400, 300))
+settle(tray.menu)
+tray.menu.grab().save(str(OUT / "tray-menu.png"))
+tray.menu.hide()
+
+about = AboutDialog(Path(r"C:\Users\you\.PathScout"))
+about.finish()
+about.show()
+settle(about)
+about.grab().save(str(OUT / "about.png"))
+about.hide()
 print(f"Saved screenshots to {OUT}")

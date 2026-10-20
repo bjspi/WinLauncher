@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +29,7 @@ from pathscout.catalog.model import (
     path_range,
 )
 from pathscout.catalog.store import CatalogStore
-from pathscout.search.matching import is_wildcard
+from pathscout.search.matching import is_wildcard, matches_path
 from pathscout.search.query import SearchQuery
 
 MIN_TRIGRAM_TERM_LENGTH = 3  # FTS5 trigram indexes cannot match shorter terms.
@@ -145,33 +145,80 @@ class Candidate:
         )
 
 
-class _SqlFilter:
-    """WHERE conditions with their parameters, so clause and values cannot drift apart.
+# A condition as SQL text plus the same condition as a plan node for the Rust
+# engine's memory index (`native/src/plan.rs`), which evaluates it like SQLite.
+_Condition = tuple[str, tuple]
+_COLUMNS = frozenset(("path_key", "kind", "name", "search_path", "extension", "size", "modified"))
+_OPERATORS = frozenset(("=", "!=", "<", "<=", ">", ">="))
+
+
+class _CandidateFilter:
+    """WHERE conditions with their parameters and their plan, so the SQL, its values
+    and the Rust engine's in-memory evaluation cannot drift apart.
 
     Placeholders become named parameters with the filter's prefix, so nested
-    filters can be combined without renumbering.
+    filters can be combined without renumbering. The plan is a list of nodes that
+    must all hold: `("like", column, pattern)`, `("compare", column, operator,
+    value)`, `("in", column, values)`, `("any", nodes)`, `("not_all", nodes)`,
+    `("full_text", expression)` and `("learned",)`.
     """
 
     def __init__(self, prefix: str = "p"):
         self.prefix = prefix
         self.clauses: list[str] = []
         self.parameters: dict[str, object] = {}
+        self.plan: list[tuple] = []
 
-    def require(self, clause: str, *values: object) -> None:
-        """Add `clause`, whose `?` placeholders are bound to `values` in order."""
-        assert clause.count("?") == len(values), f"Placeholder mismatch in {clause!r}"
-        for value in values:
-            name = f"{self.prefix}{len(self.parameters)}"
-            clause = clause.replace("?", f":{name}", 1)
-            self.parameters[name] = value
+    def _bind(self, value: object) -> str:
+        name = f"{self.prefix}{len(self.parameters)}"
+        self.parameters[name] = value
+        return ":" + name
+
+    def like(self, column: str, pattern: str) -> _Condition:
+        """`column LIKE pattern` with backslash escapes, as `_contains` builds them."""
+        assert column in _COLUMNS, column
+        return f"e.{column} LIKE {self._bind(pattern)} ESCAPE '\\'", ("like", column, pattern)
+
+    def compare(self, column: str, operator: str, value: object) -> _Condition:
+        assert column in _COLUMNS and operator in _OPERATORS, (column, operator)
+        return f"e.{column} {operator} {self._bind(value)}", ("compare", column, operator, value)
+
+    def one_of(self, column: str, values: list[str]) -> _Condition:
+        assert column in _COLUMNS and values, column
+        placeholders = ",".join(self._bind(value) for value in values)
+        return f"e.{column} IN ({placeholders})", ("in", column, tuple(values))
+
+    @staticmethod
+    def any_of(*conditions: _Condition) -> _Condition:
+        sql = " OR ".join(clause for clause, _ in conditions)
+        return f"({sql})", ("any", tuple(node for _, node in conditions))
+
+    def full_text(self, expression: str) -> _Condition:
+        """Rows whose text contains every term of an FTS5 trigram `expression`."""
+        match = f"SELECT rowid FROM entry_fts WHERE entry_fts MATCH {self._bind(expression)}"
+        return f"e.rowid IN ({match})", ("full_text", expression)
+
+    @staticmethod
+    def learned() -> _Condition:
+        """Rows with a launch history or a favorite mark."""
+        return _LEARNED_ONLY, ("learned",)
+
+    def require(self, condition: _Condition) -> None:
+        clause, node = condition
         self.clauses.append(clause)
+        self.plan.append(node)
 
-    def require_none_of(self, other: _SqlFilter) -> None:
+    def require_none_of(self, other: _CandidateFilter) -> None:
         """Exclude rows matching every condition of `other`."""
         if not other.clauses:
             return
         self.clauses.append(f"NOT ({other.sql()})")
+        self.plan.append(("not_all", tuple(other.plan)))
         self.parameters.update(other.parameters)
+
+    def nested(self) -> _CandidateFilter:
+        """An empty filter whose parameter names cannot collide with this one's."""
+        return _CandidateFilter(prefix=f"{self.prefix}{len(self.parameters)}_")
 
     def sql(self) -> str:
         return " AND ".join(self.clauses) if self.clauses else "1"
@@ -203,11 +250,6 @@ def _subsequence(text: str) -> str:
     return "%" + "%".join(_escape_like(char) for char in text) + "%"
 
 
-_NAME_LIKE = "e.name LIKE ? ESCAPE '\\'"
-_PATH_LIKE = "e.search_path LIKE ? ESCAPE '\\'"
-_NAME_OR_PATH_LIKE = f"({_NAME_LIKE} OR {_PATH_LIKE})"
-
-
 def read_candidates(
     store: CatalogStore,
     query: SearchQuery,
@@ -225,12 +267,7 @@ def read_candidates(
 
 def candidate_sql(query: SearchQuery, fuzzy: bool = False) -> tuple[str, dict[str, object]]:
     """Build one candidate pass for either the Python or native SQLite reader."""
-    where = _SqlFilter()
-    _require_structured_filters(where, query)
-    if fuzzy:
-        _require_fuzzy_text(where, query)
-    else:
-        _require_literal_text(where, query)
+    where = _candidate_filter(query, fuzzy)
     entries = _LEARNED_ENTRIES if query.uses_learned_items_only else _ALL_ENTRIES
     sql = _CANDIDATE_SQL.format(
         entries=entries,
@@ -240,6 +277,21 @@ def candidate_sql(query: SearchQuery, fuzzy: bool = False) -> tuple[str, dict[st
     )
     parameters = {"history_key": query.history_key, **where.parameters}
     return sql, parameters
+
+
+def candidate_plan(query: SearchQuery, fuzzy: bool = False) -> list[tuple]:
+    """The pass `candidate_sql` builds, as conditions for the Rust memory index."""
+    return _candidate_filter(query, fuzzy).plan
+
+
+def _candidate_filter(query: SearchQuery, fuzzy: bool) -> _CandidateFilter:
+    where = _CandidateFilter()
+    _require_structured_filters(where, query)
+    if fuzzy:
+        _require_fuzzy_text(where, query)
+    else:
+        _require_literal_text(where, query)
+    return where
 
 
 def _stream_items(
@@ -295,94 +347,100 @@ def candidate_from_row(row: tuple) -> Candidate:
     )
 
 
-def _require_structured_filters(where: _SqlFilter, query: SearchQuery) -> None:
+def _require_structured_filters(where: _CandidateFilter, query: SearchQuery) -> None:
     if query.scope:
-        where.require("e.path_key >= ? AND e.path_key < ?", *path_range(query.scope))
+        lower, upper = path_range(query.scope)
+        where.require(where.compare("path_key", ">=", lower))
+        where.require(where.compare("path_key", "<", upper))
     if query.uses_learned_items_only:
-        where.require(_LEARNED_ONLY)
+        where.require(where.learned())
     if query.kind:
-        where.require("e.kind = ?", str(query.kind))
+        where.require(where.compare("kind", "=", str(query.kind)))
     if query.content_text is not None:
-        where.require("e.kind = 'file'")
+        where.require(where.compare("kind", "=", str(ItemKind.FILE)))
     if query.extensions:
         if any(is_wildcard(extension) for extension in query.extensions):
-            predicates = ["e.extension LIKE ? ESCAPE '\\'" for _ in query.extensions]
             # Anchor the suffix; fnmatch decides character classes after SQL narrows candidates.
-            where.require(
-                "(" + " OR ".join(predicates) + ")",
-                *(_contains(extension)[1:-1] for extension in query.extensions),
-            )
+            patterns = [_contains(extension)[1:-1] for extension in query.extensions]
+            where.require(where.any_of(*(where.like("extension", p) for p in patterns)))
         else:
-            placeholders = ",".join("?" for _ in query.extensions)
-            where.require(f"e.extension IN ({placeholders})", *query.extensions)
+            where.require(where.one_of("extension", list(query.extensions)))
     # Excluded patterns are left to the engines: a LIKE superset could hide eligible rows.
     excluded = [extension for extension in query.excluded_extensions if not is_wildcard(extension)]
     if excluded:
-        placeholders = ",".join("?" for _ in excluded)
-        where.require(f"e.extension NOT IN ({placeholders})", *excluded)
+        _exclude(where, lambda nested: nested.one_of("extension", excluded))
     if query.modified_after is not None:
-        where.require("e.modified >= ?", query.modified_after)
+        where.require(where.compare("modified", ">=", query.modified_after))
     if query.modified_before is not None:
-        where.require("e.modified < ?", query.modified_before)
+        where.require(where.compare("modified", "<", query.modified_before))
     if query.min_size is not None or query.max_size is not None:
-        where.require("e.kind != 'folder'")
+        where.require(where.compare("kind", "!=", str(ItemKind.FOLDER)))
     if query.min_size is not None:
-        where.require("e.size >= ?", query.min_size)
+        where.require(where.compare("size", ">=", query.min_size))
     if query.max_size is not None:
-        where.require("e.size <= ?", query.max_size)
+        where.require(where.compare("size", "<=", query.max_size))
     for term in query.excluded_terms:
-        where.require(f"NOT {_PATH_LIKE}", "%" + _escape_like(term) + "%")
+        pattern = "%" + _escape_like(term) + "%"  # Excluded text is never a wildcard.
+        _exclude(where, lambda nested, pattern=pattern: nested.like("search_path", pattern))
 
 
-def _require_literal_text(where: _SqlFilter, query: SearchQuery) -> None:
+def _exclude(where: _CandidateFilter, condition: Callable[[_CandidateFilter], _Condition]) -> None:
+    """Exclude rows that match the single condition `condition` builds."""
+    nested = where.nested()
+    nested.require(condition(nested))
+    where.require_none_of(nested)
+
+
+def _require_literal_text(where: _CandidateFilter, query: SearchQuery) -> None:
     for part in query.folder_parts:
-        where.require(_PATH_LIKE, _contains(part))
+        where.require(where.like("search_path", _contains(part)))
     long_terms = [
         t for t in query.terms if len(t) >= MIN_TRIGRAM_TERM_LENGTH and not is_wildcard(t)
     ]
     short_terms = [t for t in query.terms if len(t) < MIN_TRIGRAM_TERM_LENGTH or is_wildcard(t)]
     if long_terms:
-        where.require(
-            "e.rowid IN (SELECT rowid FROM entry_fts WHERE entry_fts MATCH ?)",
-            _fts_expression(long_terms, query.basename_only),
-        )
+        where.require(where.full_text(_fts_expression(long_terms, query.basename_only)))
     for term in short_terms:
-        _require_term(where, query, name_pattern=_contains(term), path_pattern=_contains(term))
+        _require_term(where, query, term, name_pattern=_contains(term))
 
 
-def _require_fuzzy_text(where: _SqlFilter, query: SearchQuery) -> None:
+def _require_fuzzy_text(where: _CandidateFilter, query: SearchQuery) -> None:
     for part in query.folder_parts:
-        where.require(_PATH_LIKE, _subsequence(part))
+        where.require(where.like("search_path", _subsequence(part)))
     for term in query.terms:
         name_pattern = _contains(term) if term in query.exact_terms else _subsequence(term)
-        _require_term(where, query, name_pattern=name_pattern, path_pattern=_contains(term))
+        _require_term(where, query, term, name_pattern=name_pattern)
     _exclude_literal_matches(where, query)
 
 
-def _exclude_literal_matches(where: _SqlFilter, query: SearchQuery) -> None:
+def _exclude_literal_matches(where: _CandidateFilter, query: SearchQuery) -> None:
     """The literal pass already returned rows that contain every term and folder part.
 
     This LIKE form must match exactly what the literal pass's FTS trigram query
     matches; trigram MATCH on quoted terms is substring containment, as LIKE is.
     """
-    literal = _SqlFilter(prefix="literal")
+    literal = _CandidateFilter(prefix="literal")
     for term in query.terms:
-        _require_term(literal, query, name_pattern=_contains(term), path_pattern=_contains(term))
+        _require_term(literal, query, term, name_pattern=_contains(term))
     for part in query.folder_parts:
-        literal.require(_PATH_LIKE, _contains(part))
+        literal.require(literal.like("search_path", _contains(part)))
     where.require_none_of(literal)
 
 
 def _require_term(
-    where: _SqlFilter, query: SearchQuery, *, name_pattern: str, path_pattern: str
+    where: _CandidateFilter, query: SearchQuery, term: str, *, name_pattern: str
 ) -> None:
-    if query.basename_only:
-        where.require(_NAME_LIKE, name_pattern)
+    """The name matches `name_pattern`, or the path contains `term` where paths count."""
+    name = where.like("name", name_pattern)
+    if query.basename_only or not matches_path(term):
+        where.require(name)
     else:
-        where.require(_NAME_OR_PATH_LIKE, name_pattern, path_pattern)
+        where.require(where.any_of(name, where.like("search_path", _contains(term))))
 
 
 def _fts_expression(terms: list[str], basename_only: bool) -> str:
-    column = "name: " if basename_only else ""
-    quoted = ['"' + term.replace('"', '""') + '"' for term in terms]
-    return " AND ".join(column + term for term in quoted)
+    def quoted(term: str) -> str:
+        column = "name: " if basename_only or not matches_path(term) else ""
+        return column + '"' + term.replace('"', '""') + '"'
+
+    return " AND ".join(quoted(term) for term in terms)

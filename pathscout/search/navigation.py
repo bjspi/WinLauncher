@@ -3,50 +3,41 @@
 from __future__ import annotations
 
 import heapq
-import ntpath
 import os
 import re
 import stat
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
 
 from pathscout.catalog import long_paths
 from pathscout.catalog.exclusions import ExclusionPolicy
-from pathscout.catalog.model import CatalogItem, ItemKind, normalize
+from pathscout.catalog.model import CatalogItem, ItemKind, normalize, path_key
 from pathscout.catalog.store import CatalogStore
 from pathscout.search.candidates import Candidate
 from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import Ranker, SearchHit
 from pathscout.settings import Settings
 
-# Suggest only directory aliases, never arbitrary environment values such as tokens.
-DIRECTORY_VARIABLES = (
-    "USERPROFILE",
-    "TEMP",
-    "TMP",
-    "LOCALAPPDATA",
-    "APPDATA",
-    "PROGRAMDATA",
-    "PROGRAMFILES",
-    "PROGRAMFILES(X86)",
-    "COMMONPROGRAMFILES",
-    "WINDIR",
-    "SYSTEMROOT",
-    "PUBLIC",
-)
 _VARIABLE = re.compile(r"%([^%]+)%")
 
 
 def search_paths(
-    query: SearchQuery, settings: Settings, cancel: threading.Event | None, store: CatalogStore
+    query: SearchQuery,
+    settings: Settings,
+    cancel: threading.Event | None,
+    store: CatalogStore,
+    shortcuts: Mapping[str, Path] | None = None,
 ) -> list[SearchHit]:
+    """Resolve `%NAME%`, `~` and the paths below them; `shortcuts` adds `%NAME%` folders
+    beyond the environment variables."""
+    shortcuts = shortcuts or {}
     exclusions, priorities = settings.exclusions(), settings.priorities()
     ranker = Ranker(replace(query, navigation=None, scope=None))
 
     def hits() -> Iterator[SearchHit]:
-        for item, reason in _path_items(query.navigation, exclusions, cancel):
+        for item, reason in _path_items(query.navigation, shortcuts, exclusions, cancel):
             if cancel is not None and cancel.is_set():
                 return
             candidate = Candidate.from_item(item)
@@ -93,26 +84,17 @@ def search_paths(
 
 
 def _path_items(
-    text: str, exclusions: ExclusionPolicy, cancel: threading.Event | None
+    text: str,
+    shortcuts: Mapping[str, Path],
+    exclusions: ExclusionPolicy,
+    cancel: threading.Event | None,
 ) -> Iterator[tuple[CatalogItem, str]]:
     if cancel is not None and cancel.is_set():
         return
     if text.startswith("%") and "%" not in text[1:]:
-        prefix, seen = text[1:].casefold(), set()
-        for name in DIRECTORY_VARIABLES:
-            if cancel is not None and cancel.is_set():
-                return
-            value = os.environ.get(name)
-            if name.casefold().startswith(prefix) and value:
-                path = Path(value)
-                if path.is_absolute() and path.is_dir() and path not in seen:
-                    seen.add(path)
-                    yield _item(path), f"Windows folder: %{name}%"
+        yield from _folder_names(text[1:], shortcuts, cancel)
         return
-    for name in _VARIABLE.findall(text):
-        if name not in os.environ:
-            raise ValueError(f"Unknown environment variable: %{name}%")
-    path = Path(ntpath.expandvars(text).replace("\\", os.sep)).expanduser()
+    path = Path(_expand(text, shortcuts).replace("\\", os.sep)).expanduser()
     if not path.is_absolute():
         raise ValueError("The expanded shortcut must be an absolute path.")
     browsing = text.endswith(("/", "\\"))
@@ -133,6 +115,45 @@ def _path_items(
                     yield _item(long_paths.ordinary_path(entry.path)), "Path completion"
                 except FileNotFoundError:
                     continue  # A temporary file may disappear during enumeration.
+
+
+def _folder_names(
+    prefix: str, shortcuts: Mapping[str, Path], cancel: threading.Event | None
+) -> Iterator[tuple[CatalogItem, str]]:
+    """Every `%NAME%` that starts with `prefix` and names an existing folder.
+
+    Environment variables count only when their value is a folder, so values such
+    as tokens are never shown. Names reaching the same folder appear once.
+    """
+    named = {name.upper(): Path(value) for name, value in os.environ.items()}
+    named.update(
+        (name.upper(), path) for name, path in shortcuts.items() if name.upper() not in named
+    )
+    seen = set()
+    for name in sorted(named):
+        if cancel is not None and cancel.is_set():
+            return
+        path = named[name]
+        if not name.casefold().startswith(prefix.casefold()) or not path.is_absolute():
+            continue
+        key = path_key(path)
+        if key not in seen and path.is_dir():
+            seen.add(key)
+            yield _item(path), f"Windows folder: %{name}%"
+
+
+def _expand(text: str, shortcuts: Mapping[str, Path]) -> str:
+    """Replace each `%NAME%` by its environment variable, else by a folder shortcut."""
+
+    def value(match: re.Match[str]) -> str:
+        name = match[1]
+        if name in os.environ:
+            return os.environ[name]
+        if (folder := shortcuts.get(name.upper())) is not None:
+            return str(folder)
+        raise ValueError(f"Unknown environment variable or folder: %{name}%")
+
+    return _VARIABLE.sub(value, text)
 
 
 def _item(path: Path) -> CatalogItem:

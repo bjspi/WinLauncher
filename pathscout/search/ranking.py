@@ -23,6 +23,7 @@ from pathscout.search.matching import (
     best_possible_score,
     match_term,
     matches_folder_order,
+    matches_path,
 )
 from pathscout.search.query import MatchMode, ScoreMode, SearchQuery
 
@@ -99,6 +100,7 @@ class Ranker:
         self.fuzzy_terms = tuple(
             self.fuzzy and term not in query.exact_terms for term in query.terms
         )
+        self.path_terms = tuple(matches_path(term) for term in query.terms)
 
     def eligible(self, candidate: Candidate, priority: PriorityDecision) -> bool:
         return priority.search != SearchPriority.IGNORED and self.filters.accepts(candidate)
@@ -146,8 +148,9 @@ class Ranker:
             name = NameForms(candidate.name, candidate.search_name)
             path = self.matching_path(candidate)
         points, reasons = 0.0, []
-        for term, fuzzy in zip(query.terms, self.fuzzy_terms, strict=True):
-            match = match_term(term, name, path, fuzzy)
+        terms = zip(query.terms, self.fuzzy_terms, self.path_terms, strict=True)
+        for term, fuzzy, path_term in terms:
+            match = match_term(term, name, path if path_term else None, fuzzy)
             if match is None:
                 return None
             points += match.score

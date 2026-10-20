@@ -142,13 +142,14 @@ fn text_relevance(query: &Query, row: &Candidate) -> Option<(f64, Vec<String>)> 
     let (name, path) = if query.basename_only {
         (NameForms::new(row.stem(), None), None)
     } else {
-        let name = NameForms::new(row.name(), Some(row.search_name.as_str()));
+        let name = NameForms::new(row.name(), Some(&*row.search_name));
         (name, Some(query.matching_path(row)))
     };
     let mut score = 0.0;
     let mut reasons = Vec::with_capacity(query.terms.len() + 1);
     for term in &query.terms {
         let fuzzy = query.fuzzy && !term.exact;
+        let path = path.filter(|_| term.matches_path);
         let (points, reason) = match_term(term, &name, path, fuzzy)?;
         score += points;
         reasons.push(reason.into());
@@ -192,5 +193,21 @@ mod tests {
             Some("Name contains query")
         );
         assert_eq!(found("work", true).as_deref(), Some("Path contains query"));
+    }
+
+    #[test]
+    fn short_terms_match_names_but_never_parent_folders() {
+        let path = "C:/Work/Do/report.txt";
+        assert_eq!(reason("do", false, path), None);
+        assert_eq!(reason("wo", false, path), None);
+        assert_eq!(
+            reason("wor", false, path).as_deref(),
+            Some("Path contains query")
+        );
+        assert_eq!(reason("rp", false, path).as_deref(), Some("Fuzzy match"));
+        assert_eq!(
+            reason("r*.txt", false, path).as_deref(),
+            Some("Name wildcard")
+        );
     }
 }

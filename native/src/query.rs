@@ -1,5 +1,7 @@
 //! The query and candidate rows exchanged with Python.
 
+use std::borrow::Cow;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -236,14 +238,16 @@ fn compile_terms(texts: Vec<String>) -> PyResult<Vec<Term>> {
         .collect()
 }
 
+/// One candidate row. Rows from the memory index borrow their text; rows from
+/// Python or SQLite, and every kept hit, own it.
 #[derive(Clone, Debug)]
-pub(crate) struct Candidate {
-    pub path_text: String,
-    pub identity: String,
+pub(crate) struct Candidate<'a> {
+    pub path_text: Cow<'a, str>,
+    pub identity: Cow<'a, str>,
     pub kind: Kind,
-    pub search_name: String,
-    pub search_path: String,
-    pub extension: String,
+    pub search_name: Cow<'a, str>,
+    pub search_path: Cow<'a, str>,
+    pub extension: Cow<'a, str>,
     pub size: i64,
     pub modified: f64,
     pub attributes: i64,
@@ -255,8 +259,8 @@ pub(crate) struct Candidate {
     pub application_source: bool,
 }
 
-impl Candidate {
-    pub fn from_python(row: &Bound<'_, PyAny>) -> PyResult<Self> {
+impl Candidate<'_> {
+    pub fn from_python(row: &Bound<'_, PyAny>) -> PyResult<Candidate<'static>> {
         let row = row.downcast::<PyTuple>()?;
         if row.len() != CANDIDATE_COLUMNS {
             return Err(PyValueError::new_err(format!(
@@ -264,13 +268,16 @@ impl Candidate {
             )));
         }
         let kind: String = row.get_item(2)?.extract()?;
-        let candidate = Self {
-            path_text: row.get_item(0)?.extract()?,
-            identity: row.get_item(1)?.extract()?,
+        let text = |index: usize| -> PyResult<Cow<'static, str>> {
+            Ok(Cow::Owned(row.get_item(index)?.extract()?))
+        };
+        let candidate = Candidate {
+            path_text: text(0)?,
+            identity: text(1)?,
             kind: Kind::parse(&kind)?,
-            search_name: row.get_item(3)?.extract()?,
-            search_path: row.get_item(4)?.extract()?,
-            extension: row.get_item(5)?.extract()?,
+            search_name: text(3)?,
+            search_path: text(4)?,
+            extension: text(5)?,
             size: row.get_item(6)?.extract()?,
             modified: row.get_item(7)?.extract()?,
             attributes: row.get_item(8)?.extract()?,
@@ -282,6 +289,26 @@ impl Candidate {
         };
         candidate.validate()?;
         Ok(candidate)
+    }
+
+    /// A copy that owns its text, so it can outlive the memory index it came from.
+    pub fn into_owned(self) -> Candidate<'static> {
+        Candidate {
+            path_text: Cow::Owned(self.path_text.into_owned()),
+            identity: Cow::Owned(self.identity.into_owned()),
+            kind: self.kind,
+            search_name: Cow::Owned(self.search_name.into_owned()),
+            search_path: Cow::Owned(self.search_path.into_owned()),
+            extension: Cow::Owned(self.extension.into_owned()),
+            size: self.size,
+            modified: self.modified,
+            attributes: self.attributes,
+            launches: self.launches,
+            last_used: self.last_used,
+            query_launches: self.query_launches,
+            pinned: self.pinned,
+            application_source: self.application_source,
+        }
     }
 
     pub fn validate(&self) -> PyResult<()> {
@@ -319,32 +346,12 @@ impl Candidate {
 
     pub fn to_python(&self, py: Python<'_>) -> PyResult<Py<PyTuple>> {
         let fields: [PyObject; CANDIDATE_COLUMNS] = [
-            self.path_text
-                .as_str()
-                .into_pyobject(py)?
-                .into_any()
-                .unbind(),
-            self.identity
-                .as_str()
-                .into_pyobject(py)?
-                .into_any()
-                .unbind(),
+            (&*self.path_text).into_pyobject(py)?.into_any().unbind(),
+            (&*self.identity).into_pyobject(py)?.into_any().unbind(),
             self.kind.as_str().into_pyobject(py)?.into_any().unbind(),
-            self.search_name
-                .as_str()
-                .into_pyobject(py)?
-                .into_any()
-                .unbind(),
-            self.search_path
-                .as_str()
-                .into_pyobject(py)?
-                .into_any()
-                .unbind(),
-            self.extension
-                .as_str()
-                .into_pyobject(py)?
-                .into_any()
-                .unbind(),
+            (&*self.search_name).into_pyobject(py)?.into_any().unbind(),
+            (&*self.search_path).into_pyobject(py)?.into_any().unbind(),
+            (&*self.extension).into_pyobject(py)?.into_any().unbind(),
             self.size.into_pyobject(py)?.into_any().unbind(),
             self.modified.into_pyobject(py)?.into_any().unbind(),
             self.attributes.into_pyobject(py)?.into_any().unbind(),
@@ -401,16 +408,16 @@ pub(crate) mod testing {
     }
 
     /// A file row at `path`, normalized as the catalog stores it.
-    pub fn file(path: &str) -> Candidate {
+    pub fn file(path: &str) -> Candidate<'static> {
         let name = path.rsplit('/').next().unwrap_or(path);
         let extension = name.rsplit_once('.').map_or("", |(_, extension)| extension);
         Candidate {
-            path_text: path.into(),
-            identity: path.to_uppercase(),
+            path_text: path.to_string().into(),
+            identity: path.to_uppercase().into(),
             kind: Kind::File,
-            search_name: name.to_lowercase(),
-            search_path: path.to_lowercase(),
-            extension: extension.to_lowercase(),
+            search_name: name.to_lowercase().into(),
+            search_path: path.to_lowercase().into(),
+            extension: extension.to_lowercase().into(),
             size: 0,
             modified: 0.0,
             attributes: 0,

@@ -72,7 +72,7 @@ fn unscored_key(query: &Query, row: &Candidate, band: Band) -> Key {
     } else {
         parts.push(Part::Number(-row.modified));
     }
-    parts.push(Part::Text(row.path_text.clone()));
+    parts.push(Part::Text(row.path_text.to_string()));
     Key(parts)
 }
 
@@ -83,7 +83,7 @@ pub(crate) fn key(query: &Query, row: &Candidate, ranking: &Ranking) -> Key {
     let mut parts = groups(query, row, ranking.band);
     parts.push(Part::Number(-ranking.score));
     parts.push(Part::Text(casefold(row.name())));
-    parts.push(Part::Text(row.path_text.clone()));
+    parts.push(Part::Text(row.path_text.to_string()));
     Key(parts)
 }
 
@@ -102,7 +102,7 @@ pub(crate) fn best_possible_key(query: &Query, row: &Candidate, priority: &Decis
 pub(crate) struct Kept {
     pub key: Key,
     pub index: usize,
-    pub row: Candidate,
+    pub row: Candidate<'static>,
     pub ranking: Ranking,
 }
 

@@ -2,13 +2,73 @@
 
 from __future__ import annotations
 
+import functools
+import logging
 import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
+from pathscout.catalog.model import path_key
+
 APP_PATHS_KEY = r"Software\Microsoft\Windows\CurrentVersion\App Paths"
 START_MENU_SUBFOLDER = "Microsoft/Windows/Start Menu/Programs"
+# Known folders (FOLDERID_ names) Explorer shows with their own icon, wherever
+# they were redirected to.
+SPECIAL_FOLDERS = ("Profile", "Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos")
+# Known folders offered as %NAME% shortcuts beside the environment variables.
+FOLDER_SHORTCUTS = (
+    *SPECIAL_FOLDERS[1:],
+    "Startup",
+    "CommonStartup",
+    "SendTo",
+    "Recent",
+    "Templates",
+    "StartMenu",
+    "Programs",
+    "SavedGames",
+    "Favorites",
+    "Links",
+    "LocalAppDataLow",
+    "UserProgramFiles",
+    "QuickLaunch",
+    "Fonts",
+    "PublicDesktop",
+    "PublicDocuments",
+)
+logger = logging.getLogger(__name__)
+
+
+@functools.cache
+def special_folders() -> frozenset[str]:
+    """Path keys of the user's known folders, such as Desktop and Downloads.
+
+    Asked once: Windows resolves redirection (OneDrive, another drive) itself.
+    """
+    return frozenset(path_key(path) for name in SPECIAL_FOLDERS if (path := known_folder(name)))
+
+
+@functools.cache
+def folder_shortcuts() -> dict[str, Path]:
+    """Known folders by `%NAME%` shortcut name, such as DOWNLOADS or SENDTO."""
+    return {name.upper(): path for name in FOLDER_SHORTCUTS if (path := known_folder(name))}
+
+
+def known_folder(name: str) -> Path | None:
+    """The current location of a Windows known folder, such as `Downloads`."""
+    if os.name != "nt":
+        return None
+    import pywintypes
+    from win32comext.shell import shell
+
+    folder_id = getattr(shell, f"FOLDERID_{name}", None)
+    if folder_id is None:
+        return None  # Not known to this pywin32 or Windows version.
+    try:
+        return Path(shell.SHGetKnownFolderPath(folder_id, 0, None))
+    except pywintypes.com_error:
+        logger.info("Known folder unavailable: %s", name)
+        return None
 
 
 def application_roots() -> tuple[Path, ...]:

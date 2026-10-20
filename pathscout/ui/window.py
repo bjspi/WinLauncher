@@ -105,6 +105,10 @@ SEPARATOR_INSET = 12  # Horizontal inset of the line before subfolder matches.
 SEPARATOR_GAP = 9  # Extra height above that row; the line runs through its middle.
 MISSING_OPACITY = 0.45  # Icon and text of a result whose file no longer exists.
 HINT_SPACING = 8  # Between the shortcut hint and the kind filter buttons.
+# Symbols the bar draws; Segoe UI lacks some, and Windows searches every installed
+# font for a fallback the first time one is measured, which takes 100-300 ms.
+BAR_SYMBOLS = "↵ ↑↓ ✕ ★ · … –"
+BAR_FONT_POINTS = (8, 9, 10, 11, 18)  # Status and hints, rows and the query field.
 FILTERS = (
     ("All", None),
     ("Apps", ItemKind.APP),
@@ -423,6 +427,8 @@ class LauncherWindow(QWidget):
     explorer_selection = Signal(object)
     # Text typed in a file dialog's bar that Escape returns to the dialog.
     dialog_text_returned = Signal(str)
+    # SearchHit and whether to add the extended (Shift) entries: Windows' own menu.
+    shell_menu_requested = Signal(object, bool)
     exclude_requested = Signal(object)
     settings_requested = Signal()
     rescan_requested = Signal()
@@ -990,6 +996,14 @@ class LauncherWindow(QWidget):
         self.query.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
         self.query_changed.emit()
 
+    def warm_up_text(self) -> None:
+        """Load fonts and symbol fallbacks once while idle, not when the bar first opens."""
+        for points in BAR_FONT_POINTS:
+            QFontMetrics(QFont("Segoe UI", points)).horizontalAdvance(BAR_SYMBOLS)
+        for label in (self.hint, self.status):
+            label.ensurePolished()  # Their font comes from the style sheet.
+            label.fontMetrics().horizontalAdvance(BAR_SYMBOLS)
+
     def set_auto_hide(self, enabled: bool, seconds: int) -> None:
         """Hide `seconds` after focus left PathScout, unless something was typed.
 
@@ -1246,6 +1260,11 @@ class LauncherWindow(QWidget):
             return
         self.results.setCurrentItem(item)
         row: ResultRow = item.data(Qt.ItemDataRole.UserRole)
+        shift = QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier
+        if shift and (hit := row.file_hit) is not None:
+            # As in Explorer, Shift asks for Windows' full menu with its extended entries.
+            self.shell_menu_requested.emit(hit, True)
+            return
         menu = Menu(self)
         if (hit := row.file_hit) is not None:
             self._add_file_actions(menu, row, hit)
@@ -1278,6 +1297,11 @@ class LauncherWindow(QWidget):
         folder = _containing_folder(hit)
         menu.addAction(
             "Exclude this or a parent folder…", lambda: self.exclude_requested.emit(folder)
+        )
+        menu.addSeparator()
+        menu.addAction(
+            "More options…\tShift+Right-click",
+            lambda: self.shell_menu_requested.emit(hit, False),
         )
 
     def showEvent(self, event) -> None:

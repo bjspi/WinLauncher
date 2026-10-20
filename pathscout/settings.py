@@ -132,7 +132,8 @@ class Settings:
     # Hide the launcher when it lost focus with nothing typed.
     auto_hide: bool = True
     auto_hide_seconds: int = DEFAULT_AUTO_HIDE_SECONDS
-    rescan_seconds: int = 300
+    # Folder watching applies changes live; the full rescan only repairs missed events.
+    rescan_seconds: int = 1800
     max_results: int = 60
     content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS
     websites: tuple[WebsiteShortcut, ...] = DEFAULT_WEBSITES

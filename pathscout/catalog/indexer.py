@@ -215,8 +215,9 @@ class _ScanSession:
         self.rows.flush()
         self.rows.retain_previous(self.outcome.retained_paths)
 
-    def scan_tree(self, root: Path, source: CatalogSource) -> None:
-        if self.cancelled or not self._enter_root(root, source):
+    def scan_tree(self, root: Path, source: CatalogSource, *, configured: bool) -> None:
+        """Scan `root` below `source`; `configured` says the user chose the source."""
+        if self.cancelled or not self._enter_root(root, source, configured=configured):
             return
         pending = [root]
         while pending and not self.cancelled:
@@ -243,13 +244,17 @@ class _ScanSession:
             return
         self._stage_or_skip(item, source.id)
 
-    def _enter_root(self, root: Path, source: CatalogSource) -> bool:
+    def _enter_root(self, root: Path, source: CatalogSource, *, configured: bool) -> bool:
         try:
             if not self.rules.allows_scope(root, source.root):
                 self.outcome.skip()
                 return False
-            if root != source.root and not source.apps_only:
-                # A scoped root is itself an entry of its parent folder.
+            # A configured folder such as D:\Projects is an entry itself, so it can be
+            # found by name, and a scoped root stays an entry of its parent. An Explorer
+            # folder outside every source only lends its scope; a drive root has no
+            # name to find; application sources list only applications.
+            listed = configured or root != source.root
+            if listed and not source.apps_only and root.parent != root:
                 info = long_paths.stat(root)
                 self.rows.add(catalog_item(root, info, ItemKind.FOLDER), source.id)
         except OSError as exc:
@@ -378,7 +383,7 @@ class CatalogIndexer:
         with self.store.snapshot() as connection:
             session = _ScanSession(settings, _StagedRows(self.store, connection, progress), cancel)
             for source in sources:
-                session.scan_tree(source.root, source)
+                session.scan_tree(source.root, source, configured=True)
             active = {source.id for source in sources}
             if settings.index_apps:
                 session.scan_applications(applications)
@@ -405,7 +410,8 @@ class CatalogIndexer:
         with self.store.snapshot() as connection:
             rows = _StagedRows(self.store, connection, progress)
             session = _ScanSession(settings, rows, cancel, nested_source_keys)
-            session.scan_tree(scope, owning_source(scope, sources))
+            owner = owning_source(scope, sources)
+            session.scan_tree(scope, owner, configured=owner in sources)
             if session.cancelled:
                 return session.report(cancelled=True)
             session.finish_staging()

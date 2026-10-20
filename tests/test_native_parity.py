@@ -30,6 +30,7 @@ from pathscout.catalog.store import CatalogStore
 from pathscout.search import native_engine
 from pathscout.search.candidates import Candidate, candidate_from_row, candidate_sql
 from pathscout.search.matching import is_wildcard
+from pathscout.search.memory_index import catalog_spec, memory_plan
 from pathscout.search.native_engine import NativeAvailability, priority_spec, query_spec
 from pathscout.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
 from pathscout.search.query_parser import parse_query
@@ -162,6 +163,15 @@ QUERY_TEXTS = (
     r"work\deep\ report",
     "deep/ rpt",
     r"work\ !ext:txt",
+    # Terms shorter than MIN_PATH_TERM_LENGTH match names only, alone and combined.
+    "w",
+    "wo",
+    "de",
+    "a b",
+    "wo rpt",
+    '"wo" report',
+    "re *.txt",
+    "path:wo re",
 )
 # fnmatch sets that Rust's regex syntax reads differently unless every member is
 # escaped: `[` inside a set, `]` starting a range, reversed and edge ranges,
@@ -505,6 +515,48 @@ class NativeParityTest(unittest.TestCase):
                 self.assert_rankings_equal(expected, actual)
                 self.assertEqual(expected_calls, actual_calls)
 
+    def sql_rowids(self, query, fuzzy):
+        with self.store.connect() as connection:
+            rowids = dict(connection.execute("SELECT path, rowid FROM entries"))
+            connection.row_factory = None
+            rows = connection.execute(*candidate_sql(query, fuzzy=fuzzy))
+            return sorted(rowids[row[0]] for row in rows)
+
+    def test_memory_index_selects_exactly_the_sql_candidates_of_each_pass(self):
+        queries = dict.fromkeys(query for query, _ in matrix(self.root))
+        for query in queries:
+            with self.subTest(query=query):
+                literal, fuzzy = native_engine.select_memory_candidates(NATIVE, self.store, query)
+                self.assertEqual(literal, sorted(literal), "scans run in rowid order")
+                self.assertEqual(fuzzy, sorted(fuzzy))
+                self.assertEqual(literal, self.sql_rowids(query, fuzzy=False))
+                expected_fuzzy = self.sql_rowids(query, fuzzy=True) if query.uses_fuzzy_pass else []
+                self.assertEqual(fuzzy, expected_fuzzy)
+
+    def test_memory_index_ranks_exactly_like_python_over_sql_rows(self):
+        policy = policy_for(self.root, names=True)
+        rules = priority_spec(policy)
+        for query, limit in matrix(self.root):
+            with self.subTest(query=query, limit=limit):
+                with self.store.connect() as connection:
+                    connection.row_factory = None
+                    rows = list(connection.execute(*candidate_sql(query)))
+                    if query.uses_fuzzy_pass:
+                        rows.extend(connection.execute(*candidate_sql(query, fuzzy=True)))
+                expected = python_rows(rows, query, policy, limit, recorded_allows([]))
+                expected = [
+                    (rows[index], score, band, reasons) for index, score, band, reasons in expected
+                ]
+                actual = NATIVE.rank_catalog(
+                    catalog_spec(self.store),
+                    memory_plan(query),
+                    query_spec(query, Ranker(query, now=NOW), limit),
+                    rules,
+                    recorded_allows([]),
+                    NATIVE.CancelFlag(),
+                )
+                self.assert_rankings_equal(expected, actual)
+
     def test_service_both_phases_preserve_hits_explanations_and_regex_fallback(self):
         settings = Settings(
             roots=(str(self.root),), index_apps=False, marker_files=(), excluded_patterns=()
@@ -532,7 +584,8 @@ class NativeParityTest(unittest.TestCase):
             ),
             ("café", replace(settings, name_priorities=(NamePriority("café", 13, "high"),))),
         )
-        for phase, (text, configured) in itertools.product(("rows", "sqlite"), scenarios):
+        phases = ("rows", "sqlite", "memory")
+        for phase, (text, configured) in itertools.product(phases, scenarios):
             with self.subTest(phase=phase, text=text, names=configured.name_priorities):
                 query = parse_query(text)
                 with patch("pathscout.search.ranking.time.time", return_value=NOW):

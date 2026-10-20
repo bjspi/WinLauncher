@@ -5,6 +5,10 @@ the extension is missing or does not support this interpreter, and that is
 reported to the user. `PATHSCOUT_SEARCH_ENGINE` selects an engine explicitly for
 tests and benchmarks: `native` fails loudly instead of falling back, `python`
 uses the reference implementation.
+
+`PATHSCOUT_NATIVE_PHASE` selects where the Rust engine reads candidates from:
+`memory` (the default) scans its memory index (`memory_index`), `sqlite` runs
+the candidate SQL itself and `rows` ranks rows Python fetched.
 """
 
 from __future__ import annotations
@@ -31,15 +35,16 @@ from pathscout.search.candidates import (
     candidate_from_row,
     candidate_sql,
 )
+from pathscout.search.memory_index import IndexReport, catalog_spec, memory_plan
 from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking
 from pathscout.settings import DEFAULT_CONTENT_SEARCH_THREADS
 
-API_VERSION = 9
+API_VERSION = 10
 ENGINE_VARIABLE = "PATHSCOUT_SEARCH_ENGINE"
 PHASE_VARIABLE = "PATHSCOUT_NATIVE_PHASE"
 _ENGINES = ("auto", "python", "native")
-_PHASES = ("rows", "sqlite")
+_PHASES = ("rows", "sqlite", "memory")
 _LOGGER = logging.getLogger(__name__)
 _LOGGED: set[str] = set()
 _LOG_LOCK = threading.Lock()
@@ -227,9 +232,9 @@ def _cancel_flag(native: ModuleType, cancel: threading.Event | None) -> Iterator
 
 
 def _native_phase() -> str:
-    phase = os.environ.get(PHASE_VARIABLE, "sqlite").strip().lower()
+    phase = os.environ.get(PHASE_VARIABLE, "memory").strip().lower()
     if phase not in _PHASES:
-        raise ValueError(f"{PHASE_VARIABLE} must be rows or sqlite.")
+        raise ValueError(f"{PHASE_VARIABLE} must be one of {', '.join(_PHASES)}.")
     return phase
 
 
@@ -250,23 +255,40 @@ def rank_with_native(
     phase = _native_phase()
     spec = query_spec(query, ranker, limit, content_search_threads)
     rules = priority_spec(priorities)
-    sql, parameters = _search_sql(query)
     with _cancel_flag(native, cancel) as flag:
-        if phase == "sqlite" and candidates is None:
-            kept = native.rank_sqlite(str(store.path), sql, parameters, spec, rules, allows, flag)
+        if candidates is not None:
+            rows = [candidate.to_row() for candidate in candidates]
+            kept = _rank_rows(native, rows, spec, rules, allows, flag)
         else:
-            if candidates is not None:
-                rows = [candidate.to_row() for candidate in candidates]
-            else:
-                rows = _candidate_rows(store, sql, parameters, cancel, flag)
-            kept = [
-                (rows[index], score, band, reasons)
-                for index, score, band, reasons in native.rank_rows(spec, rules, rows, allows, flag)
-            ]
+            kept = None
+            if phase == "memory":
+                # None while another search loads the memory index; SQL serves meanwhile.
+                plan = memory_plan(query)
+                kept = native.rank_catalog(catalog_spec(store), plan, spec, rules, allows, flag)
+            if kept is None:
+                sql, parameters = _search_sql(query)
+                if phase == "rows":
+                    rows = _candidate_rows(store, sql, parameters, cancel, flag)
+                    kept = _rank_rows(native, rows, spec, rules, allows, flag)
+                else:
+                    database = str(store.path)
+                    kept = native.rank_sqlite(database, sql, parameters, spec, rules, allows, flag)
     return [
         (candidate_from_row(row), Ranking(score, PriorityBand(band), tuple(reasons)))
         for row, score, band, reasons in kept
     ]
+
+
+def _rank_rows(
+    native: ModuleType,
+    rows: list[tuple],
+    spec: dict[str, object],
+    rules: dict[str, list[dict[str, object]]],
+    allows: AllowsCallback,
+    flag: Any,
+) -> list[tuple]:
+    ranked = native.rank_rows(spec, rules, rows, allows, flag)
+    return [(rows[index], score, band, reasons) for index, score, band, reasons in ranked]
 
 
 def _candidate_rows(
@@ -291,6 +313,36 @@ def _candidate_rows(
                 return []
             raise
     return rows
+
+
+def warm_search_index(store: CatalogStore) -> IndexReport | None:
+    """Bring the Rust engine's memory index up to date with the catalog.
+
+    Call it on a worker thread at startup and after every catalog change (full
+    scan, subtree or file refresh): searches then never pay for the reload. It
+    returns quickly when the index is current and returns None when searches do
+    not use the memory index. Failures are logged, never raised; searches then
+    load the index themselves or fall back to candidate SQL.
+    """
+    native = select_native()
+    if native is None or _native_phase() != "memory":
+        return None
+    try:
+        return IndexReport(**native.warm_catalog(catalog_spec(store)))
+    except Exception as exc:
+        _log_once(f"warm:{type(exc).__name__}", "Loading the search memory index failed: %s", exc)
+        return None
+
+
+def select_memory_candidates(
+    native: ModuleType, store: CatalogStore, query: SearchQuery, *, fuzzy: bool = True
+) -> tuple[list[int], list[int]] | None:
+    """The rowids the memory index selects for the literal and the fuzzy pass, in
+    scan order; None while another thread loads the index. For tests and benchmarks."""
+    plan = memory_plan(query)
+    if not fuzzy:
+        plan["fuzzy"] = None
+    return native.select_catalog(catalog_spec(store), plan, native.CancelFlag())
 
 
 def log_native_failure(exc: Exception) -> None:

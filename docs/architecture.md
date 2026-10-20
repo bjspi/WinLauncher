@@ -43,12 +43,15 @@ flowchart TD
 | `search/matching.py` | Text match quality, ordered folder matching and fuzzy alignment |
 | `search/ranking.py` | Eligibility, text relevance, personalization, configured priority, explanation |
 | `search/candidates.py` | Query-to-SQL translation for the literal and fuzzy candidate passes |
+| `search/memory_index.py` | What the Rust memory index loads and the candidate plans it evaluates |
 | `search/service.py` | Streaming candidates into a bounded best-hits heap |
 | `settings.py` | Validated settings value object and atomic JSON file |
 | `actions.py` | Open, reveal and favorite use cases; only successful opens are learned |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
+| `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
+| `ui/widgets.py` | The settings look: tinted line icons, animated switches, cards with setting rows, info dialogs |
 | `platform/git.py` | Read-only git queries for self-updating a source checkout |
 | `releases.py` | Release tags, installation kinds and their update commands |
 | `install.py` | The reinstall that finishes a checkout update at the next start |
@@ -88,7 +91,10 @@ be a junction; links below a root are never followed.
 
 WAL lets searches read while a scan stages. Each operation owns its SQLite
 connection. Schema version 3 migrates versions 1 and 2 in one transaction, merging
-alternate Windows path spellings without losing launches or favorites. Identity
+alternate Windows path spellings without losing launches or favorites. Version 4
+adds `catalog_version`: a random catalog id and a generation that triggers
+increment on every insert, update and delete in `entries` (about 1% of a full
+publish), so the Rust memory index can tell whether its copy is current. Identity
 uses absolute paths with nonexpanding uppercase mapping; search uses NFC/casefold.
 
 ## Search execution
@@ -98,10 +104,12 @@ assignment with its own value parser and user-facing error message. `build`
 validates once and returns the frozen `SearchQuery`. Unknown `key:value` tokens and
 Windows paths remain search text.
 
-`read_candidates` builds SQL with `_SqlFilter`, which keeps every clause together
-with its parameters. The literal pass uses FTS5 trigram matching for terms of three
-or more characters and `LIKE` for shorter terms. The fuzzy pass matches
-subsequences and excludes everything the literal pass returned. Both passes are
+`read_candidates` builds SQL with `_CandidateFilter`, which keeps every clause
+together with its parameters and with the same condition as a plan node for the
+Rust memory index. The literal pass uses FTS5 trigram matching for terms of three
+or more characters and `LIKE` for shorter terms, which match the name only
+(`MIN_PATH_TERM_LENGTH`). The fuzzy pass matches subsequences and excludes
+everything the literal pass returned. Both passes are
 supersets of the domain matcher; `rank` makes the final decision:
 
 1. Structured filters and ignored priority decide eligibility.
@@ -137,17 +145,50 @@ reconstructs only the kept `Candidate`/`Ranking` objects. The Python loop in
 failures are logged once per exception type, and `native` re-raises them.
 
 The separate `native/` maturin distribution exports `rank_rows` (Python-fetched
-rows) and `rank_sqlite` (read-only SQLite, bundled FTS5, WAL, 15-second busy
-timeout). Both share matching, priorities, ranking, bounds and a bounded heap.
-`candidate_sql` remains the sole SQL builder. Literal and fuzzy statements are
-combined with ordered `UNION ALL`, renamed named parameters and one heap; the
-native SQLite reader holds one read transaction. No indexing or UI code moves.
+rows), `rank_sqlite` (read-only SQLite, bundled FTS5, WAL, 15-second busy
+timeout) and `rank_catalog` (the memory index, the default phase). All share
+matching, priorities, ranking, bounds and a bounded heap. `candidate_sql`
+remains the sole SQL builder. For `rank_sqlite`, literal and fuzzy statements
+are combined with ordered `UNION ALL`, renamed named parameters and one heap;
+the native SQLite reader holds one read transaction. No indexing or UI code moves.
+
+### Memory index
+
+The fuzzy pass (`name LIKE '%a%b%c%'`) and terms too short for trigrams cannot
+use an SQLite index, so each such search scanned the whole entries table: about
+45 ms per keystroke on a 91,500-entry catalog. `native/src/catalog.rs` keeps a
+read-only copy of every entry column a candidate row needs (rowid, path, path
+key, kind, name, search path, extension, size, modified time, attributes,
+application source) in contiguous text arenas, about 30 MiB for that catalog,
+and `native/src/plan.rs` evaluates the candidate plan `_CandidateFilter` built
+next to the SQL: `LIKE` with SQLite's semantics (`native/src/like.rs`, SIMD
+substring search via `memchr`), comparisons, `IN`, `OR` and `NOT`. Full-text
+conditions run the FTS5 query in the same read transaction and drive the scan,
+so a trigram-indexed pass checks only its matches. Launch history and favorites
+are small and change on every launch, so each search reads them fresh by rowid.
+Both passes scan in rowid order; candidates borrow their text from the arenas
+and only kept hits are copied. Parity tests check, for every query of the parity
+matrix, that each pass selects exactly the rows of its candidate SQL and that
+rankings equal the Python loop's; a randomized test compares `LIKE` with SQLite.
+
+Freshness: every search opens a read transaction, reads `catalog_version` and
+uses the copy only if it was loaded from exactly that id and generation. If not,
+the search reloads the copy from its own snapshot (about 100 ms for 91,500
+entries); while another thread reloads, a search does not wait but uses
+`rank_sqlite`. The copy is one `Arc` in a mutex-guarded slot, so concurrent
+searches share it and a reload swaps it whole; a separate lock admits one
+reload at a time, and a search cancelled during a reload still finishes it for
+the next search. `native_engine.warm_search_index(store)` (Rust
+`warm_catalog`) reloads ahead of time; the UI calls it on a worker thread after
+startup and after each catalog publication, so typing never pays for a reload.
+The copy assumes rowids are stable, as the FTS5 content table already does;
+the catalog is never vacuumed.
 
 Rust releases the GIL during ranking and SQLite reads. It reacquires it only for
 the exclusion callback `(path, is_folder, from_application_source)`, after the
 same eligibility, bound and heap checks as Python, and for filename rules it
-cannot match natively. Atomic cancellation is checked on every candidate and SQLite's progress
-handler; a short-lived bridge forwards the existing Python `Event` every 5 ms.
+cannot match natively. Atomic cancellation is checked on every candidate, every
+1,024 memory-index entries and in SQLite's progress handler; a short-lived bridge forwards the existing Python `Event` every 5 ms.
 Phase-one row conversion yields the GIL in batches. Cancellation returns no hits.
 
 The abi3 wheel carries Unicode tables for Python 3.11 to 3.14 (Unicode 14.0, 15.0,
@@ -161,7 +202,7 @@ rule's compiled Python pattern, so a search never switches engines midway.
 Scores are added left to right in both engines and the personalization uses one
 explicit log2 formula, because `sum()` and `math.log2` round differently across
 Python versions. Parity tests compare scores, bands, reasons, order and callback sequence
-against the Python loop and exercise both extension entry points.
+against the Python loop and exercise every extension entry point.
 
 ## Threads, scheduling and cancellation
 

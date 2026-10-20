@@ -19,7 +19,7 @@ from typing import TypeVar
 
 from PySide6.QtCore import QObject, QProcess, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPlainTextEdit
 
 from pathscout import __version__
 from pathscout.actions import ExplorerTarget, ItemActions
@@ -37,10 +37,10 @@ from pathscout.platform.gesture import (
     ShowRequested,
     ViewKind,
 )
-from pathscout.platform.shell import application_roots
+from pathscout.platform.shell import application_roots, folder_shortcuts
 from pathscout.platform.startup import PACKAGE_PARENT, StartupShortcut
 from pathscout.releases import Release, install_command
-from pathscout.search.native_engine import native_availability
+from pathscout.search.native_engine import native_availability, warm_search_index
 from pathscout.search.ranking import SearchHit
 from pathscout.search.service import SearchService
 from pathscout.settings import Settings, SettingsFile
@@ -52,10 +52,12 @@ from pathscout.ui.search_session import SearchSession
 from pathscout.ui.settings import SettingsDialog
 from pathscout.ui.status import ProblemTopic, StatusBoard
 from pathscout.ui.tasks import BackgroundTasks, TaskCategory
+from pathscout.ui.theme import Palette
 from pathscout.ui.tray import TrayMenu
 from pathscout.ui.update_dialog import UpdateCommandDialog
 from pathscout.ui.updater import ReleaseUpdater
 from pathscout.ui.website_icons import WebsiteIcons
+from pathscout.ui.widgets import InfoDialog, line_icon
 from pathscout.ui.window import LauncherWindow
 from pathscout.websites import WebsiteTarget
 
@@ -65,6 +67,7 @@ UI_DELAY_WARNING_MS = 250
 KEYBOARD_POLL_MS = 20
 WATCH_POLL_MS = 500
 HIDDEN_SCOPE_CLEANUP_MS = 500
+DETAILS_HEIGHT = 120  # Scan errors and problems in the index status dialog.
 # Explorer follows the result where arrow-key repeats stop, not every row passed.
 EXPLORER_SELECT_DELAY_MS = 120
 
@@ -110,7 +113,11 @@ class LauncherController(QObject):
         self.tray = TrayMenu(self, autostart_available=os.name == "nt")
         self.status = StatusBoard(self.window.set_activity, self.tray.icon)
         self.search = SearchSession(
-            self.window, SearchService(self.store), self.tasks, self.effective_settings, self
+            self.window,
+            SearchService(self.store, folder_shortcuts),
+            self.tasks,
+            self.effective_settings,
+            self,
         )
         self.indexing = IndexScheduler(
             self.tasks,
@@ -147,6 +154,8 @@ class LauncherController(QObject):
         self._start_keyboard()
         self._start_monitor()
         self.updater.start_watching()
+        QTimer.singleShot(0, self.window.warm_up_text)  # Once the event loop is idle.
+        self._warm_search_index()
         QTimer.singleShot(0, self.indexing.request_full)
 
     # Wiring -------------------------------------------------------------------
@@ -159,6 +168,7 @@ class LauncherController(QObject):
         window.favorite_requested.connect(self.favorite_item)
         window.explorer_selection.connect(self.follow_in_explorer)
         window.dialog_text_returned.connect(self._return_text_to_dialog)
+        window.shell_menu_requested.connect(self.show_shell_menu)
         window.exclude_requested.connect(self.exclude_folder)
         window.settings_requested.connect(self.edit_settings)
         window.rescan_requested.connect(self.rescan)
@@ -361,13 +371,26 @@ class LauncherController(QObject):
         errors = f"Last refresh: {len(report.errors)} scan errors" if report.errors else ""
         self.status.set_activity(errors)
         if not report.cancelled:
+            # The prefetch pool runs one task at a time: the start list then uses the
+            # fresh index, and the next keystroke never pays for reloading it.
+            self._warm_search_index()
             self.search.refresh()
+
+    def _warm_search_index(self) -> None:
+        """Load the Rust engine's memory index for the current catalog in the background."""
+        self.tasks.submit(
+            TaskCategory.PREFETCH,
+            partial(warm_search_index, self.store),
+            lambda _report: None,
+            lambda message: logger.info("Search index warm-up failed: %s", message),
+        )
 
     def _index_failed(self, message: str) -> None:
         self.status.set_activity(f"Index failed: {message}")
 
     def _update_catalog_count(self) -> None:
         self.status.set_catalog_count(self.indexing.catalog_count)
+        self.tray.set_catalog_count(self.indexing.catalog_count)
         self.window.set_catalog_count(self.indexing.catalog_count)
 
     def rescan(self) -> None:
@@ -393,23 +416,29 @@ class LauncherController(QObject):
 
     def show_index_status(self) -> None:
         report = self.indexing.last_report
+        dialog = InfoDialog("Index status", "", line_icon("activity", Palette.ACCENT), self.window)
         if report is None:
-            QMessageBox.information(
-                self.window, "PathScout index status", "The initial scan has not completed yet."
+            dialog.subtitle.setText("The first scan is still running.")
+        else:
+            dialog.subtitle.setText(
+                f"The last scan took {report.elapsed:.2f} s."
+                if not report.errors
+                else f"The last scan took {report.elapsed:.2f} s and hit some errors."
             )
-            return
-        text = (
-            f"{self.indexing.catalog_count:,} catalog entries\n"
-            f"Last scan: {report.entries:,} entries in {report.elapsed:.2f}s\n"
-            f"Excluded/skipped: {report.skipped:,}\nErrors: {len(report.errors)}"
-        )
-        if problems := self.status.problem_text():
-            text += f"\n\nProblems:\n{problems}"
-        dialog = QMessageBox(
-            QMessageBox.Icon.Information, "PathScout index status", text, parent=self.window
-        )
-        if report.errors:
-            dialog.setDetailedText("\n".join(report.errors))
+            dialog.add_facts(
+                [
+                    ("Catalog entries", f"{self.indexing.catalog_count:,}"),
+                    ("Scanned in the last run", f"{report.entries:,}"),
+                    ("Excluded or skipped", f"{report.skipped:,}"),
+                    ("Errors", f"{len(report.errors):,}"),
+                ]
+            )
+            if problems := self.status.problem_text():
+                dialog.add_widget(_details("Problems", problems))
+            if report.errors:
+                dialog.add_widget(_details("Scan errors", "\n".join(report.errors)))
+        dialog.add_button("Refresh now", lambda: (dialog.accept(), self.rescan()))
+        dialog.add_button("Close", dialog.accept, primary=True)
         dialog.exec()
         dialog.deleteLater()
 
@@ -471,6 +500,20 @@ class LauncherController(QObject):
     def _dialog_target(self) -> int | None:
         """The Open or Save dialog the bar belongs to, if the search started in one."""
         return self.window.explorer_view[0] if self.window.serves_file_dialog else None
+
+    def show_shell_menu(self, hit: SearchHit, extended: bool) -> None:
+        """Windows' own context menu for a result; the bar closes if a command ran."""
+        if os.name != "nt":
+            return
+        from pathscout.platform.shell_menu import show_shell_menu
+
+        try:
+            ran = show_shell_menu(hit.item.path, extended=extended)
+        except OSError as exc:
+            self._action_failed(str(exc))
+            return
+        if ran:
+            self.window.hide()
 
     def reveal_item(self, hit: SearchHit) -> None:
         self.window.hide()
@@ -724,3 +767,13 @@ class LauncherController(QObject):
         self.website_icons.close()
         self.tray.hide()
         self.window.hide()
+
+
+def _details(title: str, text: str) -> QPlainTextEdit:
+    """Read-only lines, such as scan errors, below a status dialog's facts."""
+    box = QPlainTextEdit(text)
+    box.setReadOnly(True)
+    box.setAccessibleName(title)
+    box.setPlaceholderText(title)
+    box.setMaximumHeight(DETAILS_HEIGHT)
+    return box

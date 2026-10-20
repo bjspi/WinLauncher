@@ -25,6 +25,12 @@ try:
     NATIVE = importlib.import_module("pathscout_native")
 except ImportError:
     NATIVE = None
+# Each native phase's entry point and the position of its query spec argument.
+NATIVE_ENTRYPOINTS = {
+    "rows": ("rank_rows", 0),
+    "sqlite": ("rank_sqlite", 3),
+    "memory": ("rank_catalog", 2),
+}
 
 
 class ContentQueryTest(unittest.TestCase):
@@ -129,15 +135,15 @@ class NativeContentTest(unittest.TestCase):
             baseline = self.search(query, "rows", threads=1)
             self.assertEqual(len(baseline), 10)
             self.assertNotIn(excluded, [hit.item.path for hit in baseline])
-            for phase in ("rows", "sqlite"):
+            for phase in ("rows", "sqlite", "memory"):
                 for threads in (1, 4, 16):
-                    entrypoint = "rank_rows" if phase == "rows" else "rank_sqlite"
+                    entrypoint, spec_argument = NATIVE_ENTRYPOINTS[phase]
                     with (
                         self.subTest(sort=sort, phase=phase, threads=threads),
                         patch.object(NATIVE, entrypoint, wraps=getattr(NATIVE, entrypoint)) as call,
                     ):
                         self.assertEqual(self.search(query, phase, threads), baseline)
-                        spec = call.call_args.args[0 if phase == "rows" else 3]
+                        spec = call.call_args.args[spec_argument]
                         self.assertEqual(spec["content_search_threads"], threads)
 
     def test_name_rules_on_non_ascii_names_and_legacy_encodings_keep_content_hits(self):
@@ -149,7 +155,7 @@ class NativeContentTest(unittest.TestCase):
             items.append(CatalogItem(path, ItemKind.FILE))
         self.publish(items)
         self.settings = replace(self.settings, name_priorities=(NamePriority("notiz", 9),))
-        for phase in ("rows", "sqlite"):
+        for phase in ("rows", "sqlite", "memory"):
             with self.subTest(phase=phase):
                 hits = self.search("contains:needle", phase)
                 self.assertEqual({hit.item.path for hit in hits}, {item.path for item in items})
@@ -241,7 +247,7 @@ class NativeContentTest(unittest.TestCase):
             changed, {hit.item.path for hit in self.search(f'report contains:"{phrase}"', "sqlite")}
         )
 
-    def test_fnmatch_content_patterns_filter_both_native_phases(self):
+    def test_fnmatch_content_patterns_filter_every_native_phase(self):
         items = []
         for name, text in (
             ("a.txt", "prefix GSK_a7 suffix"),
@@ -255,7 +261,7 @@ class NativeContentTest(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             items.append(CatalogItem(path, ItemKind.FILE))
         self.publish(items)
-        for phase in ("rows", "sqlite"):
+        for phase in ("rows", "sqlite", "memory"):
             for pattern, expected in (
                 ("gsk_*", {"a.txt", "b.txt", "c.txt", "d.txt", "lines.txt"}),
                 ("gsk_?", {"a.txt", "b.txt", "c.txt", "d.txt"}),

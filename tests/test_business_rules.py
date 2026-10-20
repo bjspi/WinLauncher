@@ -79,7 +79,8 @@ class BusinessRulesTest(unittest.TestCase):
         self.scan()
         with self.store.connect() as connection:
             paths = [row[0] for row in connection.execute("SELECT path FROM entries")]
-        self.assertEqual(paths, [str(visible)])
+        # The configured folder itself is an entry, too.
+        self.assertEqual(paths, [str(self.root), str(visible)])
 
     def test_new_marker_hides_old_results_and_subtree_refresh_removes_them(self):
         self.file("private/secret.txt")
@@ -171,7 +172,7 @@ class BusinessRulesTest(unittest.TestCase):
         cancel.set()
         report = self.indexer.scan(replace(self.settings, roots=()), cancel=cancel)
         self.assertTrue(report.cancelled)
-        self.assertEqual(self.store.count(), 1)
+        self.assertEqual(self.store.count(), 2)  # The configured folder and its file.
 
     def test_unavailable_root_preserves_previous_snapshot(self):
         self.file("original.txt")
@@ -181,7 +182,7 @@ class BusinessRulesTest(unittest.TestCase):
         ):
             report = self.indexer.scan(self.settings)
         self.assertTrue(report.errors)
-        self.assertEqual(self.store.count(), 1)
+        self.assertEqual(self.store.count(), 2)  # The configured folder and its file.
 
     def test_renames_and_deletions_reconcile_without_losing_usage(self):
         path = self.file("project/report.txt")
@@ -279,7 +280,9 @@ class BusinessRulesTest(unittest.TestCase):
         )
         self.assertFalse(self.hits("secret"))
         self.scan()
-        self.assertEqual(self.store.count(), 0)
+        with self.store.connect() as connection:
+            paths = [row[0] for row in connection.execute("SELECT path FROM entries")]
+        self.assertEqual(paths, [str(self.root)])  # Only the configured folder itself.
 
     def test_ignored_start_menu_folder_prunes_application_descendants(self):
         self.file("Hidden Apps/Secret.exe")
@@ -650,13 +653,17 @@ class BusinessRulesTest(unittest.TestCase):
         self.settings = replace(self.settings, roots=(str(linked),))
         self.scan()
         self.assertEqual(self.hits("report")[0].item.path, linked / "sub/report.txt")
+        # The configured folder itself is an entry, besides sub and report.txt.
+        self.assertEqual(self.hits("linked")[0].item.path, linked)
         self.scan(scope=linked / "sub")
-        self.assertEqual(self.store.count(), 2)
+        self.assertEqual(self.store.count(), 3)
         nested = self.root / "sub/loop"
         _winapi.CreateJunction(str(self.root), str(nested))
         self.addCleanup(nested.rmdir)
         self.scan()
-        self.assertEqual(self.store.count(), 2)
+        self.assertEqual(self.store.count(), 3)
+        self.scan(scope=linked)  # A repair of the root itself keeps exactly one row for it.
+        self.assertEqual(self.store.count(), 3)
 
     def test_empty_quotes_repeated_filters_and_validation_messages(self):
         self.assertEqual(parse_query('""').terms, ())
@@ -968,7 +975,7 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertEqual(hit.item.query_launches, 2)
         self.assertTrue(hit.item.pinned)
         self.scan()
-        self.assertEqual(self.store.count(), 1)
+        self.assertEqual(self.store.count(), 2)  # The configured folder and the report.
 
     def test_only_successful_launches_are_learned(self):
         path = self.file("App.exe")

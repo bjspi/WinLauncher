@@ -45,9 +45,10 @@ or searches the folder you are in when you simply start typing in Explorer.
 <img src="docs/images/explorer-search.png" width="440" alt="Searching inside an Explorer folder">
 </div>
 
-Typing in Explorer opens a compact completion bar. Matching direct folders come
-first, followed by direct files; only when there are no direct matches does it
-search the catalog below that folder. Direct folder names are read live, including
+Typing in Explorer opens a compact completion bar, docked to the bottom right of
+the window. Matching direct folders come first, followed by direct files; matches
+from subfolders follow below a blue separator. Explorer selects the best direct
+match and follows the arrow keys. Direct folder names are read live, including
 folders containing `.nobackup` or `.no-backup`; their contents stay excluded from
 indexing and recursive search. Clicking a folder or pressing Enter navigates the
 original Explorer tab, without opening another window. Clearing the scope returns
@@ -62,7 +63,7 @@ the file-name box. PathScout never confirms the dialog for you, so a Save dialog
 cannot overwrite anything until you press <kbd>Enter</kbd> yourself. In any Open or
 Save dialog, <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps to the folder of the Explorer window
 you used last; the file name you had typed stays. Turn it off in **Settings →
-Search & indexing**.
+Explorer & dialogs**.
 
 ## 🚀 Quick start
 
@@ -72,7 +73,7 @@ Search & indexing**.
 a `pathscout` command that starts without a console window:
 
 ```powershell
-pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.4.0"
+pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.5.0"
 pathscout --show
 ```
 
@@ -111,15 +112,15 @@ Afterwards, start it without a console window:
 ```
 
 PathScout starts with your Desktop, Documents and Downloads plus installed
-applications. Add your work folders in **Settings → Search & indexing** — or just
+applications. Add your work folders in **Settings → Search folders** — or just
 drag them from Explorer into the list. The first scan runs in the background.
 
 Tick **Start with Windows** in the tray menu or in Settings to launch PathScout at
 sign-in. It manages only its own shortcut in your Startup folder.
 
 If you open the launcher, type nothing and switch to another window, it closes
-after 3 seconds. Change the delay or turn this off in **Settings → Search &
-indexing**. A typed query keeps the launcher open. The search bar inside Explorer
+after 3 seconds. Change the delay or turn this off in **Settings → General**. A
+typed query keeps the launcher open. The search bar inside Explorer
 closes as soon as you click elsewhere.
 
 In **Settings → Websites**, edit or add a keyword, title and URL. Google, Amazon,
@@ -256,7 +257,9 @@ Quoted text keeps spaces and matches exactly, apostrophes are literal and Window
 paths such as `C:\Work` stay ordinary search text; only a trailing `\` or `/` turns
 a token into a folder filter. A dash inside a word (`my-file`) or on its own is
 ordinary text. Date and size filters intersect, so `date:2026 after:2026-03` means
-March to December 2026. The full contract is in the
+March to December 2026. Terms of one or two characters match names only, never
+folders: almost every path contains a `d` from `D:\`. Use `path:` or `do/` to
+match short folder names. The full contract is in the
 [behavior specification](docs/specification.md).
 
 Search terms support fnmatch patterns: `*`, `?`, `[abc]`, `[0-9]` and `[!0-9]`.
@@ -295,7 +298,7 @@ skipped; unreadable or deleted files also do not match. PDFs with a text layer
 would require a separate text extractor; image-only PDFs would additionally need
 OCR. Narrow the filename, extension or folder first for large collections.
 
-**Settings → Search & indexing → Content search threads** sets how many
+**Settings → Search folders → Content search threads** sets how many
 files are scanned concurrently (1–16, default 4). This applies to `contains:`,
 `content:` and `rg:`; filename search still uses the catalog. The Rust engine uses
 ripgrep libraries directly, with reusable workers and no per-file processes.
@@ -334,8 +337,10 @@ and never runs Python code; results larger than about 1000 digits are not shown.
 
 ### 📁 Paths and shortcuts
 
-Start with `%` to suggest known Windows directory variables (`%APPDATA%`,
-`%USERPROFILE%` and others). A trailing `/` or `\` lists direct children;
+Start with `%` to suggest Windows folders by name: every environment variable that
+points to a folder (`%APPDATA%`, `%USERPROFILE%`, your own) plus known folders such
+as `%DOWNLOADS%`, `%DESKTOP%`, `%STARTUP%` or `%SENDTO%`. Only names starting with
+what you typed appear: `%user` shows `%USERPROFILE%`, not `%TEMP%`. A trailing `/` or `\` lists direct children;
 `~/Doc` completes names below your user directory. These shortcuts work without
 indexing that folder, run in the background and honor exclusions and markers.
 `in:%USERPROFILE%` also expands variables when filtering the existing catalog.
@@ -382,8 +387,16 @@ D:\Archive\*\cache           starts with a drive, so it matches only from D:\
 `ignored` hides an item completely, `low` makes it a fallback, `high` lifts it to
 the top group; the number fine-tunes the order.
 
+## 🖼️ A closer look
+
 <div align="center">
-<img src="docs/images/settings.png" width="520" alt="PathScout settings">
+
+| | |
+| :---: | :---: |
+| <img src="docs/images/query-syntax.png" width="420" alt="Filters colored while typing"><br>Filters and exclusions are colored as you type | <img src="docs/images/tray-menu.png" width="200" alt="Tray menu"><br>The tray menu |
+| <img src="docs/images/settings.png" width="420" alt="General settings"><br>Settings: startup and the search bar | <img src="docs/images/settings-folders.png" width="420" alt="Search folder settings"><br>Search folders, drag and drop included |
+| <img src="docs/images/settings-shortcuts.png" width="420" alt="Keyboard shortcuts"><br>Every shortcut on one page | <img src="docs/images/about.png" width="420" alt="About PathScout"><br>About, with the data folder one click away |
+
 </div>
 
 ## 🔒 Privacy
@@ -469,17 +482,50 @@ unexpected Rust error is logged once and that search is repeated in Python.
 Filename regex rules run natively for ASCII names; other names, and syntax Rust's
 regex cannot match exactly, call the rule's compiled Python pattern instead.
 
-Compare the engines and both native phases:
+Compare the engines and the native phases:
 
 ```powershell
 python tools\benchmark.py --engine python --entries 50000 --directories 1000
 python tools\benchmark.py --engine native --phase rows --entries 50000 --directories 1000
 python tools\benchmark.py --engine native --phase sqlite --entries 50000 --directories 1000
+python tools\benchmark.py --engine native --phase memory --entries 50000 --directories 1000
 cargo test --manifest-path native/Cargo.toml --locked
 ```
 
-`PATHSCOUT_NATIVE_PHASE=rows` keeps SQLite reads in Python; the default `sqlite`
-phase streams candidates in Rust.
+`PATHSCOUT_NATIVE_PHASE` chooses where Rust reads candidates: the default
+`memory` scans an in-memory copy of the catalog, `sqlite` runs the candidate SQL
+in Rust and `rows` keeps SQLite reads in Python.
+
+#### Search performance
+
+`tools\benchmark_search.py` times a fixed list of queries against a catalog file
+and splits candidate selection into the literal and the fuzzy pass. Run it on a
+copy of your catalog, since opening a catalog may upgrade its schema; it prints
+only counts and times:
+
+```powershell
+python tools\benchmark_search.py COPY\catalog.sqlite3 --settings COPY\settings.json
+```
+
+Median times on a real catalog of 91,539 entries (85k files, 5.5k folders, 657
+apps) with 60 results, before and after the memory index and name-only short
+terms:
+
+| Query | Before | After | Query | Before | After |
+| --- | ---: | ---: | --- | ---: | ---: |
+| `d` | 161 ms | 17 ms | `steuer bescheid` | 45 ms | 12 ms |
+| `do` | 161 ms | 26 ms | `*.pdf` | 54 ms | 16 ms |
+| `dok` | 68 ms | 27 ms | `ext:pdf rech` | 40 ms | 15 ms |
+| `dokumente` | 68 ms | 27 ms | `projekt` | 40 ms | 9 ms |
+| `rechnung` | 50 ms | 15 ms | `a b` | 183 ms | 32 ms |
+| `rechnung 2024` | 42 ms | 10 ms | `readme` | 48 ms | 22 ms |
+| `ärzt` | 36 ms | 6 ms | `xyzzyq` | 34 ms | 4 ms |
+| `vsc` | 55 ms | 23 ms | | | |
+
+The fuzzy pass used to scan the whole table on every keystroke (about 38 ms); in
+memory it takes about 3 ms, and most of the remaining time is ranking and the
+exclusion checks of kept hits. The memory index takes 30 MiB for this catalog
+and reloads in about 100 ms after a catalog change.
 
 ### Tests and checks
 

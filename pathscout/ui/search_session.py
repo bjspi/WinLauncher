@@ -30,7 +30,7 @@ from pathscout.ui.tasks import BackgroundTasks, TaskCategory
 from pathscout.ui.window import LauncherWindow
 from pathscout.websites import WebsiteQuery, website_query
 
-DEBOUNCE_MS = 70
+DEBOUNCE_MS = 40
 # Words only: no filters, exclusions, quotes, wildcards, paths or navigation.
 _PLAIN_WORDS = re.compile(r"[^:!*?\[\]\"\\/%~]+")
 # What the typed text asks for: a file search, or a website plus its file search.
@@ -44,6 +44,14 @@ class SearchResults:
     elapsed_ms: float
     # Catalog hits whose file is gone; the catalog has not noticed yet.
     missing: frozenset[Path] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True, slots=True)
+class StartList:
+    """The results of the empty query: favorites and recently opened items."""
+
+    query: SearchQuery
+    results: SearchResults
 
 
 class SearchSession(QObject):
@@ -62,6 +70,10 @@ class SearchSession(QObject):
         self.running: threading.Event | None = None  # Cancel flag of the search in flight.
         self.displayed_query: LauncherQuery | None = None
         self.open_pending = False
+        # Kept ready while the bar is hidden, so it opens with its list at once.
+        self.start_list: StartList | None = None
+        self.prefetching: threading.Event | None = None  # Cancel flag of the prefetch.
+        self.closed = False
         self.debounce = QTimer(self)
         self.debounce.setSingleShot(True)
         self.debounce.setInterval(DEBOUNCE_MS)
@@ -87,6 +99,11 @@ class SearchSession(QObject):
     def text_changed(self) -> None:
         self.open_pending = False
         self._abandon_running()
+        if (start := self._start_list_for_typed_query()) is not None:
+            # Shown at once; a fresh search confirms it, invisibly when nothing changed.
+            self._show(start.query, start.results)
+            self.run()
+            return
         if self._shows_other_query():
             self.window.show_searching()
         self.debounce.start()
@@ -114,6 +131,39 @@ class SearchSession(QObject):
             self.run()
         else:
             self.displayed_query = None
+            self.prefetch_start_list()
+
+    def prefetch_start_list(self) -> None:
+        """Recompute the start list in the background while the bar is hidden."""
+        if self.closed or self.window.isVisible():
+            return
+        query = replace(parse_query(""), kind=self.window.kind)
+        if self.prefetching is not None:
+            self.prefetching.set()
+        cancel = self.prefetching = threading.Event()
+        self.tasks.submit(
+            TaskCategory.PREFETCH,
+            partial(self._work, query, self.settings(), cancel),
+            partial(self._prefetched, cancel, query),
+            lambda message: logger.info("Start list prefetch failed: %s", message),
+        )
+
+    def _prefetched(
+        self, cancel: threading.Event, query: SearchQuery, result: SearchResults
+    ) -> None:
+        if cancel is not self.prefetching:
+            return
+        self.prefetching = None
+        self.start_list = StartList(query, result)
+
+    def _start_list_for_typed_query(self) -> StartList | None:
+        if self.start_list is None:
+            return None
+        try:
+            query = self.current_query()
+        except ValueError:
+            return None
+        return self.start_list if query == self.start_list.query else None
 
     def request_open(self, hit: LauncherHit | None) -> None:
         try:
@@ -138,10 +188,15 @@ class SearchSession(QObject):
         self.open_pending = False
         self.debounce.stop()
         self._abandon_running()
+        self.prefetch_start_list()
 
     def close(self) -> None:
+        """Stop searching for good; hiding the bar while quitting starts nothing new."""
+        self.closed = True
         self.debounce.stop()
         self._abandon_running()
+        if self.prefetching is not None:
+            self.prefetching.set()
 
     def _shows_other_query(self) -> bool:
         try:
@@ -186,9 +241,17 @@ class SearchSession(QObject):
         if cancel is not self.running:
             return
         self.running = None
+        if self.start_list is not None and query == self.start_list.query:
+            self.start_list = StartList(query, result)
         if not self.window.isVisible():
             self.displayed_query = None
             return
+        self._show(query, result)
+        if self.open_pending:
+            self.open_pending = False
+            self.request_open(self.window.selected_hit())
+
+    def _show(self, query: LauncherQuery, result: SearchResults) -> None:
         same_query = self.displayed_query == query
         self.displayed_query = query
         files = _file_query(query)
@@ -205,9 +268,6 @@ class SearchSession(QObject):
             missing=result.missing,
             content_search=offer,
         )
-        if self.open_pending:
-            self.open_pending = False
-            self.request_open(self.window.selected_hit())
 
     def _failed(self, cancel: threading.Event, message: str) -> None:
         if cancel is not self.running:

@@ -17,11 +17,16 @@ pub const NAME_CONTAINS_POSITION_PENALTY: f64 = 0.05;
 pub const ABBREVIATION_SCORE: f64 = 65.0;
 pub const PATH_CONTAINS_SCORE: f64 = 35.0;
 pub const MIN_FUZZY_TERM_LENGTH: usize = 2;
+/// Plain terms shorter than this match only the name: nearly every path contains
+/// a drive letter or another one- or two-letter fragment.
+pub const MIN_PATH_TERM_LENGTH: usize = 3;
 
 pub struct Term {
     pub text: String,
     /// Written in quotes: matched as contiguous text, never by initials or fuzzily.
     pub exact: bool,
+    /// May match the path as well as the name; see `MIN_PATH_TERM_LENGTH`.
+    pub matches_path: bool,
     pattern: Option<Regex>,
 }
 
@@ -32,9 +37,11 @@ impl Term {
         } else {
             None
         };
+        let matches_path = pattern.is_some() || text.chars().count() >= MIN_PATH_TERM_LENGTH;
         Ok(Self {
             text,
             exact: false,
+            matches_path,
             pattern,
         })
     }

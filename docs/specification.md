@@ -7,7 +7,9 @@ modification time and Windows attribute bits. Executables and `.lnk`, `.url` and
 `.appref-ms` files are applications; other ordinary files are files. Directory
 entries are folders. Application display names omit their extension.
 
-Configured roots are recursive. With application discovery enabled, Start menu
+Configured roots are recursive, and each root folder is itself an entry, so `D:\Projects`
+is found by name; drive roots have no name and are not listed, and an Explorer
+folder outside every root only lends its scope. With application discovery enabled, Start menu
 directories are scanned for launchable entries and HKCU/HKLM App Paths are read in
 both registry views. This does not enumerate the UWP AppsFolder namespace.
 
@@ -24,7 +26,7 @@ Scans publish atomically. Cancellation must leave the previous catalog unchanged
 A changed subtree refresh must preserve unrelated entries. On startup, a refresh
 is requested; file metadata notifications trigger exact-file refreshes, structural
 changes trigger subtree refreshes, and the default periodic full
-refresh interval is 300 seconds. The interval is configurable from 30 to 86,400
+refresh interval is 1,800 seconds; it only repairs events the folder watcher missed. The interval is configurable from 30 to 86,400
 seconds after the previous full scan completes. Requests queue behind running scans;
 partial repairs cannot postpone the periodic full-scan deadline.
 Directory metadata-only notifications wait for periodic refresh; they do not trigger
@@ -96,7 +98,7 @@ Matching is NFC-normalized and case-insensitive.
 
 | Expression | Contract |
 | --- | --- |
-| `annual report` | Every term must match the name or literal full path |
+| `annual report` | Every term must match the name or literal full path; one- and two-character terms match the name only |
 | `"annual report"` | One exact term containing a space: contiguous text only, no initials or fuzzy subsequence |
 | `*.json`, `report?.json`, `report[0-9].json` | Whole-filename fnmatch patterns, including the extension |
 | `type:file`, `type:folder`, `type:dir`, `type:app` | Restrict item kind; overrides the UI kind button. `t:` is shorthand for `type:` |
@@ -201,7 +203,7 @@ decoded automatically; NUL detection skips binary input. Office/PDF/media and
 executables are not parsed. Unreadable, deleted or unsupported files do not match.
 Read chunks check cancellation, and scanning runs with the Python GIL released.
 `content_search_threads` selects 1–16 parallel file scans (default 4), exposed in
-Search & indexing settings. It changes no catalog membership and needs no rescan.
+the Search folders settings page. It changes no catalog membership and needs no rescan.
 Only candidates that pass ranking and exclusions enter a bounded queue (at most
 twice the worker count in flight). Results enter the heap in candidate order,
 preserving ranking, ties and result limits. Workers are joined when the search
@@ -233,10 +235,15 @@ Typed kind filters update toggle/menu state. Selecting a toggle removes typed
 
 Leading `%VARIABLE%` and `~`/`~/`/`~\` enter direct path navigation. An exact
 existing path returns the file/folder; a trailing separator lists its direct
-children, and an incomplete last component completes names by prefix. `%` and
-incomplete variable names suggest known Windows directory variables, deduplicating
-aliases with the same target. Unknown completed variables and relative expansion
-values report an error. Resolution and enumeration run on a search worker, obey
+children, and an incomplete last component completes names by prefix. `%` and an
+incomplete name suggest every `%NAME%` that starts with the typed text and names an
+existing folder: environment variables whose value is a folder (so values such as
+tokens never appear) and Windows known folders without a variable, such as
+`%DESKTOP%`, `%DOWNLOADS%`, `%STARTUP%`, `%SENDTO%`, `%FONTS%` or `%SAVEDGAMES%`.
+The platform layer resolves known folders through Windows, so redirected folders
+are followed; names reaching the same folder appear once. Environment variables win
+over known-folder names. Unknown completed names and relative expansion values
+report an error. Resolution and enumeration run on a search worker, obey
 type, priority and exclusion rules, support cancellation and the result limit,
 and do not recursively scan or add entries to the catalog. Filesystem reads are
 skipped for excluded subtrees. `in:` also expands environment/home variables.
@@ -282,8 +289,14 @@ For each positive term, the first matching rule supplies its text score:
 | Word prefix | 90 |
 | Name substring | `75 - 0.05 × starting offset` |
 | Initials / camel-case abbreviation | 65 |
-| Literal full-path substring | 35 |
+| Literal full-path substring (terms of three or more characters) | 35 |
 | Fuzzy name subsequence | 5–60 |
+
+Plain terms shorter than three characters never match the parent path, in SQL
+candidate selection, eligibility and scoring alike: nearly every path contains a
+drive letter or some other one- or two-letter fragment, so `d` would otherwise
+make the whole catalog a candidate through `D:\`. Wildcard patterns, `path:` and
+folder filters keep their own rules.
 
 Fuzzy matching requires at least two characters and preserves character order. Its
 dynamic program rewards consecutive characters and word/camel-case boundaries,
@@ -301,7 +314,9 @@ Combined scoring adds:
 
 An empty query with default options shows only favorites and previously launched
 items, using these nontext signals; an optional type filter still restricts that
-learned set. An explicit constraint such as `ext:pdf` can browse unlearned entries
+learned set. This start list is computed ahead in a separate prefetch pool while
+the bar is hidden (after it closes and after catalog or personal changes), so the
+bar opens with it at once; a fresh search then confirms it without the typing delay. An explicit constraint such as `ext:pdf` can browse unlearned entries
 without positive text. `score:match` removes all those bonuses.
 Ties use case-insensitive display name then absolute path. A favorite or explicit
 boost can outrank a stronger text match in combined mode. Score explanations are
@@ -372,7 +387,9 @@ The launcher is one compact bar: the query field, an optional folder-scope chip 
 the application icon, which opens a menu with the type filters (All, Apps, Files,
 Folders), Refresh catalog, Expanded view, Settings, About, Restart and Hide. The bar grows with up
 to nine results (fourteen in expanded view) and shrinks back to the bare query
-field for an empty query without history. Rows show the shell icon, the name with
+field for an empty query without history. Rows show the shell icon (one per file
+extension, an application's own, the standard folder icon, and their own icon for
+the user's known folders such as Desktop and Downloads), the name with
 matched characters highlighted, the containing folder and a `Ctrl+1`…`Ctrl+9`
 shortcut that opens that row. Messages (no matches, invalid query, failures),
 the result count and persistent problems appear below the results only when
@@ -407,6 +424,13 @@ them when `;` separates the arguments; the result then uses a decimal comma.
 Results show up to 12 significant digits; integer powers beyond about 1000
 digits, non-finite and complex results show nothing. The parser never evaluates
 Python code.
+
+The result context menu also offers **More options…**, Windows' own classic
+context menu for the file or folder, with the entries other programs add (Open
+with, Send to, 7-Zip and so on). Shift+right-click opens it directly, including
+the extended entries Explorer shows with Shift. A hidden owner window passes menu
+messages to the shell's IContextMenu3 so lazily filled submenus work; the bar
+closes after a command runs.
 
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
 the result's folder and its parents up to the configured root (or up to, but not
@@ -476,6 +500,16 @@ reason in the search bar and rejects `contains:` with that reason. An unexpected
 Rust error is logged once per kind, and that search is repeated in Python.
 `PATHSCOUT_SEARCH_ENGINE=python` forces the Python engine; `native` requires the
 Rust engine and reports its errors instead of falling back.
+
+The Rust engine selects candidates from an in-memory copy of the catalog's
+entries instead of scanning the table with `LIKE` on every keystroke; it selects
+exactly the rows of the candidate SQL, and trigram full-text conditions still run
+in SQLite. A search never uses a copy older than the catalog snapshot it reads:
+every change to an entry increments the catalog version, and a search that sees
+a newer version reloads the copy first, or uses candidate SQL while another
+search is reloading it. Launch history and favorites are read fresh on every
+search. `PATHSCOUT_NATIVE_PHASE=sqlite` (candidate SQL in Rust) and `rows`
+(candidate SQL in Python) select the earlier candidate sources for diagnosis.
 
 User configuration (`settings.json`), catalog/history/favorites and diagnostics
 live under `%USERPROFILE%\.PathScout` by default; `--data-dir` selects an isolated

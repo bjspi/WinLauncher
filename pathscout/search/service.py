@@ -15,7 +15,7 @@ import heapq
 import itertools
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -149,8 +149,15 @@ class _ExclusionCheck:
 
 
 class SearchService:
-    def __init__(self, store: CatalogStore):
+    def __init__(
+        self,
+        store: CatalogStore,
+        folder_shortcuts: Callable[[], Mapping[str, Path]] = dict,
+    ):
+        """`folder_shortcuts` names folders that `%NAME%` reaches beside environment
+        variables, such as the Windows known folders; the platform layer supplies them."""
         self.store = store
+        self.folder_shortcuts = folder_shortcuts
 
     def search(
         self, query: SearchQuery, settings: Settings, *, cancel: threading.Event | None = None
@@ -158,7 +165,7 @@ class SearchService:
         if query.navigation is not None:
             logger.info("Search started: engine=path_navigation")
             return _hide_fallbacks_unless_needed(
-                search_paths(query, settings, cancel, self.store), query
+                search_paths(query, settings, cancel, self.store, self.folder_shortcuts()), query
             )
         if query.explorer and query.scope is not None:
             return self._search_explorer_folder(query, query.scope, settings, cancel)

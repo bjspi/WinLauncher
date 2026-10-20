@@ -13,14 +13,18 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileIconProvider
 
-from pathscout.catalog.model import CatalogItem, ItemKind
+from pathscout.catalog.model import CatalogItem, ItemKind, path_key
+from pathscout.platform.shell import special_folders
 
 CACHE_SIZE = 512
 logger = logging.getLogger(__name__)
 
 
 class ResultIcons(QObject):
-    """Folders share one icon, files share one per extension, applications have their own."""
+    """Files share one icon per extension; applications and special folders have their own.
+
+    Every other folder shares the standard folder icon, so painting never waits.
+    """
 
     changed = Signal()
     _loaded = Signal(str, QImage)
@@ -38,9 +42,12 @@ class ResultIcons(QObject):
         self._loaded.connect(self._remember, Qt.ConnectionType.QueuedConnection)
 
     def icon_for(self, item: CatalogItem) -> QIcon:
-        if item.kind == ItemKind.FOLDER:
+        folder = item.kind == ItemKind.FOLDER
+        if folder and path_key(item.path) not in special_folders():
             return self._folder
-        key = str(item.path) if item.kind == ItemKind.APP else item.path.suffix.lower()
+        fallback = self._folder if folder else self._file
+        own_icon = item.kind != ItemKind.FILE  # Applications and special folders.
+        key = str(item.path) if own_icon else item.path.suffix.lower()
         icon = self._cache.get(key)
         if icon is None:
             if (
@@ -50,17 +57,16 @@ class ResultIcons(QObject):
                 and len(self._pending) < CACHE_SIZE
             ):
                 self._pending.add(key)
-                self._requests.put((key, str(item.path), item.kind == ItemKind.APP))
+                self._requests.put((key, str(item.path), own_icon))
                 if self._worker is None:
                     # A stalled shell extension must not block the UI or application exit.
                     self._worker = threading.Thread(
                         target=self._load, name="shell-icons", daemon=True
                     )
                     self._worker.start()
-            return self._file
-        else:
-            self._cache.move_to_end(key)
-        return icon
+            return fallback
+        self._cache.move_to_end(key)
+        return icon if not icon.isNull() else fallback
 
     def close(self) -> None:
         self._closed = True
@@ -68,18 +74,16 @@ class ResultIcons(QObject):
 
     def _load(self) -> None:
         while (request := self._requests.get()) is not None and not self._closed:
-            key, path, application = request
+            key, path, own_icon = request
             started = time.perf_counter()
             try:
-                image = _shell_image(path, application)
+                image = _shell_image(path, own_icon)
             except Exception:
                 logger.exception("Shell icon lookup failed")
                 image = QImage()
             elapsed = (time.perf_counter() - started) * 1000
             if elapsed > 100:
-                logger.warning(
-                    "Slow shell icon lookup: %.0f ms (application=%s)", elapsed, application
-                )
+                logger.warning("Slow shell icon lookup: %.0f ms (own icon=%s)", elapsed, own_icon)
             if not self._closed:
                 self._loaded.emit(key, image)
 
@@ -87,13 +91,15 @@ class ResultIcons(QObject):
         if self._closed:
             return
         self._pending.discard(key)
-        self._cache[key] = QIcon(QPixmap.fromImage(image)) if not image.isNull() else self._file
+        # A failed lookup is cached as a null icon; `icon_for` shows the fallback then.
+        self._cache[key] = QIcon(QPixmap.fromImage(image)) if not image.isNull() else QIcon()
         if len(self._cache) > CACHE_SIZE:
             self._cache.popitem(last=False)
         self.changed.emit()
 
 
-def _shell_image(path: str, application: bool) -> QImage:
+def _shell_image(path: str, own_icon: bool) -> QImage:
+    """The large shell icon of `path` itself, or of any file with its extension."""
     import pythoncom
     import win32gui
     from win32comext.shell import shell, shellcon
@@ -101,7 +107,7 @@ def _shell_image(path: str, application: bool) -> QImage:
     pythoncom.CoInitialize()
     try:
         flags = shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON
-        if not application:
+        if not own_icon:
             flags |= shellcon.SHGFI_USEFILEATTRIBUTES
             path = "file" + os.path.splitext(path)[1]
         _, info = shell.SHGetFileInfo(path, 0x80, flags)  # FILE_ATTRIBUTE_NORMAL

@@ -16,7 +16,7 @@ from pathscout.catalog.model import (
     path_range,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 CONNECTION_TIMEOUT_SECONDS = 15
 SCHEMA = """
 CREATE TABLE entries (
@@ -56,6 +56,22 @@ CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
     INSERT INTO entry_fts(rowid, name, search_path) VALUES(new.rowid, new.name, new.search_path);
 END;
 """
+# Version 4: the Rust engine keeps a copy of `entries` in memory and reloads it
+# when the catalog version changes. Every inserted, updated or deleted entry
+# increments `generation`; the random `id` tells a recreated catalog file apart
+# from the one the copy was loaded from. Usage and favorites do not count: the
+# engine reads those small tables on every search.
+_VERSION_TRACKING = (
+    "CREATE TABLE IF NOT EXISTS catalog_version (id TEXT NOT NULL, generation INTEGER NOT NULL)",
+    """INSERT INTO catalog_version SELECT lower(hex(randomblob(16))), 0
+       WHERE NOT EXISTS (SELECT 1 FROM catalog_version)""",
+    *(
+        f"""CREATE TRIGGER IF NOT EXISTS entries_version_{name} AFTER {event} ON entries BEGIN
+               UPDATE catalog_version SET generation = generation + 1;
+           END"""
+        for name, event in (("ai", "INSERT"), ("ad", "DELETE"), ("au", "UPDATE"))
+    ),
+)
 
 # Versions 1 and 2 keyed rows by the literal path spelling. Version 3 merges
 # alternate spellings of the same Windows path while keeping usage history.
@@ -146,11 +162,12 @@ class CatalogStore:
         if version == SCHEMA_VERSION:
             return
         if version == 0:
+            tracking = "".join(statement + ";\n" for statement in _VERSION_TRACKING)
             connection.executescript(
-                f"BEGIN;\n{SCHEMA}PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
+                f"BEGIN;\n{SCHEMA}{tracking}PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
             )
             return
-        if version not in (1, 2):
+        if version not in (1, 2, 3):
             raise ValueError(f"Unsupported catalog schema: {version}; expected {SCHEMA_VERSION}.")
         connection.create_function("path_identity", 1, path_key, deterministic=True)
         connection.create_function("owner_identity", 2, _legacy_owner_identity, deterministic=True)
@@ -159,7 +176,10 @@ class CatalogStore:
             connection.execute(
                 "ALTER TABLE entries ADD COLUMN attributes INTEGER NOT NULL DEFAULT 0"
             )
-        for statement in _IDENTITY_MIGRATION:
+        if version in (1, 2):
+            for statement in _IDENTITY_MIGRATION:
+                connection.execute(statement)
+        for statement in _VERSION_TRACKING:
             connection.execute(statement)
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         connection.commit()

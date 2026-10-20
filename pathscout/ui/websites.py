@@ -90,14 +90,7 @@ class WebsiteList(QWidget):
         content.addWidget(self.list, 1)
         content.addWidget(self.form, 2)
         layout = QVBoxLayout(self)
-        heading = QLabel("Your websites, a few keystrokes away")
-        heading.setObjectName("sectionTitle")
-        layout.addWidget(heading)
-        note = QLabel("Choose a keyword, then type it in the launcher. Changes apply on Save.")
-        note.setWordWrap(True)
-        note.setObjectName("muted")
-        layout.addWidget(note)
-        layout.addSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0)  # The settings page provides title and frame.
         layout.addLayout(content, 1)
         layout.addLayout(buttons)
         privacy = QLabel(

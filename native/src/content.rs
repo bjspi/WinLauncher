@@ -124,7 +124,7 @@ impl ContentFilter {
         if !is_locally_available(&row.path_text) {
             return false;
         }
-        let Ok(file) = File::open(&row.path_text) else {
+        let Ok(file) = File::open(&*row.path_text) else {
             return false;
         };
         let Ok(metadata) = file.metadata() else {
@@ -147,8 +147,7 @@ impl ContentFilter {
 
 fn is_text_file(row: &Candidate) -> bool {
     let file_name = row.file_name().to_ascii_lowercase();
-    TEXT_EXTENSIONS.contains(&row.extension.as_str())
-        || TEXT_FILE_NAMES.contains(&file_name.as_str())
+    TEXT_EXTENSIONS.contains(&&*row.extension) || TEXT_FILE_NAMES.contains(&file_name.as_str())
 }
 
 /// Checks current attributes, not the catalog's: placeholders change after indexing.

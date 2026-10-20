@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QEvent, QLocale, Qt, QTimer
 from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMenu, QMessageBox
 
 from pathscout.actions import ExplorerTarget
 from pathscout.catalog import long_paths
@@ -30,13 +30,14 @@ from pathscout.platform.gesture import (
     InputUnavailable,
     ViewKind,
 )
+from pathscout.search.native_engine import warm_search_index
 from pathscout.search.query_parser import parse_query
 from pathscout.search.ranking import SearchHit
 from pathscout.settings import Settings, SettingsFile
 from pathscout.ui.controller import LauncherController
 from pathscout.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
 from pathscout.ui.indexing import IndexJobKind
-from pathscout.ui.settings import SettingsDialog
+from pathscout.ui.settings import NUMBER_FIELD_WIDTH, SettingsDialog
 from pathscout.ui.tasks import TaskCategory
 from pathscout.ui.theme import Palette
 from pathscout.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MARGIN
@@ -223,6 +224,39 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(self.app.clipboard().text(), "report")
         self.assertFalse(self.app.clipboard().mimeData().hasUrls())
 
+    def test_windows_context_menu_opens_from_the_menu_or_with_shift(self):
+        hit = self.show_file_result()
+        point = self.window.results.visualItemRect(self.window.results.item(0)).center()
+        with patch.object(self.controller, "show_shell_menu") as shell_menu:
+            with patch.object(
+                QApplication,
+                "keyboardModifiers",
+                return_value=Qt.KeyboardModifier.ShiftModifier,
+            ):
+                self.window.context_menu(point)  # Shift skips PathScout's own menu.
+            shell_menu.assert_called_once_with(hit, True)
+
+            def choose_more_options():
+                for menu in self.window.findChildren(QMenu):
+                    if menu.isVisible():
+                        actions = {a.text().partition("\t")[0]: a for a in menu.actions()}
+                        menu.close()
+                        actions["More options…"].trigger()
+
+            QTimer.singleShot(20, choose_more_options)
+            self.window.context_menu(point)
+            shell_menu.assert_called_with(hit, False)
+
+    @unittest.skipUnless(os.name == "nt", "Windows shell context menus")
+    def test_windows_context_menu_is_built_by_the_shell(self):
+        from pathscout.platform.shell_menu import menu_item_count
+
+        hit = self.show_file_result()
+        self.assertGreater(menu_item_count(hit.item.path), 0)
+        self.assertGreater(menu_item_count(self.root), 0)
+        with self.assertRaisesRegex(OSError, "no context menu"):
+            menu_item_count(self.root / "missing.txt")
+
     def test_dragging_a_result_offers_its_file_or_url_without_moving_it(self):
         hit = self.show_file_result()
         data = self.window.results.mimeData([self.window.results.item(0)])
@@ -346,7 +380,7 @@ class UiFlowTest(unittest.TestCase):
             c._drain_watch_events()
             self.tasks.finish(TaskCategory.INDEX)
         refresh.assert_called_once()
-        self.assertEqual(c.store.count(), 1)
+        self.assertEqual(c.store.count(), 2)  # The configured folder and the report.
 
     def test_restored_watch_repairs_its_root_and_clears_only_its_problem(self):
         c = self.controller
@@ -637,6 +671,49 @@ class UiFlowTest(unittest.TestCase):
         self.assertFalse(self.window.empty.isHidden())
         self.assertIn("No matches", self.window.empty.text())
 
+    def test_start_list_is_prefetched_while_hidden_and_shown_at_once(self):
+        recent = SearchHit(CatalogItem(self.root / "recent.txt", ItemKind.FILE), 100, "Recent")
+        (self.root / "recent.txt").touch()
+        with patch.object(self.controller.search.service, "search", return_value=[recent]):
+            self.window.query.setText("old query")
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.window.hide()  # Prefetches the start list in its own pool.
+            self.assertIsNone(self.controller.search.start_list)
+            self.tasks.finish(TaskCategory.PREFETCH)
+            self.assertEqual(self.controller.search.start_list.results.hits, [recent])
+            searches = self.tasks.count(TaskCategory.SEARCH)
+            self.window.present()
+            # Shown before any search finishes; no rows of "old query" in between.
+            self.assertEqual(self.window.selected_hit(), recent)
+            self.assertFalse(self.window.results.isHidden())
+            # A fresh search confirms it right away, without the typing delay.
+            self.assertEqual(self.tasks.count(TaskCategory.SEARCH), searches + 1)
+            self.assertFalse(self.controller.search.debounce.isActive())
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.window.selected_hit(), recent)
+
+    def test_catalog_changes_warm_the_search_index_before_the_start_list(self):
+        self.window.hide()
+        before = len(self.tasks.jobs)
+        self.indexing.request_full()
+        self.tasks.finish(TaskCategory.INDEX)
+        prefetches = [
+            job.work for job in self.tasks.jobs[before:] if job.category == TaskCategory.PREFETCH
+        ]
+        # One prefetch worker runs them in order: the start list uses the fresh index.
+        self.assertIs(prefetches[0].func, warm_search_index)
+        self.assertEqual(prefetches[0].args, (self.controller.store,))
+        self.assertEqual(prefetches[1].func, self.controller.search._work)
+
+    def test_hiding_while_quitting_prefetches_nothing(self):
+        # Quitting closes the worker pools before it hides the bar.
+        prefetches = self.tasks.count(TaskCategory.PREFETCH)
+        self.controller.search.close()
+        self.window.hide()
+        self.controller.search.refresh()
+        self.assertEqual(self.tasks.count(TaskCategory.PREFETCH), prefetches)
+
     def test_background_results_are_delivered_after_submit_returns(self):
         from pathscout.ui.tasks import BackgroundTasks
 
@@ -734,7 +811,7 @@ class UiFlowTest(unittest.TestCase):
         field = dialog.content_threads
         self.assertEqual(field.text(), str(self.controller.settings.content_search_threads))
         # Qt 6.12 collapsed the text area of styled spin boxes to one pixel.
-        self.assertGreater(field.width(), 100)
+        self.assertEqual(field.width(), NUMBER_FIELD_WIDTH)
         field.setText("")
         self.assertEqual(field.value(), self.controller.settings.content_search_threads)
         field.setText("99")
@@ -988,7 +1065,12 @@ class UiFlowTest(unittest.TestCase):
     def test_quick_switch_setting_is_shown_and_restarts_the_keyboard(self):
         dialog = self.settings_dialog(self.controller.settings)
         self.assertTrue(dialog.quick_switch.isChecked())
-        self.assertIn("Ctrl+G", dialog.quick_switch.text())
+        # The switch's row explains it; the switch itself draws no text.
+        descriptions = [label.text() for label in dialog.findChildren(QLabel)]
+        self.assertTrue(any("Ctrl+G" in text for text in descriptions))
+        self.assertEqual(
+            dialog.quick_switch.accessibleName(), "Quick Switch in Open and Save dialogs"
+        )
         dialog.quick_switch.setChecked(False)
         settings = dialog.read_settings()
         self.assertFalse(settings.quick_switch)

@@ -22,6 +22,10 @@ NAME_CONTAINS_POSITION_PENALTY = 0.05  # Per character before the match.
 ABBREVIATION_SCORE = 65
 PATH_CONTAINS_SCORE = 35
 MIN_FUZZY_TERM_LENGTH = 2
+# Plain terms shorter than this match only the name, never the folders above it:
+# nearly every path contains a drive letter or some other one- or two-letter
+# fragment, so "d" would otherwise find the whole catalog through "D:\".
+MIN_PATH_TERM_LENGTH = 3
 
 # Fuzzy alignment: per-letter rewards, averaged over the term and clamped.
 FUZZY_FIRST_LETTER = 22
@@ -101,6 +105,15 @@ def match_term(term: str, name: NameForms, path: str | None, fuzzy: bool) -> Tex
 
 def is_wildcard(term: str) -> bool:
     return any(char in term for char in "*?[")
+
+
+def matches_path(term: str) -> bool:
+    """Whether `term` may match the item's path, not only its name.
+
+    Wildcards always may: they match whole file names, and only a pattern with a
+    separator in it matches the path.
+    """
+    return is_wildcard(term) or len(term) >= MIN_PATH_TERM_LENGTH
 
 
 def _wildcard_matches(pattern: str, text: str) -> bool:
