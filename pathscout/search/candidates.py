@@ -32,7 +32,6 @@ from pathscout.catalog.store import CatalogStore
 from pathscout.search.matching import is_wildcard, matches_path
 from pathscout.search.query import SearchQuery
 
-MIN_TRIGRAM_TERM_LENGTH = 3  # FTS5 trigram indexes cannot match shorter terms.
 CANCEL_CHECK_INSTRUCTIONS = 1000
 
 # Column order must match `candidate_from_row` and the native module's `Candidate`.
@@ -159,8 +158,8 @@ class _CandidateFilter:
     Placeholders become named parameters with the filter's prefix, so nested
     filters can be combined without renumbering. The plan is a list of nodes that
     must all hold: `("like", column, pattern)`, `("compare", column, operator,
-    value)`, `("in", column, values)`, `("any", nodes)`, `("not_all", nodes)`,
-    `("full_text", expression)` and `("learned",)`.
+    value)`, `("in", column, values)`, `("any", nodes)`, `("not_all", nodes)` and
+    `("learned",)`.
     """
 
     def __init__(self, prefix: str = "p"):
@@ -192,11 +191,6 @@ class _CandidateFilter:
     def any_of(*conditions: _Condition) -> _Condition:
         sql = " OR ".join(clause for clause, _ in conditions)
         return f"({sql})", ("any", tuple(node for _, node in conditions))
-
-    def full_text(self, expression: str) -> _Condition:
-        """Rows whose text contains every term of an FTS5 trigram `expression`."""
-        match = f"SELECT rowid FROM entry_fts WHERE entry_fts MATCH {self._bind(expression)}"
-        return f"e.rowid IN ({match})", ("full_text", expression)
 
     @staticmethod
     def learned() -> _Condition:
@@ -394,13 +388,7 @@ def _exclude(where: _CandidateFilter, condition: Callable[[_CandidateFilter], _C
 def _require_literal_text(where: _CandidateFilter, query: SearchQuery) -> None:
     for part in query.folder_parts:
         where.require(where.like("search_path", _contains(part)))
-    long_terms = [
-        t for t in query.terms if len(t) >= MIN_TRIGRAM_TERM_LENGTH and not is_wildcard(t)
-    ]
-    short_terms = [t for t in query.terms if len(t) < MIN_TRIGRAM_TERM_LENGTH or is_wildcard(t)]
-    if long_terms:
-        where.require(where.full_text(_fts_expression(long_terms, query.basename_only)))
-    for term in short_terms:
+    for term in query.terms:
         _require_term(where, query, term, name_pattern=_contains(term))
 
 
@@ -414,11 +402,7 @@ def _require_fuzzy_text(where: _CandidateFilter, query: SearchQuery) -> None:
 
 
 def _exclude_literal_matches(where: _CandidateFilter, query: SearchQuery) -> None:
-    """The literal pass already returned rows that contain every term and folder part.
-
-    This LIKE form must match exactly what the literal pass's FTS trigram query
-    matches; trigram MATCH on quoted terms is substring containment, as LIKE is.
-    """
+    """The literal pass already returned rows that contain every term and folder part."""
     literal = _CandidateFilter(prefix="literal")
     for term in query.terms:
         _require_term(literal, query, term, name_pattern=_contains(term))
@@ -436,11 +420,3 @@ def _require_term(
         where.require(name)
     else:
         where.require(where.any_of(name, where.like("search_path", _contains(term))))
-
-
-def _fts_expression(terms: list[str], basename_only: bool) -> str:
-    def quoted(term: str) -> str:
-        column = "name: " if basename_only or not matches_path(term) else ""
-        return column + '"' + term.replace('"', '""') + '"'
-
-    return " AND ".join(quoted(term) for term in terms)

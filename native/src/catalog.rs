@@ -41,7 +41,6 @@ pub(crate) struct CatalogSpec {
     usage: String,
     query_usage: String,
     favorites: String,
-    full_text: String,
 }
 
 impl CatalogSpec {
@@ -54,7 +53,6 @@ impl CatalogSpec {
             usage: required(&statements, "usage")?,
             query_usage: required(&statements, "query_usage")?,
             favorites: required(&statements, "favorites")?,
-            full_text: required(&statements, "full_text")?,
         })
     }
 }
@@ -434,39 +432,13 @@ pub(crate) struct Usage {
     learned: bool,
 }
 
-/// Entry positions in ascending order with a membership bitmap.
-struct EntrySet {
-    entries: Vec<usize>,
-    members: Vec<u64>,
-}
-
-impl EntrySet {
-    fn new(mut entries: Vec<usize>, total: usize) -> Self {
-        entries.sort_unstable();
-        let mut members = vec![0u64; total.div_ceil(64)];
-        for entry in &entries {
-            members[entry / 64] |= 1 << (entry % 64);
-        }
-        Self { entries, members }
-    }
-
-    fn contains(&self, entry: usize) -> bool {
-        self.members[entry / 64] & (1 << (entry % 64)) != 0
-    }
-}
-
-/// Everything one search reads besides the index: usage and full-text matches.
+/// Everything one search reads besides the index: launches and favorites.
 pub(crate) struct Selection<'a> {
     index: &'a CatalogIndex,
     usage: HashMap<usize, Usage>,
-    full_text: Vec<EntrySet>,
 }
 
 impl Context for Selection<'_> {
-    fn in_full_text(&self, set: usize, entry: usize) -> bool {
-        self.full_text[set].contains(entry)
-    }
-
     fn is_learned(&self, entry: usize) -> bool {
         self.usage.get(&entry).is_some_and(|usage| usage.learned)
     }
@@ -482,22 +454,8 @@ impl<'a> Selection<'a> {
         let mut selection = Self {
             index,
             usage: HashMap::new(),
-            full_text: Vec::new(),
         };
         selection.read_usage(connection, spec, &plan.history_key)?;
-        for expression in &plan.full_text {
-            let mut statement = connection.prepare(&spec.full_text).map_err(sql_error)?;
-            let mut rows = statement
-                .query(named_params! {":expression": expression})
-                .map_err(sql_error)?;
-            let mut entries = Vec::new();
-            while let Some(row) = rows.next().map_err(sql_error)? {
-                entries.push(index.position(row.get(0).map_err(sql_error)?)?);
-            }
-            selection
-                .full_text
-                .push(EntrySet::new(entries, index.len()));
-        }
         Ok(selection)
     }
 
@@ -549,29 +507,12 @@ impl<'a> Selection<'a> {
         cancel: &CancelFlag,
         mut visit: impl FnMut(usize) -> PyResult<()>,
     ) -> PyResult<bool> {
-        let mut check = |position: usize, entry: usize| -> PyResult<bool> {
-            if position.is_multiple_of(ENTRIES_PER_CANCEL_CHECK) && cancel.is_set() {
+        for entry in 0..self.index.len() {
+            if entry.is_multiple_of(ENTRIES_PER_CANCEL_CHECK) && cancel.is_set() {
                 return Ok(false);
             }
             if pass.holds(self.index, entry, self) {
                 visit(entry)?;
-            }
-            Ok(true)
-        };
-        match pass.required_full_text() {
-            Some(set) => {
-                for (position, entry) in self.full_text[set].entries.iter().enumerate() {
-                    if !check(position, *entry)? {
-                        return Ok(false);
-                    }
-                }
-            }
-            None => {
-                for entry in 0..self.index.len() {
-                    if !check(entry, entry)? {
-                        return Ok(false);
-                    }
-                }
             }
         }
         Ok(!cancel.is_set())
@@ -590,14 +531,6 @@ mod tests {
         }
         let texts: Vec<&str> = (0..4).map(|entry| arena.get(entry)).collect();
         assert_eq!(texts, ["", "ä🙂", r"c:\work", ""]);
-    }
-
-    #[test]
-    fn entry_sets_are_sorted_and_answer_membership() {
-        let set = EntrySet::new(vec![130, 0, 64, 63], 131);
-        assert_eq!(set.entries, [0, 63, 64, 130]);
-        let members: Vec<usize> = (0..131).filter(|entry| set.contains(*entry)).collect();
-        assert_eq!(members, [0, 63, 64, 130]);
     }
 
     #[test]

@@ -1,11 +1,10 @@
 """The Rust engine's memory index: a copy of the catalog's entries for fast candidate scans.
 
-Candidate SQL is fast where SQLite's trigram index applies, but the fuzzy pass
-(`name LIKE '%a%b%c%'`) and terms shorter than a trigram scan the whole table on
-every keystroke. The Rust engine therefore evaluates the same candidate
-conditions (`candidates.candidate_plan`) against an in-memory copy of the
-entries table, which it loads with the statements below. Only full-text
-conditions still run in SQLite, in the same read transaction.
+Candidate SQL scans the whole table with `LIKE` on every keystroke. The Rust
+engine therefore evaluates the same candidate conditions
+(`candidates.candidate_plan`) against an in-memory copy of the entries table,
+which it loads with the statements below. Only launches and favorites are read
+from SQLite on each search.
 
 The copy is never stale: every search reads `catalog_version`, which triggers
 increment on each change to `entries`, and reloads the copy when it differs.
@@ -44,7 +43,6 @@ MEMORY_INDEX_SQL = {
         WHERE q.query = :history_key
     """,
     "favorites": "SELECT e.rowid FROM favorites f JOIN entries e ON e.path_key = f.path_key",
-    "full_text": "SELECT rowid FROM entry_fts WHERE entry_fts MATCH :expression",
 }
 
 

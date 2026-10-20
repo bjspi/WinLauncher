@@ -40,7 +40,7 @@ from pathscout.search.query import SearchQuery
 from pathscout.search.ranking import PriorityBand, Ranker, Ranking
 from pathscout.settings import DEFAULT_CONTENT_SEARCH_THREADS
 
-API_VERSION = 10
+API_VERSION = 11
 ENGINE_VARIABLE = "PATHSCOUT_SEARCH_ENGINE"
 PHASE_VARIABLE = "PATHSCOUT_NATIVE_PHASE"
 _ENGINES = ("auto", "python", "native")

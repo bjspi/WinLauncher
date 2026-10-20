@@ -74,11 +74,13 @@ from pathscout.ui.query_syntax import QuerySyntax
 from pathscout.ui.result_rows import LauncherHit, ResultRow, result_row
 from pathscout.ui.theme import Palette, app_icon
 from pathscout.ui.website_icons import WebsiteIcons
+from pathscout.ui.widgets import line_icon
 from pathscout.websites import WebsiteTarget
 
 COMPACT_WIDTH = 640
 EXPANDED_WIDTH = 900
 EXPLORER_WIDTH = 396
+SETTINGS_ICON_SIZE = 20  # With its padding as tall as the logo button beside it.
 EXPANDED_ROWS = 14
 SHADOW_MARGIN = 14
 SHADOW_OFFSET = 4
@@ -539,6 +541,14 @@ class LauncherWindow(QWidget):
         self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_button.setMenu(self._build_menu())
         row.addWidget(self.menu_button)
+        self.settings_button = QToolButton()
+        self.settings_button.setObjectName("settingsButton")
+        self.settings_button.setIcon(line_icon("gear", Palette.MENU_ICON))
+        self.settings_button.setIconSize(QSize(SETTINGS_ICON_SIZE, SETTINGS_ICON_SIZE))
+        self.settings_button.setToolTip("Settings (Ctrl+,)")
+        self.settings_button.setAccessibleName("Settings")
+        self.settings_button.clicked.connect(self.settings_requested)
+        row.addWidget(self.settings_button)
         return row
 
     def _build_menu(self) -> QMenu:
@@ -1089,6 +1099,8 @@ class LauncherWindow(QWidget):
         for button in self.kind_buttons.values():
             button.setIconSize(QSize(14, 14) if enabled else QSize(16, 16))
         self.menu_button.setIconSize(QSize(16, 16) if enabled else QSize(28, 28))
+        # The Explorer bar stays narrow; its menu still offers the settings.
+        self.settings_button.setVisible(not enabled)
         self._show_scope(scope)
 
     def _place_on_cursor_screen(self) -> None:

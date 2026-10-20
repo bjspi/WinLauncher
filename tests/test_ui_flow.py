@@ -526,6 +526,17 @@ class UiFlowTest(unittest.TestCase):
         actions["Hide"].trigger()
         self.assertFalse(self.window.isVisible())
 
+    def test_gear_opens_the_settings_outside_the_explorer_bar(self):
+        requests = []
+        self.window.settings_requested.disconnect()  # The controller would open a modal dialog.
+        self.window.settings_requested.connect(lambda: requests.append("settings"))
+        self.window.settings_button.click()
+        self.assertEqual(requests, ["settings"])
+        self.window._set_explorer_mode(True, self.root)
+        self.assertTrue(self.window.settings_button.isHidden())
+        self.window._set_explorer_mode(False, None)
+        self.assertFalse(self.window.settings_button.isHidden())
+
     def test_numbered_shortcuts_open_their_row(self):
         hits = [
             SearchHit(CatalogItem(self.root / name, ItemKind.FILE), 100, "fixture")

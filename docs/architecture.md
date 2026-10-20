@@ -23,7 +23,7 @@ flowchart TD
     Search --> Ranking[ranking: filters, matching, personalization, priority]
     Index --> Rules[ExclusionPolicy and PriorityPolicy]
     Search --> Rules
-    Candidates --> Store[CatalogStore: SQLite and FTS5]
+    Candidates --> Store[CatalogStore: SQLite]
     Index --> Store
     Controller --> Actions[ItemActions] --> Store
     Actions --> Shell[Windows shell]
@@ -94,8 +94,13 @@ connection. Schema version 3 migrates versions 1 and 2 in one transaction, mergi
 alternate Windows path spellings without losing launches or favorites. Version 4
 adds `catalog_version`: a random catalog id and a generation that triggers
 increment on every insert, update and delete in `entries` (about 1% of a full
-publish), so the Rust memory index can tell whether its copy is current. Identity
-uses absolute paths with nonexpanding uppercase mapping; search uses NFC/casefold.
+publish), so the Rust memory index can tell whether its copy is current. Version 5 drops
+the FTS5 trigram index, which took about two thirds of the file (120 MB of a
+72,000-entry catalog went to 40 MB), and the unique index on `path`, which the
+one on `path_key` makes redundant. The file uses `auto_vacuum=INCREMENTAL`: a
+publication that leaves more than `FREE_PAGES_KEPT` free pages returns them to
+the file system, so removing a source shrinks the file. Identity uses absolute
+paths with nonexpanding uppercase mapping; search uses NFC/casefold.
 
 ## Search execution
 
@@ -106,9 +111,9 @@ Windows paths remain search text.
 
 `read_candidates` builds SQL with `_CandidateFilter`, which keeps every clause
 together with its parameters and with the same condition as a plan node for the
-Rust memory index. The literal pass uses FTS5 trigram matching for terms of three
-or more characters and `LIKE` for shorter terms, which match the name only
-(`MIN_PATH_TERM_LENGTH`). The fuzzy pass matches subsequences and excludes
+Rust memory index. The literal pass matches each term with `LIKE` as a substring
+of the name or, for wildcards and terms of `MIN_PATH_TERM_LENGTH` or more
+characters, of the path. The fuzzy pass matches subsequences and excludes
 everything the literal pass returned. Both passes are
 supersets of the domain matcher; `rank` makes the final decision:
 
@@ -145,7 +150,7 @@ reconstructs only the kept `Candidate`/`Ranking` objects. The Python loop in
 failures are logged once per exception type, and `native` re-raises them.
 
 The separate `native/` maturin distribution exports `rank_rows` (Python-fetched
-rows), `rank_sqlite` (read-only SQLite, bundled FTS5, WAL, 15-second busy
+rows), `rank_sqlite` (read-only SQLite, WAL, 15-second busy
 timeout) and `rank_catalog` (the memory index, the default phase). All share
 matching, priorities, ranking, bounds and a bounded heap. `candidate_sql`
 remains the sole SQL builder. For `rank_sqlite`, literal and fuzzy statements
@@ -154,17 +159,16 @@ the native SQLite reader holds one read transaction. No indexing or UI code move
 
 ### Memory index
 
-The fuzzy pass (`name LIKE '%a%b%c%'`) and terms too short for trigrams cannot
-use an SQLite index, so each such search scanned the whole entries table: about
+Candidate SQL cannot use an index for `LIKE '%term%'` or the fuzzy pass's
+`name LIKE '%a%b%c%'`, so each search scans the whole entries table: about
 45 ms per keystroke on a 91,500-entry catalog. `native/src/catalog.rs` keeps a
 read-only copy of every entry column a candidate row needs (rowid, path, path
 key, kind, name, search path, extension, size, modified time, attributes,
 application source) in contiguous text arenas, about 30 MiB for that catalog,
 and `native/src/plan.rs` evaluates the candidate plan `_CandidateFilter` built
 next to the SQL: `LIKE` with SQLite's semantics (`native/src/like.rs`, SIMD
-substring search via `memchr`), comparisons, `IN`, `OR` and `NOT`. Full-text
-conditions run the FTS5 query in the same read transaction and drive the scan,
-so a trigram-indexed pass checks only its matches. Launch history and favorites
+substring search via `memchr`), comparisons, `IN`, `OR` and `NOT`. Launch
+history and favorites
 are small and change on every launch, so each search reads them fresh by rowid.
 Both passes scan in rowid order; candidates borrow their text from the arenas
 and only kept hits are copied. Parity tests check, for every query of the parity
@@ -181,8 +185,9 @@ reload at a time, and a search cancelled during a reload still finishes it for
 the next search. `native_engine.warm_search_index(store)` (Rust
 `warm_catalog`) reloads ahead of time; the UI calls it on a worker thread after
 startup and after each catalog publication, so typing never pays for a reload.
-The copy assumes rowids are stable, as the FTS5 content table already does;
-the catalog is never vacuumed.
+The copy assumes stable rowids. The incremental vacuum after a publication
+keeps them; the one full VACUUM that converts a file from before version 5 may
+renumber them, so it gives the catalog a new id.
 
 Rust releases the GIL during ranking and SQLite reads. It reacquires it only for
 the exclusion callback `(path, is_folder, from_application_source)`, after the
@@ -295,7 +300,7 @@ periodic Git work off the GUI thread. `GCM_INTERACTIVE=Never` and
 
 - Local metadata only; no file-content reads for search and no external service.
 - Explicit roots rather than an automatic administrative whole-volume scan.
-- SQLite/FTS5 rather than another database dependency.
+- SQLite rather than another database dependency.
 - Qt Widgets via PySide6; Windows integration via ctypes and pywin32.
 - No elevation, shell extension, service or scheduled task. Autostart is an
   ordinary per-user Startup shortcut created only on request.

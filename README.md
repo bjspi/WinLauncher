@@ -12,7 +12,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-requirements)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Qt for Python](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt%206-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
-[![SQLite FTS5](https://img.shields.io/badge/Index-SQLite%20FTS5-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/fts5.html)
+[![SQLite](https://img.shields.io/badge/Catalog-SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![100% local](https://img.shields.io/badge/Privacy-100%25%20local-8A2BE2?logo=shield&logoColor=white)](#-privacy)
 [![Ruff](https://img.shields.io/badge/code%20style-Ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F7DF1E)](LICENSE)
@@ -73,7 +73,7 @@ Explorer & dialogs**.
 a `pathscout` command that starts without a console window:
 
 ```powershell
-pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.5.0"
+pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.5.1"
 pathscout --show
 ```
 
@@ -149,7 +149,7 @@ Favicons load in the background directly from each site's
 ### 📋 Requirements
 
 - Windows 10 or 11
-- Python 3.11 or newer with SQLite FTS5 (the standard python.org and Conda builds);
+- Python 3.11 or newer;
   the Rust engine wheel supports Python 3.11 to 3.14
 - An ordinary user account — no administrator rights, services or drivers
 
@@ -435,7 +435,7 @@ uses `--background`.
 flowchart LR
     Keys["⌨️ Keyboard hook<br/>+ Explorer context"] --> UI["🪟 Search bar"]
     UI --> Search["🔍 Parser · filters<br/>matching · ranking"]
-    Search --> DB[("🗄️ SQLite + FTS5<br/>catalog")]
+    Search --> DB[("🗄️ SQLite<br/>catalog")]
     Watch["👀 Folder watcher"] --> Index["📥 Indexer"]
     Index --> DB
 ```

@@ -60,7 +60,7 @@ enum Operand {
     Number(f64),
 }
 
-/// One plan node. `FullText` refers to a row set the search resolves beforehand.
+/// One plan node.
 #[derive(Debug)]
 enum Condition {
     Like(Column, LikePattern),
@@ -68,29 +68,26 @@ enum Condition {
     In(Column, Vec<String>),
     Any(Vec<Condition>),
     NotAll(Vec<Condition>),
-    FullText(usize),
     Learned,
 }
 
 /// What a condition needs from the current search beyond the entry itself.
 pub(crate) trait Context {
-    fn in_full_text(&self, set: usize, entry: usize) -> bool;
     fn is_learned(&self, entry: usize) -> bool;
 }
 
 impl Condition {
-    /// Parse a node; full-text expressions are collected into `full_text` by index.
-    fn from_python(node: &Bound<'_, PyAny>, full_text: &mut Vec<String>) -> PyResult<Self> {
+    fn from_python(node: &Bound<'_, PyAny>) -> PyResult<Self> {
         let node = node.downcast::<PyTuple>()?;
         let operation: String = node.get_item(0)?.extract()?;
         let column = |index: usize| -> PyResult<Column> {
             let name: String = node.get_item(index)?.extract()?;
             Column::parse(&name).ok_or_else(|| invalid(format!("unknown column {name:?}")))
         };
-        let children = |index: usize, full_text: &mut Vec<String>| -> PyResult<Vec<Condition>> {
+        let children = |index: usize| -> PyResult<Vec<Condition>> {
             node.get_item(index)?
                 .try_iter()?
-                .map(|child| Self::from_python(&child?, full_text))
+                .map(|child| Self::from_python(&child?))
                 .collect()
         };
         let condition = match (operation.as_str(), node.len()) {
@@ -122,12 +119,8 @@ impl Condition {
                 }
                 Self::In(column, node.get_item(2)?.extract()?)
             }
-            ("any", 2) => Self::Any(children(1, full_text)?),
-            ("not_all", 2) => Self::NotAll(children(1, full_text)?),
-            ("full_text", 2) => {
-                full_text.push(node.get_item(1)?.extract()?);
-                Self::FullText(full_text.len() - 1)
-            }
+            ("any", 2) => Self::Any(children(1)?),
+            ("not_all", 2) => Self::NotAll(children(1)?),
             ("learned", 1) => Self::Learned,
             _ => return Err(invalid(format!("unexpected {operation:?} node"))),
         };
@@ -154,7 +147,6 @@ impl Condition {
             Self::NotAll(conditions) => !conditions
                 .iter()
                 .all(|condition| condition.holds(index, entry, context)),
-            Self::FullText(set) => context.in_full_text(*set, entry),
             Self::Learned => context.is_learned(entry),
         }
     }
@@ -172,16 +164,6 @@ impl Pass {
             .iter()
             .all(|condition| condition.holds(index, entry, context))
     }
-
-    /// A full-text set every match must belong to, so only its rows need checking.
-    pub fn required_full_text(&self) -> Option<usize> {
-        self.conditions
-            .iter()
-            .find_map(|condition| match condition {
-                Condition::FullText(set) => Some(*set),
-                _ => None,
-            })
-    }
 }
 
 /// Both passes of one search, as Python's `memory_plan` sends them.
@@ -190,28 +172,24 @@ pub(crate) struct Plan {
     pub literal: Pass,
     pub fuzzy: Option<Pass>,
     pub history_key: String,
-    /// FTS5 expressions; `Condition::FullText` holds an index into this list.
-    pub full_text: Vec<String>,
 }
 
 impl Plan {
     pub fn from_python(plan: &Bound<'_, PyDict>) -> PyResult<Self> {
-        let mut full_text = Vec::new();
-        let mut pass = |value: Bound<'_, PyAny>| -> PyResult<Pass> {
+        let pass = |value: Bound<'_, PyAny>| -> PyResult<Pass> {
             let conditions = value
                 .try_iter()?
-                .map(|node| Condition::from_python(&node?, &mut full_text))
+                .map(|node| Condition::from_python(&node?))
                 .collect::<PyResult<_>>()?;
             Ok(Pass { conditions })
         };
         let literal = pass(required(plan, "literal")?)?;
         let fuzzy: Option<Bound<'_, PyAny>> = required(plan, "fuzzy")?;
-        let fuzzy = fuzzy.map(&mut pass).transpose()?;
+        let fuzzy = fuzzy.map(pass).transpose()?;
         Ok(Self {
             literal,
             fuzzy,
             history_key: required(plan, "history_key")?,
-            full_text,
         })
     }
 }

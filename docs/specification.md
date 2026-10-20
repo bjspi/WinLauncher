@@ -503,8 +503,7 @@ Rust engine and reports its errors instead of falling back.
 
 The Rust engine selects candidates from an in-memory copy of the catalog's
 entries instead of scanning the table with `LIKE` on every keystroke; it selects
-exactly the rows of the candidate SQL, and trigram full-text conditions still run
-in SQLite. A search never uses a copy older than the catalog snapshot it reads:
+exactly the rows of the candidate SQL. A search never uses a copy older than the catalog snapshot it reads:
 every change to an entry increments the catalog version, and a search that sees
 a newer version reloads the copy first, or uses candidate SQL while another
 search is reloading it. Launch history and favorites are read fresh on every

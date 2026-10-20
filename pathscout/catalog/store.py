@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from collections.abc import Iterable, Iterator
@@ -16,11 +17,14 @@ from pathscout.catalog.model import (
     path_range,
 )
 
-SCHEMA_VERSION = 4
+logger = logging.getLogger(__name__)
+SCHEMA_VERSION = 5
 CONNECTION_TIMEOUT_SECONDS = 15
-SCHEMA = """
-CREATE TABLE entries (
-    path TEXT PRIMARY KEY,
+# Free pages a write leaves behind; beyond this many they go back to the file system.
+FREE_PAGES_KEPT = 1024  # 4 MiB at SQLite's default page size.
+INCREMENTAL_AUTO_VACUUM = 2  # How `PRAGMA auto_vacuum` reports the incremental mode.
+_ENTRY_COLUMNS = """(
+    path TEXT NOT NULL,
     path_key TEXT NOT NULL,
     root TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -30,32 +34,25 @@ CREATE TABLE entries (
     size INTEGER NOT NULL,
     modified REAL NOT NULL,
     attributes INTEGER NOT NULL DEFAULT 0
-);
-CREATE UNIQUE INDEX entries_scope ON entries(path_key);
-CREATE INDEX entries_root ON entries(root);
-CREATE INDEX entries_kind ON entries(kind);
-CREATE TABLE usage (path_key TEXT PRIMARY KEY, launches INTEGER NOT NULL, last_used REAL NOT NULL);
-CREATE TABLE query_usage (
-    query TEXT NOT NULL, path_key TEXT NOT NULL, launches INTEGER NOT NULL,
-    PRIMARY KEY(query, path_key)
-);
-CREATE TABLE favorites (path_key TEXT PRIMARY KEY);
-CREATE VIRTUAL TABLE entry_fts USING fts5(
-    name, search_path, content=entries, content_rowid=rowid, tokenize='trigram'
-);
-CREATE TRIGGER entries_ai AFTER INSERT ON entries BEGIN
-    INSERT INTO entry_fts(rowid, name, search_path) VALUES(new.rowid, new.name, new.search_path);
-END;
-CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
-    INSERT INTO entry_fts(entry_fts, rowid, name, search_path)
-    VALUES('delete', old.rowid, old.name, old.search_path);
-END;
-CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
-    INSERT INTO entry_fts(entry_fts, rowid, name, search_path)
-    VALUES('delete', old.rowid, old.name, old.search_path);
-    INSERT INTO entry_fts(rowid, name, search_path) VALUES(new.rowid, new.name, new.search_path);
-END;
-"""
+)"""
+# `path_key` is unique, so the `path` it is derived from is unique too.
+_ENTRY_INDEXES = (
+    "CREATE UNIQUE INDEX entries_scope ON entries(path_key)",
+    "CREATE INDEX entries_root ON entries(root)",
+    "CREATE INDEX entries_kind ON entries(kind)",
+)
+SCHEMA = (
+    f"CREATE TABLE entries {_ENTRY_COLUMNS}",
+    *_ENTRY_INDEXES,
+    """CREATE TABLE usage (
+           path_key TEXT PRIMARY KEY, launches INTEGER NOT NULL, last_used REAL NOT NULL
+       )""",
+    """CREATE TABLE query_usage (
+           query TEXT NOT NULL, path_key TEXT NOT NULL, launches INTEGER NOT NULL,
+           PRIMARY KEY(query, path_key)
+       )""",
+    "CREATE TABLE favorites (path_key TEXT PRIMARY KEY)",
+)
 # Version 4: the Rust engine keeps a copy of `entries` in memory and reloads it
 # when the catalog version changes. Every inserted, updated or deleted entry
 # increments `generation`; the random `id` tells a recreated catalog file apart
@@ -104,6 +101,24 @@ _IDENTITY_MIGRATION = (
     "ALTER TABLE favorites_new RENAME TO favorites",
 )
 
+# Version 5 drops the FTS5 trigram index, which took two thirds of the file:
+# both engines match terms with LIKE, the Rust one in memory. It also drops the
+# unique index on `path`, which `entries_scope` makes redundant. The rebuilt table keeps every rowid; dropping the
+# old one drops its triggers, so the version tracking is set up again.
+_COPIED_COLUMNS = (
+    "path, path_key, root, name, search_path, extension, kind, size, modified, attributes"
+)
+_COMPACT_MIGRATION = (
+    "DROP TABLE IF EXISTS entry_fts",
+    f"CREATE TABLE entries_new {_ENTRY_COLUMNS}",
+    f"""INSERT INTO entries_new(rowid, {_COPIED_COLUMNS})
+        SELECT rowid, {_COPIED_COLUMNS} FROM entries""",
+    "DROP TABLE entries",
+    "ALTER TABLE entries_new RENAME TO entries",
+    *_ENTRY_INDEXES,
+    *_VERSION_TRACKING,
+)
+
 _MERGE_STAGED = """
     INSERT INTO entries SELECT * FROM staged WHERE 1  -- WHERE avoids an upsert parse ambiguity.
     ON CONFLICT(path_key) DO UPDATE SET
@@ -125,6 +140,12 @@ def _legacy_owner_identity(path: str, owner: str) -> str:
         return owner
     depth = len(Path(previous).parts)
     return category + ":" + path_key(Path(*Path(path).parts[:depth]))
+
+
+def _release_free_pages(connection: sqlite3.Connection) -> None:
+    """Shrink the file after a write that freed many pages, as replacing a source does."""
+    if connection.execute("PRAGMA freelist_count").fetchone()[0] > FREE_PAGES_KEPT:
+        connection.execute("PRAGMA incremental_vacuum").fetchall()  # Runs while stepped.
 
 
 def _placeholders(values: tuple) -> str:
@@ -153,8 +174,12 @@ class CatalogStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
+            # A new file takes this only before it switches to WAL; an existing one
+            # with its next VACUUM (see `_apply_auto_vacuum`).
+            connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
             connection.execute("PRAGMA journal_mode=WAL")
             self._create_or_migrate(connection)
+            self._apply_auto_vacuum(connection)
 
     @staticmethod
     def _create_or_migrate(connection: sqlite3.Connection) -> None:
@@ -162,12 +187,12 @@ class CatalogStore:
         if version == SCHEMA_VERSION:
             return
         if version == 0:
-            tracking = "".join(statement + ";\n" for statement in _VERSION_TRACKING)
+            script = "".join(statement + ";\n" for statement in (*SCHEMA, *_VERSION_TRACKING))
             connection.executescript(
-                f"BEGIN;\n{SCHEMA}{tracking}PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
+                f"BEGIN;\n{script}PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
             )
             return
-        if version not in (1, 2, 3):
+        if version not in (1, 2, 3, 4):
             raise ValueError(f"Unsupported catalog schema: {version}; expected {SCHEMA_VERSION}.")
         connection.create_function("path_identity", 1, path_key, deterministic=True)
         connection.create_function("owner_identity", 2, _legacy_owner_identity, deterministic=True)
@@ -179,10 +204,28 @@ class CatalogStore:
         if version in (1, 2):
             for statement in _IDENTITY_MIGRATION:
                 connection.execute(statement)
-        for statement in _VERSION_TRACKING:
+        for statement in _COMPACT_MIGRATION:
             connection.execute(statement)
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         connection.commit()
+
+    @staticmethod
+    def _apply_auto_vacuum(connection: sqlite3.Connection) -> None:
+        """Once per file from before version 5: VACUUM applies `auto_vacuum` and
+        returns all free pages, such as those of the dropped full-text index.
+
+        Unlike the incremental vacuum after publications, VACUUM may renumber
+        rowids, so the catalog gets a new id and no memory index keeps its copy.
+        A file another process holds is left as it is until the next start.
+        """
+        if connection.execute("PRAGMA auto_vacuum").fetchone()[0] == INCREMENTAL_AUTO_VACUUM:
+            return
+        try:
+            connection.execute("VACUUM")
+        except sqlite3.OperationalError:
+            logger.warning("Catalog not compacted; retrying at the next start", exc_info=True)
+            return
+        connection.execute("UPDATE catalog_version SET id = lower(hex(randomblob(16)))")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -251,6 +294,7 @@ class CatalogStore:
         )
         connection.execute(_MERGE_STAGED)
         connection.commit()
+        _release_free_pages(connection)
 
     @staticmethod
     def publish_subtree(connection: sqlite3.Connection, folder: Path) -> None:
@@ -263,6 +307,7 @@ class CatalogStore:
         )
         connection.execute(_MERGE_STAGED)
         connection.commit()
+        _release_free_pages(connection)
 
     @staticmethod
     def publish_files(connection: sqlite3.Connection, paths: tuple[Path, ...]) -> None:
@@ -278,6 +323,7 @@ class CatalogStore:
         )
         connection.execute(_MERGE_STAGED)
         connection.commit()
+        _release_free_pages(connection)
 
     # Personal signals ---------------------------------------------------------
 

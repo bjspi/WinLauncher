@@ -50,6 +50,9 @@ QToolButton#menuButton { background: transparent; border: 1px solid transparent;
 QToolButton#menuButton:hover { background: #e9edf2; }
 QToolButton#menuButton:focus { border-color: #2f7de1; }
 QToolButton#menuButton::menu-indicator { image: none; width: 0; }
+QToolButton#settingsButton { background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 7px; }
+QToolButton#settingsButton:hover { background: #e9edf2; }
+QToolButton#settingsButton:focus { border-color: #2f7de1; }
 QToolButton#scope { background: #e6eef9; color: #2a5da8; border: 1px solid transparent; border-radius: 11px; padding: 3px 10px; font-size: 9pt; }
 QToolButton#scope:hover { background: #d8e6f7; }
 QToolButton#scope:focus { border-color: #2f7de1; }
