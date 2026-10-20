@@ -12,7 +12,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QLocale, QObject, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QLocale,
+    QObject,
+    QPoint,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -29,7 +40,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -60,6 +70,8 @@ EXPANDED_WIDTH = 900
 EXPLORER_WIDTH = 440
 EXPANDED_ROWS = 14
 SHADOW_MARGIN = 14
+SHADOW_OFFSET = 4
+SURFACE_RADIUS = 10  # Matches QFrame#surface in the theme.
 EXPLORER_BOTTOM_GAP = 56  # Keep Explorer's status bar visible below the bar.
 
 
@@ -243,12 +255,20 @@ def _containing_folder(hit: SearchHit) -> Path:
     return hit.item.path if hit.item.kind == ItemKind.FOLDER else hit.item.path.parent
 
 
-def _soft_shadow(parent: QWidget) -> QGraphicsDropShadowEffect:
-    shadow = QGraphicsDropShadowEffect(parent)
-    shadow.setBlurRadius(28)
-    shadow.setOffset(0, 4)
-    shadow.setColor(QColor(0, 0, 0, 70))
-    return shadow
+def _paint_soft_shadow(painter: QPainter, surface: QRectF) -> None:
+    """Stack faint rounded rectangles that darken towards the surface.
+
+    A QGraphicsDropShadowEffect would look the same, but it renders the surface
+    through a cache that misses partial repaints and leaves stale glyphs behind
+    in the search field while typing.
+    """
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(0, 0, 0, 5))
+    shadow = surface.translated(0, SHADOW_OFFSET)
+    for spread in range(SHADOW_MARGIN - SHADOW_OFFSET, 0, -1):
+        radius = SURFACE_RADIUS + spread
+        painter.drawRoundedRect(shadow.adjusted(-spread, -spread, spread, spread), radius, radius)
 
 
 def _logical_rect(native: tuple[int, int, int, int]) -> QRect | None:
@@ -343,9 +363,8 @@ class LauncherWindow(QWidget):
         # The window sizes itself to its content in `_fit_height`.
         outer.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         outer.setContentsMargins(SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN)
-        surface = QFrame()
+        surface = self.surface = QFrame()
         surface.setObjectName("surface")
-        surface.setGraphicsEffect(_soft_shadow(surface))
         outer.addWidget(surface)
         layout = QVBoxLayout(surface)
         layout.setContentsMargins(0, 0, 0, 6)
@@ -503,6 +522,9 @@ class LauncherWindow(QWidget):
         for row in range(NUMBERED_ROWS):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{row + 1}"), self)
             shortcut.activated.connect(lambda row=row: self.open_row(row))
+
+    def paintEvent(self, event) -> None:
+        _paint_soft_shadow(QPainter(self), QRectF(self.surface.geometry()))
 
     # Input --------------------------------------------------------------------
 
