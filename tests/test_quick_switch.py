@@ -14,16 +14,16 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from pathscout.actions import ItemActions
-from pathscout.platform.gesture import ExplorerTyping, FolderJumpRequested, ViewKind
-from pathscout.settings import Settings, SettingsFile, settings_from_json
+from winlauncher.actions import ItemActions
+from winlauncher.platform.gesture import ExplorerTyping, FolderJumpRequested, ViewKind
+from winlauncher.settings import Settings, SettingsFile, settings_from_json
 
 WINDOWS = os.name == "nt"
 
 
 class TemporaryFolderTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="pathscout-quick-switch-")
+        temporary = tempfile.TemporaryDirectory(prefix="winlauncher-quick-switch-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
@@ -31,7 +31,7 @@ class TemporaryFolderTest(unittest.TestCase):
 @unittest.skipUnless(WINDOWS, "Windows file dialogs")
 class DialogFolderTest(TemporaryFolderTest):
     def test_address_text_yields_the_path_after_any_localized_label(self):
-        from pathscout.platform.file_dialog import folder_from_address
+        from winlauncher.platform.file_dialog import folder_from_address
 
         cases = {
             r"Address: C:\Users\Anna\Documents": Path(r"C:\Users\Anna\Documents"),
@@ -45,14 +45,14 @@ class DialogFolderTest(TemporaryFolderTest):
                 self.assertEqual(folder_from_address(text), folder)
 
     def test_virtual_folders_have_no_address_path(self):
-        from pathscout.platform.file_dialog import folder_from_address
+        from winlauncher.platform.file_dialog import folder_from_address
 
         for text in ("Address: This PC", "Adresse: Dieser PC", r"Address: Libraries\Music", ""):
             with self.subTest(text=text):
                 self.assertIsNone(folder_from_address(text))
 
     def test_dialog_folder_must_exist(self):
-        from pathscout.platform import file_dialog
+        from winlauncher.platform import file_dialog
 
         missing = self.root / "gone"
         for text, expected in ((f"Adresse: {self.root}", self.root), (f"Address: {missing}", None)):
@@ -71,7 +71,7 @@ class DialogFolderTest(TemporaryFolderTest):
 
 
 def _dialog(folder: Path | None, typed: str = "draft.txt") -> Mock:
-    from pathscout.platform.file_dialog import FileDialog
+    from winlauncher.platform.file_dialog import FileDialog
 
     dialog = Mock(spec=FileDialog)
     dialog.hwnd = 1
@@ -84,7 +84,7 @@ def _dialog(folder: Path | None, typed: str = "draft.txt") -> Mock:
 @unittest.skipUnless(WINDOWS, "Windows file dialogs")
 class FileNameSequenceTest(TemporaryFolderTest):
     def test_folder_navigates_through_the_file_name_box_and_restores_the_typed_name(self):
-        from pathscout.platform.file_dialog import open_folder
+        from winlauncher.platform.file_dialog import open_folder
 
         target = self.root / "invoices"
         dialog = _dialog(self.root)
@@ -104,7 +104,7 @@ class FileNameSequenceTest(TemporaryFolderTest):
         )
 
     def test_file_shows_its_folder_and_enters_its_name_without_confirming(self):
-        from pathscout.platform.file_dialog import choose_file
+        from winlauncher.platform.file_dialog import choose_file
 
         report = self.root / "invoices" / "report.pdf"
         dialog = _dialog(self.root)
@@ -121,7 +121,7 @@ class FileNameSequenceTest(TemporaryFolderTest):
         dialog.set_file_name.assert_called_once_with("report.pdf")
 
     def test_a_dialog_that_closes_on_confirm_is_left_alone(self):
-        from pathscout.platform.file_dialog import open_folder
+        from winlauncher.platform.file_dialog import open_folder
 
         dialog = _dialog(self.root)
         dialog.exists.return_value = False  # A folder picker accepted the folder.
@@ -130,15 +130,15 @@ class FileNameSequenceTest(TemporaryFolderTest):
         dialog.activate.assert_not_called()
 
     def test_confirm_sends_the_default_buttons_command_like_enter(self):
-        from pathscout.platform import file_dialog
-        from pathscout.platform.file_dialog import (
+        from winlauncher.platform import file_dialog
+        from winlauncher.platform.file_dialog import (
             DC_HASDEFID,
             DM_GETDEFID,
             IDOK,
             WM_COMMAND,
             FileDialog,
         )
-        from pathscout.platform.windows import user32
+        from winlauncher.platform.windows import user32
 
         for answer, button in (((DC_HASDEFID << 16) | 2, 2), (0, IDOK)):
             with (
@@ -151,9 +151,9 @@ class FileNameSequenceTest(TemporaryFolderTest):
             post.assert_called_once_with(9, WM_COMMAND, button, 55)  # BN_CLICKED is zero.
 
     def test_file_name_box_is_found_in_open_and_save_dialogs(self):
-        from pathscout.platform import file_dialog
-        from pathscout.platform.file_dialog import FILE_NAME_COMBO_ID, _find_file_name_edit
-        from pathscout.platform.windows import user32
+        from winlauncher.platform import file_dialog
+        from winlauncher.platform.file_dialog import FILE_NAME_COMBO_ID, _find_file_name_edit
+        from winlauncher.platform.windows import user32
 
         # handle: (class, parent, visible)
         windows = {
@@ -208,23 +208,23 @@ class FileNameSequenceTest(TemporaryFolderTest):
 @unittest.skipUnless(WINDOWS, "Windows keyboard hook")
 class KeyboardQuickSwitchTest(TemporaryFolderTest):
     def listener(self, **options):
-        from pathscout.platform.keyboard import KeyboardListener
+        from winlauncher.platform.keyboard import KeyboardListener
 
         listener = KeyboardListener(queue.SimpleQueue(), interval_ms=350, **options)
         listener.tracker.explorer_folder = self.root
         return listener
 
     def press(self, listener, key: int, *, ctrl_only=True, dialog: int | None = 77) -> bool:
-        from pathscout.platform.windows import KeyboardData
+        from winlauncher.platform.windows import KeyboardData
 
         with (
-            patch("pathscout.platform.keyboard.only_ctrl_held", return_value=ctrl_only),
-            patch("pathscout.platform.keyboard.foreground_file_dialog", return_value=dialog),
+            patch("winlauncher.platform.keyboard.only_ctrl_held", return_value=ctrl_only),
+            patch("winlauncher.platform.keyboard.foreground_file_dialog", return_value=dialog),
         ):
             return listener._should_swallow(KeyboardData(vkCode=key), True)
 
     def release(self, listener, key: int) -> bool:
-        from pathscout.platform.windows import KeyboardData
+        from winlauncher.platform.windows import KeyboardData
 
         return listener._should_swallow(KeyboardData(vkCode=key), False)
 
@@ -232,7 +232,7 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
         return [listener.events.get() for _ in range(listener.events.qsize())]
 
     def test_ctrl_g_in_a_file_dialog_jumps_to_the_explorer_folder(self):
-        from pathscout.platform.windows import VK_G
+        from winlauncher.platform.windows import VK_G
 
         listener = self.listener()
         self.assertTrue(self.press(listener, VK_G))
@@ -241,7 +241,7 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
         self.assertEqual(self.events(listener), [FolderJumpRequested(77, self.root)])
 
     def test_ctrl_g_passes_through_everywhere_else(self):
-        from pathscout.platform.windows import VK_G
+        from winlauncher.platform.windows import VK_G
 
         listener = self.listener()
         self.assertFalse(self.press(listener, VK_G, dialog=None))  # No file dialog in front.
@@ -254,8 +254,8 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
         self.assertEqual(self.events(listener), [])
 
     def test_typing_in_a_dialog_file_list_follows_the_quick_switch_setting(self):
-        from pathscout.platform.explorer import ExplorerContext
-        from pathscout.platform.windows import TypedKey
+        from winlauncher.platform.explorer import ExplorerContext
+        from winlauncher.platform.windows import TypedKey
 
         for options, captured in (
             ({"explorer_typing": False}, True),
@@ -264,18 +264,18 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
             listener = self.listener(**options)
             listener.tracker.context = ExplorerContext(5, 6, self.root, ViewKind.FILE_DIALOG)
             with (
-                patch("pathscout.platform.keyboard.dialog_typing_view", return_value=(5, 6)),
-                patch("pathscout.platform.keyboard.explorer_file_view", return_value=None),
-                patch("pathscout.platform.keyboard.typed_key", return_value=TypedKey("r")),
-                patch("pathscout.platform.keyboard.window_rect", return_value=(0, 0, 9, 9)),
+                patch("winlauncher.platform.keyboard.dialog_typing_view", return_value=(5, 6)),
+                patch("winlauncher.platform.keyboard.explorer_file_view", return_value=None),
+                patch("winlauncher.platform.keyboard.typed_key", return_value=TypedKey("r")),
+                patch("winlauncher.platform.keyboard.window_rect", return_value=(0, 0, 9, 9)),
             ):
                 self.assertEqual(self.press(listener, ord("R"), ctrl_only=False), captured)
             expected = ExplorerTyping("r", self.root, (0, 0, 9, 9), (5, 6), ViewKind.FILE_DIALOG)
             self.assertEqual(self.events(listener), [expected] if captured else [])
 
     def test_tracker_rereads_the_last_explorer_folder_while_a_dialog_is_in_front(self):
-        from pathscout.platform import explorer
-        from pathscout.platform.explorer import ExplorerContext, ExplorerTracker
+        from winlauncher.platform import explorer
+        from winlauncher.platform.explorer import ExplorerContext, ExplorerTracker
 
         tracker = ExplorerTracker(on_failure=lambda message: None)
         tracker.context = ExplorerContext(1, 2, self.root)
@@ -298,8 +298,8 @@ class KeyboardQuickSwitchTest(TemporaryFolderTest):
         self.assertIsNone(tracker.explorer_folder)
 
     def test_tracker_resolves_a_focused_dialog_file_list(self):
-        from pathscout.platform import explorer
-        from pathscout.platform.explorer import ExplorerContext, ExplorerTracker
+        from winlauncher.platform import explorer
+        from winlauncher.platform.explorer import ExplorerContext, ExplorerTracker
 
         with (
             patch.object(explorer, "explorer_file_view", return_value=None),
@@ -330,8 +330,8 @@ class DialogActionsTest(TemporaryFolderTest):
         report = folder / "report.pdf"
         report.touch()
         with (
-            patch("pathscout.platform.file_dialog.open_folder") as open_folder,
-            patch("pathscout.platform.file_dialog.choose_file") as choose_file,
+            patch("winlauncher.platform.file_dialog.open_folder") as open_folder,
+            patch("winlauncher.platform.file_dialog.choose_file") as choose_file,
         ):
             actions.choose_in_dialog(folder, "inv", 33)
             actions.choose_in_dialog(report, "rep", 33)
@@ -366,8 +366,8 @@ class OpenFileNameBoxTest(unittest.TestCase):
     DIALOG, COMBO, EDIT, VIEW = 1, 5, 7, 20
 
     def typing_view(self, *, combo: int, text_length: int | Exception) -> tuple | None:
-        from pathscout.platform import file_dialog
-        from pathscout.platform.windows import user32
+        from winlauncher.platform import file_dialog
+        from winlauncher.platform.windows import user32
 
         classes = {self.DIALOG: "#32770", self.EDIT: "Edit", self.VIEW: "SHELLDLL_DefView"}
         answer = {"side_effect": text_length} if isinstance(text_length, Exception) else {}
@@ -404,8 +404,8 @@ class OpenFileNameBoxTest(unittest.TestCase):
         self.assertIsNone(self.typing_view(combo=self.COMBO, text_length=OSError("hung")))
 
     def test_escape_hands_the_typed_text_back_with_the_caret_at_the_end(self):
-        from pathscout.platform import file_dialog
-        from pathscout.platform.file_dialog import EM_SETSEL, FileDialog
+        from winlauncher.platform import file_dialog
+        from winlauncher.platform.file_dialog import EM_SETSEL, FileDialog
 
         dialog = FileDialog(9)
         order = Mock()

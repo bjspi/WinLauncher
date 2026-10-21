@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from pathscout.search.query_parser import (
+from winlauncher.search.query_parser import (
     QuerySpan,
     SpanRole,
     parse_query,

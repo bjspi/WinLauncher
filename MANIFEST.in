@@ -1,6 +1,6 @@
-include README.md LICENSE THIRD_PARTY_NOTICES.md Start-PathScout.ps1
+include README.md LICENSE THIRD_PARTY_NOTICES.md Start-WinLauncher.ps1
 recursive-include docs *.md
-recursive-include pathscout/ui/assets *.svg
+recursive-include winlauncher/ui/assets *.svg
 recursive-include tools *.py
 recursive-include tests *.py
 global-exclude .nobackup .no-backup

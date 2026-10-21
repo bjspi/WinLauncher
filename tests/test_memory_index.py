@@ -16,18 +16,18 @@ from unittest.mock import patch
 
 from ci_timing import PROMPT_LIMIT_S
 
-from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind, normalize
-from pathscout.catalog.priority import PriorityPolicy
-from pathscout.catalog.store import CatalogStore
-from pathscout.search import native_engine
-from pathscout.search.memory_index import catalog_spec, memory_plan
-from pathscout.search.query_parser import parse_query
-from pathscout.search.ranking import Ranker
-from pathscout.search.service import SearchService
-from pathscout.settings import Settings
+from winlauncher.catalog.model import CatalogItem, CatalogSource, ItemKind, normalize
+from winlauncher.catalog.priority import PriorityPolicy
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search import native_engine
+from winlauncher.search.memory_index import catalog_spec, memory_plan
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.ranking import Ranker
+from winlauncher.search.service import SearchService
+from winlauncher.settings import Settings
 
 try:
-    NATIVE = importlib.import_module("pathscout_native")
+    NATIVE = importlib.import_module("winlauncher_native")
 except ImportError:
     NATIVE = None
 
@@ -45,13 +45,13 @@ CONCURRENT_CHANGES = 15
 
 @contextmanager
 def engine(name: str, phase: str = "memory"):
-    with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=name, PATHSCOUT_NATIVE_PHASE=phase):
+    with patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE=name, WINLAUNCHER_NATIVE_PHASE=phase):
         yield
 
 
 class CatalogCase(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="pathscout-memory-index-")
+        temporary = tempfile.TemporaryDirectory(prefix="winlauncher-memory-index-")
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
         self.root = self.base / "library"
@@ -104,7 +104,7 @@ class ShortTermTest(CatalogCase):
                 self.assert_engines_agree(text)
 
 
-@unittest.skipUnless(NATIVE is not None, "Optional pathscout_native module is not installed")
+@unittest.skipUnless(NATIVE is not None, "Optional winlauncher_native module is not installed")
 class FreshnessTest(CatalogCase):
     def setUp(self):
         super().setUp()
@@ -251,7 +251,7 @@ class FreshnessTest(CatalogCase):
         self.assertLess(returned_at - cancelled_at[0], PROMPT_LIMIT_S)
 
 
-@unittest.skipUnless(NATIVE is not None, "Optional pathscout_native module is not installed")
+@unittest.skipUnless(NATIVE is not None, "Optional winlauncher_native module is not installed")
 class LikeParityTest(CatalogCase):
     def test_random_like_patterns_match_sqlite(self):
         generator = random.Random(LIKE_SEED)

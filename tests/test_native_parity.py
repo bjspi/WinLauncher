@@ -6,6 +6,7 @@ import importlib
 import itertools
 import os
 import random
+import re
 import tempfile
 import threading
 import time
@@ -19,29 +20,29 @@ from unittest.mock import patch
 
 from ci_timing import PROMPT_LIMIT_S
 
-from pathscout.catalog.exclusions import ExclusionPolicy
-from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind, normalize
-from pathscout.catalog.priority import (
+from winlauncher.catalog.exclusions import ExclusionPolicy
+from winlauncher.catalog.model import CatalogItem, CatalogSource, ItemKind, normalize
+from winlauncher.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
     FolderPriority,
     NamePriority,
     PriorityPolicy,
 )
-from pathscout.catalog.store import CatalogStore
-from pathscout.search import native_engine
-from pathscout.search.candidates import Candidate, candidate_from_row, candidate_sql
-from pathscout.search.matching import is_wildcard
-from pathscout.search.memory_index import catalog_spec, memory_plan
-from pathscout.search.native_engine import NativeAvailability, priority_spec, query_spec
-from pathscout.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
-from pathscout.search.query_parser import parse_query
-from pathscout.search.ranking import Ranker
-from pathscout.search.service import ResultOrder, SearchService, _BestHits
-from pathscout.settings import Settings
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search import native_engine
+from winlauncher.search.candidates import Candidate, candidate_from_row, candidate_sql
+from winlauncher.search.matching import is_wildcard
+from winlauncher.search.memory_index import catalog_spec, memory_plan
+from winlauncher.search.native_engine import NativeAvailability, priority_spec, query_spec
+from winlauncher.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.ranking import Ranker
+from winlauncher.search.service import ResultOrder, SearchService, _BestHits
+from winlauncher.settings import Settings
 
 try:
-    NATIVE = importlib.import_module("pathscout_native")
+    NATIVE = importlib.import_module("winlauncher_native")
 except ImportError:
     NATIVE = None
 
@@ -417,11 +418,12 @@ class PythonParityHarnessTest(unittest.TestCase):
         )
 
 
-@unittest.skipUnless(NATIVE is not None, "Optional pathscout_native module is not installed")
+@unittest.skipUnless(NATIVE is not None, "Optional winlauncher_native module is not installed")
 class NativeParityTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix="pathscout-native-parity-")
+        # A prefix without the letters of the fuzzy queries below, which match whole paths.
+        cls.temporary = tempfile.TemporaryDirectory(prefix="parity-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.root = Path(cls.temporary.name) / "library"
         cls.root.mkdir()
@@ -590,11 +592,13 @@ class NativeParityTest(unittest.TestCase):
         for phase, (text, configured) in itertools.product(phases, scenarios):
             with self.subTest(phase=phase, text=text, names=configured.name_priorities):
                 query = parse_query(text)
-                with patch("pathscout.search.ranking.time.time", return_value=NOW):
-                    with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"):
+                with patch("winlauncher.search.ranking.time.time", return_value=NOW):
+                    with patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="python"):
                         expected = service.search(query, configured)
                     with patch.dict(
-                        os.environ, PATHSCOUT_SEARCH_ENGINE="native", PATHSCOUT_NATIVE_PHASE=phase
+                        os.environ,
+                        WINLAUNCHER_SEARCH_ENGINE="native",
+                        WINLAUNCHER_NATIVE_PHASE=phase,
                     ):
                         actual = service.search(query, configured)
                 self.assertEqual(expected, actual)
@@ -619,16 +623,16 @@ class NativeParityTest(unittest.TestCase):
             with (
                 self.subTest(phase=phase),
                 patch.object(ExclusionPolicy, "allows", allows),
-                patch("pathscout.search.ranking.time.time", return_value=NOW),
+                patch("winlauncher.search.ranking.time.time", return_value=NOW),
             ):
-                with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"):
+                with patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="python"):
                     expected = service.search(query, settings)
                 expected_calls = calls[:]
                 self.assertTrue(expected_calls)
                 self.assertTrue(expected_calls[0][0].isascii())
                 calls.clear()
                 with patch.dict(
-                    os.environ, PATHSCOUT_SEARCH_ENGINE="native", PATHSCOUT_NATIVE_PHASE=phase
+                    os.environ, WINLAUNCHER_SEARCH_ENGINE="native", WINLAUNCHER_NATIVE_PHASE=phase
                 ):
                     actual = service.search(query, settings)
                 self.assertEqual(expected, actual)
@@ -708,7 +712,8 @@ class NativeParityTest(unittest.TestCase):
                 "date:2024-06..2024-12",
                 lambda row: (2024, 6) <= time.localtime(row[7])[:2] <= (2024, 12),
             ),
-            ("deep/ rpt", lambda row: f"{os.sep}deep{os.sep}" in row[4]),
+            # A fuzzy folder part matches its letters in order anywhere in the path.
+            ("deep/ rpt", lambda row: re.search("d.*e.*e.*p", row[4]) is not None),
             (f'"{self.root / "work"}{os.sep}" report', lambda row: row[4].startswith(work)),
         ):
             query = parse_query(text)
@@ -814,28 +819,28 @@ class NativeAdapterFallbackTest(unittest.TestCase):
         self.addCleanup(native_engine.native_availability.cache_clear)
 
     def test_environment_selects_the_engine(self):
-        module = ModuleType("pathscout_native")
+        module = ModuleType("winlauncher_native")
         available = NativeAvailability(module)
         missing = NativeAvailability(None, "The Rust search engine is not installed.")
         with patch.object(native_engine, "native_availability", return_value=available) as load:
             with patch.dict(os.environ, {}, clear=True):
                 self.assertIs(native_engine.select_native(), module)
-            with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"):
+            with patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="native"):
                 self.assertIs(native_engine.select_native(), module)
             load.reset_mock()
-            with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"):
+            with patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="python"):
                 self.assertIsNone(native_engine.select_native())
             load.assert_not_called()
         with (
             patch.object(native_engine, "native_availability", return_value=missing),
-            patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="auto"),
+            patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="auto"),
         ):
             self.assertIsNone(native_engine.select_native())
             self.assertFalse(native_engine.native_required())
 
     def test_python_selection_does_not_import_the_optional_module(self):
         with (
-            patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"),
+            patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="python"),
             patch.object(
                 native_engine.importlib, "import_module", side_effect=AssertionError("Imported")
             ),
@@ -846,19 +851,19 @@ class NativeAdapterFallbackTest(unittest.TestCase):
         def stale_unicode(version):
             raise ValueError(f"Unicode {version} is not supported")
 
-        module = ModuleType("pathscout_native")
+        module = ModuleType("winlauncher_native")
         module.API_VERSION = native_engine.API_VERSION
         module.use_unicode = lambda version: None
-        stale = ModuleType("pathscout_native")
+        stale = ModuleType("winlauncher_native")
         stale.API_VERSION = native_engine.API_VERSION
         stale.use_unicode = stale_unicode
-        old = ModuleType("pathscout_native")
+        old = ModuleType("winlauncher_native")
         old.API_VERSION = 1
         cases = (
-            {"side_effect": ModuleNotFoundError("missing", name="pathscout_native")},
+            {"side_effect": ModuleNotFoundError("missing", name="winlauncher_native")},
             {"side_effect": ModuleNotFoundError("missing", name="sqlite3")},
             {"side_effect": ImportError("broken extension")},
-            {"return_value": ModuleType("pathscout_native")},
+            {"return_value": ModuleType("winlauncher_native")},
             {"return_value": old},
             {"return_value": stale},
         )
@@ -868,7 +873,7 @@ class NativeAdapterFallbackTest(unittest.TestCase):
                 self.subTest(case=kwargs),
                 patch.object(native_engine.importlib, "import_module", **kwargs),
                 patch.object(native_engine._LOGGER, "warning") as warning,
-                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="auto"),
+                patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="auto"),
             ):
                 self.assertIsNone(native_engine.select_native())
                 self.assertIsNone(native_engine.select_native())
@@ -882,25 +887,25 @@ class NativeAdapterFallbackTest(unittest.TestCase):
         missing = NativeAvailability(None, "The Rust search engine is not installed.")
         with patch.object(native_engine, "native_availability", return_value=missing):
             with (
-                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"),
+                patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="native"),
                 self.assertRaisesRegex(RuntimeError, "not installed"),
             ):
                 native_engine.select_native()
         with (
-            patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="unknown"),
+            patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="unknown"),
             self.assertRaises(ValueError),
         ):
             native_engine.select_native()
 
     def test_forced_native_execution_failure_is_not_hidden(self):
-        with tempfile.TemporaryDirectory(prefix="pathscout-native-forced-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="winlauncher-native-forced-") as temporary:
             store = CatalogStore(Path(temporary) / "catalog.sqlite3")
             settings = Settings(roots=(), index_apps=False, marker_files=(), excluded_patterns=())
             with (
-                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"),
-                patch("pathscout.search.service.select_native", return_value=object()),
+                patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="native"),
+                patch("winlauncher.search.service.select_native", return_value=object()),
                 patch(
-                    "pathscout.search.service.rank_with_native",
+                    "winlauncher.search.service.rank_with_native",
                     side_effect=ValueError("unsupported regex"),
                 ),
                 self.assertRaisesRegex(ValueError, "unsupported regex"),
@@ -908,7 +913,7 @@ class NativeAdapterFallbackTest(unittest.TestCase):
                 SearchService(store).search(parse_query("report"), settings)
 
     def test_native_execution_failure_falls_back_to_reference_hits(self):
-        with tempfile.TemporaryDirectory(prefix="pathscout-native-fallback-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="winlauncher-native-fallback-") as temporary:
             root = Path(temporary)
             store = CatalogStore(root / "catalog.sqlite3")
             source = CatalogSource(root).id
@@ -921,14 +926,14 @@ class NativeAdapterFallbackTest(unittest.TestCase):
             )
             service = SearchService(store)
             query = parse_query("report")
-            with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="python"):
+            with patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="python"):
                 expected = service.search(query, settings)
             self.assertTrue(expected)
             with (
-                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="auto"),
-                patch("pathscout.search.service.select_native", return_value=object()),
+                patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="auto"),
+                patch("winlauncher.search.service.select_native", return_value=object()),
                 patch(
-                    "pathscout.search.service.rank_with_native",
+                    "winlauncher.search.service.rank_with_native",
                     side_effect=ValueError("unsupported regex"),
                 ),
                 patch.object(native_engine, "_LOGGED", set()),
@@ -939,7 +944,7 @@ class NativeAdapterFallbackTest(unittest.TestCase):
                 warning.assert_called_once()
 
     def test_threading_event_bridge_forwards_and_joins(self):
-        fake = ModuleType("pathscout_native")
+        fake = ModuleType("winlauncher_native")
         fake.CancelFlag = threading.Event
         cancel = threading.Event()
         with native_engine._cancel_flag(fake, cancel) as flag:

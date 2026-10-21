@@ -15,10 +15,10 @@ from PySide6.QtGui import QImage
 from PySide6.QtNetwork import QNetworkReply
 from PySide6.QtWidgets import QApplication
 
-from pathscout.settings import Settings, SettingsFile, settings_from_json
-from pathscout.ui.settings import SettingsDialog
-from pathscout.ui.website_icons import WebsiteIcons
-from pathscout.websites import DEFAULT_WEBSITES, WebsiteShortcut, website_query
+from winlauncher.settings import Settings, SettingsFile, settings_from_json
+from winlauncher.ui.settings import SettingsDialog
+from winlauncher.ui.website_icons import WebsiteIcons
+from winlauncher.websites import DEFAULT_WEBSITES, WebsiteShortcut, website_query
 
 AMAZON = WebsiteShortcut("az", "Amazon", "https://www.amazon.de/s?k=%s&language=de_DE")
 YOUTUBE = WebsiteShortcut("yt", "YouTube", "https://www.youtube.com/results?search_query=%s")
@@ -114,7 +114,7 @@ class WebsiteUiTest(unittest.TestCase):
         self.assertEqual(dialog.read_settings().websites, ())
         self.assertFalse(dialog.websites.remove.isEnabled())
         dialog.websites.add_website()
-        with patch("pathscout.ui.settings.QMessageBox.warning") as warning:
+        with patch("winlauncher.ui.settings.QMessageBox.warning") as warning:
             dialog.save()
         warning.assert_called_once()
         self.assertEqual(dialog.result_settings, original)
@@ -157,7 +157,7 @@ class WebsiteUiTest(unittest.TestCase):
         reply.error.return_value = QNetworkReply.NetworkError.TimeoutError
         with (
             patch.object(icons.network, "get", return_value=reply) as get,
-            patch("pathscout.ui.website_icons.QTimer.singleShot") as timer,
+            patch("winlauncher.ui.website_icons.QTimer.singleShot") as timer,
         ):
             icons.icon_for("https://example.org/")
             icons._finished("https://example.org/", reply)

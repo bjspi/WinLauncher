@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pathscout.install import mark_reinstall_pending, take_pending_reinstall
-from pathscout.releases import (
+from winlauncher.install import mark_reinstall_pending, take_pending_reinstall
+from winlauncher.releases import (
     Installation,
     Release,
     install_command,
@@ -31,15 +31,15 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(remote_tags(""), [])
 
     def test_installation_kind_and_its_update_command(self):
-        pipx = Path(r"C:\Users\me\pipx\venvs\pathscout")
-        self.assertIs(installation(Path("D:/src/PathScout"), pipx), Installation.CHECKOUT)
+        pipx = Path(r"C:\Users\me\pipx\venvs\winlauncher")
+        self.assertIs(installation(Path("D:/src/WinLauncher"), pipx), Installation.CHECKOUT)
         self.assertIs(installation(None, pipx), Installation.PIPX)
         self.assertIs(installation(None, Path(r"C:\Python312")), Installation.PACKAGE)
         release = Release(0, 3, 0)
         self.assertEqual(
             install_command(Installation.PIPX, release),
-            'pipx install --force "pathscout[rust] @ '
-            'git+https://github.com/bjspi/PathScout.git@v0.3.0"',
+            'pipx install --force "winlauncher[rust] @ '
+            'git+https://github.com/bjspi/WinLauncher.git@v0.3.0"',
         )
         self.assertIn("pip install --upgrade", install_command(Installation.PACKAGE, release))
 

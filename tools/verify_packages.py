@@ -3,7 +3,7 @@
 Run after building the archives into `dist/`:
     python tools/verify_packages.py
 
-A native wheel (`pathscout_native-*.whl`) in `dist/` is checked too: it must ship
+A native wheel (`winlauncher_native-*.whl`) in `dist/` is checked too: it must ship
 its license files and must not contain paths of the machine that built it.
 """
 
@@ -63,7 +63,7 @@ def check_licenses(files: dict[str, bytes]) -> None:
 def verify(archive: Path) -> int:
     if archive.suffix == ".whl":
         files = wheel_files(archive)
-        sources = [p.relative_to(ROOT).as_posix() for p in (ROOT / "pathscout").rglob("*.py")]
+        sources = [p.relative_to(ROOT).as_posix() for p in (ROOT / "winlauncher").rglob("*.py")]
         check_sources_current(files, sources)
     else:
         files = sdist_files(archive)
@@ -93,10 +93,10 @@ def verify_native(archive: Path) -> int:
 
 
 def main() -> int:
-    for archive in sorted((ROOT / "dist").glob("pathscout_native-*.whl")):
+    for archive in sorted((ROOT / "dist").glob("winlauncher_native-*.whl")):
         count = verify_native(archive)
         print(f"Verified {archive.name}: {count} files, licenses, no local build paths")
-    archives = sorted((ROOT / "dist").glob("pathscout-*"))
+    archives = sorted((ROOT / "dist").glob("winlauncher-*"))
     archives = [a for a in archives if a.suffix == ".whl" or a.name.endswith(".tar.gz")]
     if not archives:
         print("No distributions found in dist/", file=sys.stderr)

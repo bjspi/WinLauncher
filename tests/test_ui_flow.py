@@ -20,28 +20,28 @@ from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMenu, QMessageBox
 
-from pathscout.actions import ExplorerTarget
-from pathscout.catalog import long_paths
-from pathscout.catalog.model import CatalogItem, ItemKind
-from pathscout.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
-from pathscout.platform.gesture import (
+from winlauncher.actions import ExplorerTarget
+from winlauncher.catalog import long_paths
+from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
+from winlauncher.platform.gesture import (
     ExplorerTyping,
     FolderJumpRequested,
     InputUnavailable,
     ViewKind,
 )
-from pathscout.search.native_engine import warm_search_index
-from pathscout.search.query_parser import parse_query
-from pathscout.search.ranking import SearchHit
-from pathscout.settings import Settings, SettingsFile
-from pathscout.ui.controller import LauncherController
-from pathscout.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
-from pathscout.ui.indexing import IndexJobKind
-from pathscout.ui.settings import NUMBER_FIELD_WIDTH, SettingsDialog
-from pathscout.ui.tasks import TaskCategory
-from pathscout.ui.theme import Palette
-from pathscout.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MARGIN
-from pathscout.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
+from winlauncher.search.native_engine import warm_search_index
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.ranking import SearchHit
+from winlauncher.settings import Settings, SettingsFile
+from winlauncher.ui.controller import LauncherController
+from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
+from winlauncher.ui.indexing import IndexJobKind
+from winlauncher.ui.settings import NUMBER_FIELD_WIDTH, SettingsDialog
+from winlauncher.ui.tasks import TaskCategory
+from winlauncher.ui.theme import Palette
+from winlauncher.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MARGIN
+from winlauncher.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
 
 DIALOG = ViewKind.FILE_DIALOG
 
@@ -85,7 +85,7 @@ class UiFlowTest(unittest.TestCase):
         cls.app.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="pathscout-flow-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="winlauncher-flow-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "library"
         self.root.mkdir()
@@ -94,9 +94,9 @@ class UiFlowTest(unittest.TestCase):
             Settings(roots=(str(self.root),), index_apps=False)
         )
         with (
-            patch("pathscout.ui.controller.BackgroundTasks", DeferredTasks),
+            patch("winlauncher.ui.controller.BackgroundTasks", DeferredTasks),
             patch.object(LauncherController, "_start_monitor"),
-            patch("pathscout.ui.tray.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
+            patch("winlauncher.ui.tray.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
         ):
             self.controller = LauncherController(self.data, hooks=False)
         self.addCleanup(self.controller.close)
@@ -135,7 +135,7 @@ class UiFlowTest(unittest.TestCase):
         # The old results stay visible while the new search runs; nothing flickers.
         self.assertEqual(self.window.selected_hit(), stale)
         with patch(
-            "pathscout.ui.controller.QDesktopServices.openUrl", return_value=True
+            "winlauncher.ui.controller.QDesktopServices.openUrl", return_value=True
         ) as browser:
             self.controller.search.request_open(stale)
             browser.assert_not_called()
@@ -192,8 +192,8 @@ class UiFlowTest(unittest.TestCase):
     def test_website_browser_failure_is_reported(self):
         hit = WebsiteTarget("Example", "ex", "https://example.org/")
         with (
-            patch("pathscout.ui.controller.QDesktopServices.openUrl", return_value=False),
-            patch("pathscout.ui.controller.QMessageBox.warning") as warning,
+            patch("winlauncher.ui.controller.QDesktopServices.openUrl", return_value=False),
+            patch("winlauncher.ui.controller.QMessageBox.warning") as warning,
         ):
             self.controller.open_item(hit, "")
         warning.assert_called_once()
@@ -233,7 +233,7 @@ class UiFlowTest(unittest.TestCase):
                 "keyboardModifiers",
                 return_value=Qt.KeyboardModifier.ShiftModifier,
             ):
-                self.window.context_menu(point)  # Shift skips PathScout's own menu.
+                self.window.context_menu(point)  # Shift skips WinLauncher's own menu.
             shell_menu.assert_called_once_with(hit, True)
 
             def choose_more_options():
@@ -249,7 +249,7 @@ class UiFlowTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows shell context menus")
     def test_windows_context_menu_is_built_by_the_shell(self):
-        from pathscout.platform.shell_menu import menu_item_count
+        from winlauncher.platform.shell_menu import menu_item_count
 
         hit = self.show_file_result()
         self.assertGreater(menu_item_count(hit.item.path), 0)
@@ -280,7 +280,7 @@ class UiFlowTest(unittest.TestCase):
 
     def test_unmatched_words_offer_a_content_search_on_enter(self):
         self.window.query.setText("tax notice")
-        with patch("pathscout.ui.search_session.native_availability") as availability:
+        with patch("winlauncher.ui.search_session.native_availability") as availability:
             availability.return_value.module = object()
             self.controller.search.run()
             self.tasks.finish(TaskCategory.SEARCH)
@@ -551,7 +551,7 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(opened, [hits[2]])
 
     def test_matched_characters_are_highlighted(self):
-        from pathscout.ui.highlight import matched_positions
+        from winlauncher.ui.highlight import matched_positions
 
         self.assertEqual(matched_positions("tomato_salad", ("tom",)), {0, 1, 2})
         self.assertEqual(matched_positions("tabulator_map", ("tom",)), {0, 7, 10})
@@ -726,7 +726,7 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(self.tasks.count(TaskCategory.PREFETCH), prefetches)
 
     def test_background_results_are_delivered_after_submit_returns(self):
-        from pathscout.ui.tasks import BackgroundTasks
+        from winlauncher.ui.tasks import BackgroundTasks
 
         tasks = BackgroundTasks()
         self.addCleanup(tasks.close)
@@ -851,7 +851,7 @@ class UiFlowTest(unittest.TestCase):
                 self.assertEqual(self.tasks.count(TaskCategory.INDEX), indexed)
                 self.assertEqual(self.window.scope, self.root)
                 monitor.assert_not_called()
-                with patch("pathscout.search.service.select_native", return_value=None) as select:
+                with patch("winlauncher.search.service.select_native", return_value=None) as select:
                     self.tasks.finish(TaskCategory.SEARCH)
                 select.assert_called_once_with()
                 dialog.deleteLater()
@@ -1156,7 +1156,7 @@ class UiFlowTest(unittest.TestCase):
         self.window.query.setCursorPosition(0)
         self.assertFalse(shows_invalid_color())
 
-    def test_empty_launcher_hides_after_focus_left_pathscout(self):
+    def test_empty_launcher_hides_after_focus_left_winlauncher(self):
         def lose_focus() -> None:
             QApplication.sendEvent(self.window, QEvent(QEvent.Type.WindowDeactivate))
 
@@ -1248,12 +1248,12 @@ class UiFlowTest(unittest.TestCase):
     def test_restart_starts_a_replacement_and_quits(self):
         c = self.controller
         with (
-            patch("pathscout.ui.controller.QProcess.startDetached", return_value=True) as start,
-            patch("pathscout.ui.controller.QApplication.instance") as application,
+            patch("winlauncher.ui.controller.QProcess.startDetached", return_value=True) as start,
+            patch("winlauncher.ui.controller.QApplication.instance") as application,
         ):
             c.restart()
         _program, arguments, _cwd = start.call_args.args
-        self.assertEqual(arguments[:3], ["-m", "pathscout", "--replace"])
+        self.assertEqual(arguments[:3], ["-m", "winlauncher", "--replace"])
         self.assertIn(str(c.data_dir), arguments)
         self.assertIn("--no-hooks", arguments)
         self.assertIn("--show", arguments)  # The launcher was open, so it reopens.
@@ -1263,7 +1263,7 @@ class UiFlowTest(unittest.TestCase):
         c = self.controller
         folder = self.root / "project" / "node_stuff" / "deep"
         folder.mkdir(parents=True)
-        with patch("pathscout.ui.controller.ExcludeFolderDialog") as dialog:
+        with patch("winlauncher.ui.controller.ExcludeFolderDialog") as dialog:
             dialog.return_value.exec.return_value = True
             dialog.return_value.chosen_folder.return_value = folder.parent
             c.exclude_folder(folder)

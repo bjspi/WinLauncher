@@ -1,12 +1,12 @@
 [package]
-name = "pathscout_native"
-version = "0.5.1"
+name = "winlauncher_native"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
-description = "Optional native search engine for PathScout"
+description = "Optional native search engine for WinLauncher"
 
 [lib]
-name = "pathscout_native"
+name = "winlauncher_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/images/icon.png" width="96" alt="PathScout icon">
+<img src="docs/images/icon.png" width="96" alt="WinLauncher icon">
 
-# PathScout
+# WinLauncher
 
 **Double-tap <kbd>Ctrl</kbd>. Type a few letters. Open anything.**
 
@@ -17,7 +17,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 [![Ruff](https://img.shields.io/badge/code%20style-Ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-F7DF1E)](LICENSE)
 
-<img src="docs/images/launcher.png" width="620" alt="The PathScout search bar with results">
+<img src="docs/images/launcher.png" width="620" alt="The WinLauncher search bar with results">
 
 </div>
 
@@ -30,6 +30,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | ⚡ **Instant launcher** | Double-tap <kbd>Ctrl</kbd> or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> anywhere. A compact bar opens; results appear as you type. |
 | 📂 **Type-to-search in Explorer** | Start typing in an Explorer file list and a slim bar docks to that window, searching the folder you are in — its own entries first. |
 | 🔀 **Quick Switch in Open/Save dialogs** | Type in a dialog's file list to search everywhere: a folder opens in the dialog, a file fills in its name. <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps the dialog to the folder of your last Explorer window. |
+| 🧩 **Every installed app** | Start menu programs, Microsoft Store apps such as Telegram Desktop or the Calculator, and registered programs — found without adding a folder, shown with their own icons. |
 | 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. |
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
@@ -38,8 +39,8 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
 | ⌨️ **Keyboard first** | <kbd>Enter</kbd> opens, <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> opens a numbered result, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> shows it in its folder. |
-| 🔒 **Private** | No telemetry. File searches stay local; website searches open in your browser. Settings and the catalog stay in `%USERPROFILE%\.PathScout`. |
-| ⬆️ **Release updates** | PathScout notices new releases. A git checkout updates itself with one click; pipx installs get the exact command to run. |
+| 🔒 **Private** | No telemetry. File searches stay local; website searches open in your browser. Settings and the catalog stay in `%USERPROFILE%\.WinLauncher`. |
+| ⬆️ **Release updates** | WinLauncher notices new releases. A git checkout updates itself with one click; pipx installs get the exact command to run. |
 
 <div align="center">
 <img src="docs/images/explorer-search.png" width="440" alt="Searching inside an Explorer folder">
@@ -59,7 +60,7 @@ programs. Start typing in an Open dialog, or in the file list of any Open or Sav
 dialog, to search all your folders, wherever the dialog opened (<kbd>Esc</kbd>
 puts what you typed back into the file-name box): choosing a folder
 opens it in the dialog, choosing a file opens its folder and enters its name in
-the file-name box. PathScout never confirms the dialog for you, so a Save dialog
+the file-name box. WinLauncher never confirms the dialog for you, so a Save dialog
 cannot overwrite anything until you press <kbd>Enter</kbd> yourself. In any Open or
 Save dialog, <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps to the folder of the Explorer window
 you used last; the file name you had typed stays. Turn it off in **Settings →
@@ -69,53 +70,54 @@ Explorer & dialogs**.
 
 ### With pipx (recommended)
 
-[pipx](https://pipx.pypa.io/) installs PathScout into its own environment and adds
-a `pathscout` command that starts without a console window:
+[pipx](https://pipx.pypa.io/) installs WinLauncher into its own environment and adds
+a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "pathscout[rust] @ git+https://github.com/bjspi/PathScout.git@v0.5.1"
-pathscout --show
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.6.0"
+winlauncher --show
 ```
 
 The `[rust]` extra downloads the matching Rust search engine wheel from the
-GitHub release — no compiler needed. When a new release is out, PathScout says
+GitHub release — no compiler needed. When a new release is out, WinLauncher says
 so and shows the command to install it: the same line with the new tag and
-`--force`. `pipx uninstall pathscout` removes the
-program; your settings and catalog in `%USERPROFILE%\.PathScout` stay.
+`--force`. `pipx uninstall winlauncher` removes the
+program; your settings and catalog in `%USERPROFILE%\.WinLauncher` stay.
 
 ### From a checkout
 
 ```powershell
-git clone https://github.com/bjspi/PathScout.git
-cd PathScout
+git clone https://github.com/bjspi/WinLauncher.git
+cd WinLauncher
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[rust]"
-.\.venv\Scripts\python.exe -m pathscout
+.\.venv\Scripts\python.exe -m winlauncher
 ```
 
 `[rust]` adds the fast Rust search engine (needed for `contains:`) as a prebuilt
-wheel from the matching [GitHub release](https://github.com/bjspi/PathScout/releases).
-PathScout updates a checkout only to release tags, never to unreleased commits,
+wheel from the matching [GitHub release](https://github.com/bjspi/WinLauncher/releases).
+WinLauncher updates a checkout only to release tags, never to unreleased commits,
 because only releases ship the matching engine: **Check for updates** in the tray
 menu fast-forwards to the newest release (local changes are never overwritten),
 and the next start reinstalls the packages before loading the engine. After a
 manual `git pull`, run the install line again. Without the
-extra — or on a commit newer than the latest release — PathScout still works
+extra — or on a commit newer than the latest release — WinLauncher still works
 with its slower Python engine and says so in the search bar; you can also
 [build the engine yourself](#rust-search-engine).
 
 Afterwards, start it without a console window:
 
 ```powershell
-.\Start-PathScout.ps1               # start quietly in the tray
-.\Start-PathScout.ps1 -Show         # start and open the search bar
+.\Start-WinLauncher.ps1               # start quietly in the tray
+.\Start-WinLauncher.ps1 -Show         # start and open the search bar
 ```
 
-PathScout starts with your Desktop, Documents and Downloads plus installed
-applications. Add your work folders in **Settings → Search folders** — or just
-drag them from Explorer into the list. The first scan runs in the background.
+WinLauncher starts with your Desktop, Documents and Downloads plus installed
+applications — Start menu programs and Microsoft Store apps alike. Add your work
+folders in **Settings → Search folders** — or just drag them from Explorer into
+the list. The first scan runs in the background.
 
-Tick **Start with Windows** in the tray menu or in Settings to launch PathScout at
+Tick **Start with Windows** in the tray menu or in Settings to launch WinLauncher at
 sign-in. It manages only its own shortcut in your Startup folder.
 
 If you open the launcher, type nothing and switch to another window, it closes
@@ -395,7 +397,7 @@ the top group; the number fine-tunes the order.
 | :---: | :---: |
 | <img src="docs/images/query-syntax.png" width="420" alt="Filters colored while typing"><br>Filters and exclusions are colored as you type | <img src="docs/images/tray-menu.png" width="200" alt="Tray menu"><br>The tray menu |
 | <img src="docs/images/settings.png" width="420" alt="General settings"><br>Settings: startup and the search bar | <img src="docs/images/settings-folders.png" width="420" alt="Search folder settings"><br>Search folders, drag and drop included |
-| <img src="docs/images/settings-shortcuts.png" width="420" alt="Keyboard shortcuts"><br>Every shortcut on one page | <img src="docs/images/about.png" width="420" alt="About PathScout"><br>About, with the data folder one click away |
+| <img src="docs/images/settings-shortcuts.png" width="420" alt="Keyboard shortcuts"><br>Every shortcut on one page | <img src="docs/images/about.png" width="420" alt="About WinLauncher"><br>About, with the data folder one click away |
 
 </div>
 
@@ -406,11 +408,11 @@ the top group; the number fine-tunes the order.
   is sent only when you open the result in your browser, and is not saved in the
   file search history. No third-party favicon service is used.
 - 📄 Indexes names and metadata only — never file contents.
-- 🗂️ Settings, catalog, favorites, history and logs live in `%USERPROFILE%\.PathScout`
-- 📝 `settings.json` holds user preferences. `pathscout.log` rotates at 5 MB with five backups.
+- 🗂️ Settings, catalog, favorites, history and logs live in `%USERPROFILE%\.WinLauncher`
+- 📝 `settings.json` holds user preferences. `winlauncher.log` rotates at 5 MB with five backups.
   Diagnostics record search timing, UI stalls, shortcut dispatch and focus owners
   (process names/PIDs, without query text or window titles). Log writes run in the background.
-  Existing settings, favorites and history from `%LOCALAPPDATA%\PathScout` are copied
+  Existing settings, favorites and history from `%LOCALAPPDATA%\WinLauncher` are copied
   on first start; originals are retained. Close an older running instance first.
   and contain your paths and queries; treat that folder like other personal data.
 - 🧹 **Clear search history** in the tray forgets launches but keeps favorites.
@@ -418,14 +420,14 @@ the top group; the number fine-tunes the order.
 ## 🛠️ Command line
 
 ```powershell
-python -m pathscout                         # start in the tray
-python -m pathscout --show                  # start and open the search bar
-python -m pathscout --no-hooks              # no global shortcuts or Explorer typing
-python -m pathscout --data-dir D:\Temp\Try  # separate settings and catalog
-python -m pathscout --version
+python -m winlauncher                         # start in the tray
+python -m winlauncher --show                  # start and open the search bar
+python -m winlauncher --no-hooks              # no global shortcuts or Explorer typing
+python -m winlauncher --data-dir D:\Temp\Try  # separate settings and catalog
+python -m winlauncher --version
 ```
 
-PathScout starts quietly in the tray; press <kbd>Ctrl</kbd> <kbd>Ctrl</kbd> to search.
+WinLauncher starts quietly in the tray; press <kbd>Ctrl</kbd> <kbd>Ctrl</kbd> to search.
 Starting it again opens the running instance's search bar, unless the second start
 uses `--background`.
 
@@ -449,11 +451,11 @@ on. Read the [architecture notes](docs/architecture.md) for the details.
 
 ### Rust search engine
 
-The separate `pathscout_native` package is PathScout's search engine: matching,
+The separate `winlauncher_native` package is WinLauncher's search engine: matching,
 ranking, SQLite candidate reads and `contains:`. The Python ranking stays the
 behavior reference, and the test suite checks that both produce identical scores,
-reasons and order. The PathScout package itself needs no Rust dependencies; when
-the extension is missing or does not fit this Python, PathScout searches with
+reasons and order. The WinLauncher package itself needs no Rust dependencies; when
+the extension is missing or does not fit this Python, WinLauncher searches with
 the Python engine, shows why in the search bar and leaves `contains:` unavailable.
 
 One abi3 wheel serves Python 3.11 to 3.14; it picks the Unicode tables of the
@@ -464,8 +466,8 @@ development with C++**:
 ```powershell
 python -m pip install maturin
 python native\tools\build.py --out dist            # abi3 wheel without local paths
-python -m pip install --force-reinstall (Get-ChildItem dist\pathscout_native-*.whl).FullName
-python -c "import pathscout_native; print(pathscout_native.API_VERSION)"
+python -m pip install --force-reinstall (Get-ChildItem dist\winlauncher_native-*.whl).FullName
+python -c "import winlauncher_native; print(winlauncher_native.API_VERSION)"
 ```
 
 `native/tools/build.py` wraps `maturin build --release --locked` and remaps your
@@ -475,7 +477,7 @@ license texts with `python native\tools\collect_licenses.py`; after adding a
 Python version, generate its Unicode tables with
 `python -I native\tools\generate_unicode.py` using that interpreter.
 
-`PATHSCOUT_SEARCH_ENGINE` selects the engine for tests and diagnostics: `auto`
+`WINLAUNCHER_SEARCH_ENGINE` selects the engine for tests and diagnostics: `auto`
 (default) uses Rust when available, `python` forces the reference engine, and
 `native` requires the extension and fails instead of falling back. In `auto`, an
 unexpected Rust error is logged once and that search is repeated in Python.
@@ -492,7 +494,7 @@ python tools\benchmark.py --engine native --phase memory --entries 50000 --direc
 cargo test --manifest-path native/Cargo.toml --locked
 ```
 
-`PATHSCOUT_NATIVE_PHASE` chooses where Rust reads candidates: the default
+`WINLAUNCHER_NATIVE_PHASE` chooses where Rust reads candidates: the default
 `memory` scans an in-memory copy of the catalog, `sqlite` runs the candidate SQL
 in Rust and `rows` keeps SQLite reads in Python.
 
@@ -534,8 +536,8 @@ python -m unittest discover -s tests -v          # unit, UI and integration test
 python tools\smoke_test.py --native              # real Qt flow + hook attach/detach
 python tools\benchmark.py --entries 50000        # synthetic search benchmark
 python tools\readme_screenshots.py              # regenerate the README screenshots
-python -m ruff check pathscout tests tools native/tools
-python -m ruff format --check pathscout tests tools native/tools
+python -m ruff check winlauncher tests tools native/tools
+python -m ruff format --check winlauncher tests tools native/tools
 ```
 
 Tests use temporary catalogs, folders and git repositories; they never touch your
@@ -543,15 +545,15 @@ real settings, Startup folder or files.
 
 ### GitHub builds and releases
 
-[CI](https://github.com/bjspi/PathScout/actions/workflows/ci.yml) runs on pushes to
+[CI](https://github.com/bjspi/WinLauncher/actions/workflows/ci.yml) runs on pushes to
 `main`, pull requests and manual dispatch. It checks Python style, Rust formatting
 and Clippy, runs the Windows tests with each engine, tests the Rust wheel on
 Python 3.11, 3.12, 3.13 and 3.14, checks the Qt/keyboard flow, and builds and
-verifies the Python wheel/source distribution and the Windows x64 Rust wheel. Download them from the run's `pathscout-windows-packages` artifact.
+verifies the Python wheel/source distribution and the Windows x64 Rust wheel. Download them from the run's `winlauncher-windows-packages` artifact.
 
 Pushing a `v*` tag runs the same checks and publishes a GitHub Release only after
 they pass, attaching those packages and a clean source ZIP. The tag must match
-`pathscout/__init__.py`, `pyproject.toml`, `native/pyproject.toml` and
+`winlauncher/__init__.py`, `pyproject.toml`, `native/pyproject.toml` and
 `native/Cargo.toml` (for example `v0.2.2`), and the `rust` extra in `pyproject.toml`
 must point to that release's native wheel. Install both wheels from a release
 with `python -m pip install <python-wheel> <native-wheel>` to enable Rust without
@@ -560,11 +562,11 @@ installing a compiler. Source ZIPs retain `native/` for local builds.
 For example, publish version 0.2.2 from a clean, committed checkout with:
 
 ```powershell
-git tag -a v0.2.2 -m "PathScout 0.2.2"
+git tag -a v0.2.2 -m "WinLauncher 0.2.2"
 git push origin v0.2.2
 ```
 
-The finished release appears under [Releases](https://github.com/bjspi/PathScout/releases).
+The finished release appears under [Releases](https://github.com/bjspi/WinLauncher/releases).
 
 📚 [Architecture](docs/architecture.md) ·
 [Specification](docs/specification.md) ·
@@ -588,5 +590,5 @@ The finished release appears under [Releases](https://github.com/bjspi/PathScout
 
 ## 📄 License
 
-[MIT](LICENSE) © PathScout contributors. Dependencies keep their own licenses — see
+[MIT](LICENSE) © WinLauncher contributors. Dependencies keep their own licenses — see
 [third-party notices](THIRD_PARTY_NOTICES.md).

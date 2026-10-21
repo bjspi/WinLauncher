@@ -10,16 +10,16 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint
 
-from pathscout.__main__ import _create_application
-from pathscout.catalog.model import CatalogItem, ItemKind
-from pathscout.search.query_parser import parse_query
-from pathscout.search.ranking import SearchHit
-from pathscout.settings import Settings
-from pathscout.ui.about import AboutDialog
-from pathscout.ui.settings import SettingsDialog
-from pathscout.ui.tray import TrayMenu
-from pathscout.ui.website_icons import WebsiteIcons
-from pathscout.ui.window import LauncherWindow
+from winlauncher.__main__ import _create_application
+from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.ranking import SearchHit
+from winlauncher.settings import Settings
+from winlauncher.ui.about import AboutDialog
+from winlauncher.ui.settings import SettingsDialog
+from winlauncher.ui.tray import TrayMenu
+from winlauncher.ui.website_icons import WebsiteIcons
+from winlauncher.ui.window import LauncherWindow
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parents[1] / "docs/images"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -130,7 +130,7 @@ settle(tray.menu)
 tray.menu.grab().save(str(OUT / "tray-menu.png"))
 tray.menu.hide()
 
-about = AboutDialog(Path(r"C:\Users\you\.PathScout"))
+about = AboutDialog(Path(r"C:\Users\you\.WinLauncher"))
 about.finish()
 about.show()
 settle(about)

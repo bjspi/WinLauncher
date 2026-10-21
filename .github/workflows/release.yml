@@ -31,23 +31,23 @@ jobs:
           import os
           import pathlib
           import tomllib
-          version = ast.literal_eval(pathlib.Path('pathscout/__init__.py').read_text().split('__version__ = ')[1].splitlines()[0])
+          version = ast.literal_eval(pathlib.Path('winlauncher/__init__.py').read_text().split('__version__ = ')[1].splitlines()[0])
           for file, section in [('pyproject.toml', 'project'), ('native/pyproject.toml', 'project'), ('native/Cargo.toml', 'package')]:
               package = tomllib.loads(pathlib.Path(file).read_text())[section]['version']
               assert package == version, f'{file}: {package} != {version}'
           assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag does not match package version'
           extra = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['optional-dependencies']['rust'][0]
-          assert f'/v{version}/pathscout_native-{version}-' in extra, 'The rust extra points to another release'
+          assert f'/v{version}/winlauncher_native-{version}-' in extra, 'The rust extra points to another release'
 
       - uses: actions/download-artifact@v4
         with:
-          name: pathscout-windows-packages
+          name: winlauncher-windows-packages
           path: dist
       - name: Build source ZIP
-        run: git archive --format=zip --prefix PathScout/ -o "dist/PathScout-${GITHUB_REF_NAME}.zip" "${GITHUB_REF_NAME}"
+        run: git archive --format=zip --prefix WinLauncher/ -o "dist/WinLauncher-${GITHUB_REF_NAME}.zip" "${GITHUB_REF_NAME}"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" --title "PathScout ${GITHUB_REF_NAME}" \
+          gh release create "${GITHUB_REF_NAME}" --title "WinLauncher ${GITHUB_REF_NAME}" \
             --generate-notes --verify-tag dist/*

@@ -5,35 +5,33 @@ from __future__ import annotations
 import importlib
 import logging
 import os
-import sqlite3
 import tempfile
 import threading
 import time
 import unicodedata
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from ci_timing import PROMPT_LIMIT_S
-from PySide6.QtCore import QEventLoop, QLockFile, QTimer
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtGui import QImage
+from PySide6.QtNetwork import QSslSocket
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit
 
-from pathscout import __main__ as entry
-from pathscout.catalog.exclusions import ExclusionPolicy
-from pathscout.catalog.model import CatalogItem, ItemKind, normalize, path_key
-from pathscout.catalog.priority import PriorityPolicy
-from pathscout.catalog.store import CatalogStore
-from pathscout.search.native_engine import priority_spec, query_spec
-from pathscout.search.query import SearchQuery
-from pathscout.search.ranking import Ranker
-from pathscout.settings import Settings, SettingsFile
-from pathscout.ui import icons
+from winlauncher import __main__ as entry
+from winlauncher.catalog.exclusions import ExclusionPolicy
+from winlauncher.catalog.model import CatalogItem, ItemKind, normalize, path_key
+from winlauncher.catalog.priority import PriorityPolicy
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search.native_engine import priority_spec, query_spec
+from winlauncher.search.query import SearchQuery
+from winlauncher.search.ranking import Ranker
+from winlauncher.ui import icons
 
 FAKE_ICON_HANDLE = 0x1234
 
@@ -44,62 +42,16 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
 
-    def test_default_home_and_migration_preserve_config_wal_and_existing_files(self):
+    def test_data_lives_in_the_home_directory_by_default(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            data = root / "home" / ".PathScout"
-            data.mkdir(parents=True)
-            legacy = root / "local" / "PathScout"
-            legacy.mkdir(parents=True)
-            settings = Settings(roots=(), max_results=77)
-            SettingsFile(legacy / "settings.json").save(settings)
-            with (
-                patch.object(Path, "home", return_value=root / "home"),
-                patch.dict(os.environ, LOCALAPPDATA=str(root / "local")),
-                closing(sqlite3.connect(legacy / "catalog.sqlite3")) as connection,
-            ):
-                self.assertEqual(entry._default_data_directory(), data)
-                connection.execute("PRAGMA journal_mode=WAL")
-                connection.execute("CREATE TABLE favorites (path TEXT)")
-                connection.execute("INSERT INTO favorites VALUES ('saved favorite')")
-                connection.commit()
-                entry._migrate_legacy_data(data.resolve())
-                self.assertEqual(SettingsFile(data / "settings.json").load(), settings)
-                with closing(sqlite3.connect(data / "catalog.sqlite3")) as copied:
-                    self.assertEqual(
-                        copied.execute("SELECT * FROM favorites").fetchall(), [("saved favorite",)]
-                    )
-                updated = Settings(roots=(), max_results=100)
-                SettingsFile(data / "settings.json").save(updated)
-                entry._migrate_legacy_data(data.resolve())
-                self.assertEqual(SettingsFile(data / "settings.json").load(), updated)
-                self.assertEqual(SettingsFile(legacy / "settings.json").load(), settings)
-                self.assertTrue((legacy / "catalog.sqlite3").is_file())
-                custom = root / "custom"
-                custom.mkdir()
-                entry._migrate_legacy_data(custom)
-                self.assertFalse(list(custom.iterdir()))
+            home = Path(temporary)
+            with patch.object(Path, "home", return_value=home):
+                self.assertEqual(entry._default_data_directory(), home / ".WinLauncher")
 
-    def test_migration_refuses_a_running_legacy_instance(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            legacy = root / "PathScout"
-            legacy.mkdir()
-            (legacy / "settings.json").write_text("{}")
-            data = root / ".PathScout"
-            data.mkdir()
-            ownership = QLockFile(str(legacy / "instance.lock"))
-            self.assertTrue(ownership.tryLock(0))
-            try:
-                with (
-                    patch.object(entry, "_default_data_directory", return_value=data),
-                    patch.dict(os.environ, LOCALAPPDATA=str(root)),
-                    self.assertRaisesRegex(OSError, "Close the PathScout instance"),
-                ):
-                    entry._migrate_legacy_data(data.resolve())
-                self.assertFalse((data / "settings.json").exists())
-            finally:
-                ownership.unlock()
+    @unittest.skipUnless(os.name == "nt", "Schannel is Windows' TLS")
+    def test_website_icons_use_windows_tls_not_an_openssl_dll_from_path(self):
+        entry._use_windows_tls()
+        self.assertEqual(QSslSocket.activeBackend(), entry.WINDOWS_TLS_BACKEND)
 
     def test_log_rotation_is_bounded_and_flushes_unicode(self):
         with (
@@ -119,8 +71,8 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
                 listener.stop()
                 for handler in listener.handlers:
                     handler.close()
-            self.assertEqual(len(list(data.glob("pathscout.log*"))), 3)
-            latest = (data / "pathscout.log").read_text(encoding="utf-8")
+            self.assertEqual(len(list(data.glob("winlauncher.log*"))), 3)
+            latest = (data / "winlauncher.log").read_text(encoding="utf-8")
             self.assertIn("Final diagnostic: Straße", latest)
             self.assertIn("MainThread", latest)
 
@@ -170,7 +122,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
 
     def test_qt_can_type_and_cancel_while_rust_search_runs(self):
         try:
-            native = importlib.import_module("pathscout_native")
+            native = importlib.import_module("winlauncher_native")
         except ImportError:
             self.skipTest("Optional Rust extension is not installed")
         native.use_unicode(unicodedata.unidata_version)
@@ -242,7 +194,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows foreground activation")
     def test_foreground_retry_detaches_and_does_not_chase_another_app(self):
-        from pathscout.platform import windows
+        from winlauncher.platform import windows
 
         foreground = {"hwnd": 10, "attached": False}
 

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pathscout.platform.startup import SHORTCUT_DESCRIPTION, StartupShortcut
+from winlauncher.platform.startup import SHORTCUT_DESCRIPTION, StartupShortcut
 
 
 @unittest.skipUnless(os.name == "nt", "Windows shortcuts require COM")
@@ -18,7 +18,7 @@ class AutostartTest(unittest.TestCase):
         import pythoncom
         import win32com.client
 
-        temporary = tempfile.TemporaryDirectory(prefix="pathscout-startup-link-")
+        temporary = tempfile.TemporaryDirectory(prefix="winlauncher-startup-link-")
         self.addCleanup(temporary.cleanup)
         self.folder = Path(temporary.name).resolve()
         self.data = self.folder / "data with spaces"
@@ -33,7 +33,7 @@ class AutostartTest(unittest.TestCase):
         self.assertFalse(self.startup.is_enabled())
         self.startup.set_enabled(True)
         self.assertTrue(self.startup.is_enabled())
-        shortcut = self.shell.CreateShortcut(str(self.folder / "PathScout.lnk"))
+        shortcut = self.shell.CreateShortcut(str(self.folder / "WinLauncher.lnk"))
         executable = Path(sys.executable).with_name("pythonw.exe")
         if not executable.exists():
             executable = Path(sys.executable)
@@ -42,18 +42,18 @@ class AutostartTest(unittest.TestCase):
         self.assertEqual(
             shortcut.Arguments,
             subprocess.list2cmdline(
-                ["-m", "pathscout", "--background", "--data-dir", str(self.data)]
+                ["-m", "winlauncher", "--background", "--data-dir", str(self.data)]
             ),
         )
-        self.assertTrue((Path(shortcut.WorkingDirectory) / "pathscout" / "__main__.py").is_file())
+        self.assertTrue((Path(shortcut.WorkingDirectory) / "winlauncher" / "__main__.py").is_file())
         self.startup.set_enabled(True)
-        self.assertEqual(list(self.folder.iterdir()), [self.folder / "PathScout.lnk"])
+        self.assertEqual(list(self.folder.iterdir()), [self.folder / "WinLauncher.lnk"])
         self.startup.set_enabled(False)
         self.assertFalse(self.startup.is_enabled())
         self.startup.set_enabled(False)
 
     def test_unrelated_shortcut_is_never_replaced_or_deleted(self):
-        path = self.folder / "PathScout.lnk"
+        path = self.folder / "WinLauncher.lnk"
         shortcut = self.shell.CreateShortcut(str(path))
         shortcut.TargetPath = sys.executable
         shortcut.Description = "Another application"

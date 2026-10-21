@@ -3,8 +3,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pathscout"
-version = "0.5.1"
+name = "winlauncher"
+version = "0.6.0"
 description = "Local file search and application launcher for Windows"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,20 +19,20 @@ dependencies = [
 [project.optional-dependencies]
 # The Rust search engine wheel of this release; the release workflow checks the version.
 rust = [
-    "pathscout_native @ https://github.com/bjspi/PathScout/releases/download/v0.5.1/pathscout_native-0.5.1-cp311-abi3-win_amd64.whl ; sys_platform == 'win32' and python_version < '3.15'",
+    "winlauncher_native @ https://github.com/bjspi/WinLauncher/releases/download/v0.6.0/winlauncher_native-0.6.0-cp311-abi3-win_amd64.whl ; sys_platform == 'win32' and python_version < '3.15'",
 ]
 
 [project.gui-scripts]
-pathscout = "pathscout.__main__:main"
+winlauncher = "winlauncher.__main__:main"
 
 [tool.setuptools]
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [tool.setuptools.packages.find]
-include = ["pathscout*"]
+include = ["winlauncher*"]
 
 [tool.setuptools.package-data]
-"pathscout.ui" = ["assets/*.svg"]
+"winlauncher.ui" = ["assets/*.svg"]
 
 [tool.ruff]
 line-length = 100

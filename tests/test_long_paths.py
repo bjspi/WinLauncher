@@ -11,12 +11,12 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from pathscout.catalog import long_paths
-from pathscout.catalog.indexer import CatalogIndexer
-from pathscout.catalog.store import CatalogStore
-from pathscout.search.query_parser import parse_query
-from pathscout.search.service import SearchService
-from pathscout.settings import Settings
+from winlauncher.catalog import long_paths
+from winlauncher.catalog.indexer import CatalogIndexer
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.service import SearchService
+from winlauncher.settings import Settings
 
 PREFIX = "\\\\?\\"
 
@@ -52,7 +52,7 @@ def _reject_long_ordinary_paths(function):
 @unittest.skipUnless(os.name == "nt", "Windows MAX_PATH")
 class LongPathIndexTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.mkdtemp(prefix="pathscout-long-")
+        temporary = tempfile.mkdtemp(prefix="winlauncher-long-")
         self.addCleanup(shutil.rmtree, PREFIX + temporary)
         self.base = Path(temporary).resolve()
         self.root = self.base / "library"
@@ -83,7 +83,7 @@ class LongPathIndexTest(unittest.TestCase):
             for engine in ("python", "auto"):
                 with (
                     self.subTest(engine=engine),
-                    patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=engine),
+                    patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE=engine),
                 ):
                     hits = SearchService(self.store).search(
                         parse_query("deep-report"), self.settings

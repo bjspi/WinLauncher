@@ -15,10 +15,10 @@ from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from pathscout.releases import Release
-from pathscout.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
-from pathscout.ui.settings import PathList, dropped_folders
-from pathscout.ui.updater import ReleaseUpdater
+from winlauncher.releases import Release
+from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
+from winlauncher.ui.settings import PathList, dropped_folders
+from winlauncher.ui.updater import ReleaseUpdater
 
 
 class FolderFeaturesTest(unittest.TestCase):
@@ -27,7 +27,7 @@ class FolderFeaturesTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="pathscout-features-")
+        temporary = tempfile.TemporaryDirectory(prefix="winlauncher-features-")
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
 
@@ -71,7 +71,7 @@ class ReleaseUpdaterTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="pathscout-git-")
+        temporary = tempfile.TemporaryDirectory(prefix="winlauncher-git-")
         self.addCleanup(temporary.cleanup)
         base = Path(temporary.name)
         self.remote, self.checkout, self.author = (
@@ -86,7 +86,7 @@ class ReleaseUpdaterTest(unittest.TestCase):
         self.git(base, "clone", str(self.remote), str(self.checkout))
 
     def git(self, cwd: Path, *arguments: str) -> str:
-        identity = ["-c", "user.name=PathScout Test", "-c", "user.email=test@example.invalid"]
+        identity = ["-c", "user.name=WinLauncher Test", "-c", "user.email=test@example.invalid"]
         result = subprocess.run(
             ["git", *identity, *arguments], cwd=cwd, capture_output=True, text=True, check=True
         )

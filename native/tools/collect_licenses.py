@@ -65,7 +65,7 @@ def section(package: dict) -> str:
 def main() -> None:
     packages = locked_packages()
     parts = [
-        "Third-party licenses of the PathScout native search engine\n",
+        "Third-party licenses of the WinLauncher native search engine\n",
         "The native wheel statically links the Rust crates below and SQLite.\n",
         f"{RULE}\nSQLite\n{RULE}\n\n{SQLITE_NOTICE}",
         *(section(package) for package in packages),

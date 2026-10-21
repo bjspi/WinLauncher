@@ -332,7 +332,7 @@ pub(crate) enum Load {
     IfIdle,
 }
 
-/// The most recently loaded index. One slot: PathScout searches one catalog.
+/// The most recently loaded index. One slot: WinLauncher searches one catalog.
 static CURRENT: Mutex<Option<Arc<CatalogIndex>>> = Mutex::new(None);
 /// Held while an index loads, so concurrent searches never load twice.
 static LOADING: Mutex<()> = Mutex::new(());

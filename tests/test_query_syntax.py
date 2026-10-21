@@ -7,7 +7,7 @@ import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from pathscout.search.query_parser import (
+from winlauncher.search.query_parser import (
     DAYS_IN_RECENT_MONTH,
     DAYS_IN_RECENT_WEEK,
     DAYS_IN_RECENT_YEAR,

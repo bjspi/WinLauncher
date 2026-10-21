@@ -21,11 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
-from pathscout.catalog.model import ItemKind
-from pathscout.settings import DEFAULT_DOUBLE_CTRL_MS, Settings, SettingsFile
-from pathscout.ui.controller import LauncherController
-from pathscout.ui.settings import SettingsDialog
-from pathscout.ui.theme import STYLESHEET, app_icon
+from winlauncher.catalog.model import ItemKind
+from winlauncher.settings import DEFAULT_DOUBLE_CTRL_MS, Settings, SettingsFile
+from winlauncher.ui.controller import LauncherController
+from winlauncher.ui.settings import SettingsDialog
+from winlauncher.ui.theme import STYLESHEET, app_icon
 
 TIMEOUT_SECONDS = 15
 FIXTURE_FILES = (
@@ -134,7 +134,7 @@ def check_settings_and_filters(controller: LauncherController) -> None:
 
 
 def run_ui_flow(app: QApplication, screenshot: Path | None) -> int:
-    with tempfile.TemporaryDirectory(prefix="pathscout-ui-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="winlauncher-ui-") as temporary:
         _, data = create_fixture(Path(temporary))
         controller = LauncherController(data, hooks=False)
         try:
@@ -154,7 +154,7 @@ def run_ui_flow(app: QApplication, screenshot: Path | None) -> int:
 
 
 def check_native_keyboard_hook() -> None:
-    from pathscout.platform.keyboard import KeyboardListener
+    from winlauncher.platform.keyboard import KeyboardListener
 
     listener = KeyboardListener(
         queue.SimpleQueue(),

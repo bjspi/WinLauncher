@@ -24,7 +24,7 @@ import zipfile
 from pathlib import Path
 
 NATIVE = Path(__file__).resolve().parents[1]
-NEUTRAL_NATIVE = "/pathscout-native"
+NEUTRAL_NATIVE = "/winlauncher-native"
 DEFAULT_OUTPUT = NATIVE / "target" / "wheels"
 FLAG_SEPARATOR = "\x1f"  # CARGO_ENCODED_RUSTFLAGS keeps paths with spaces intact.
 
@@ -110,7 +110,7 @@ def main() -> int:
     started = time.time()
     status = subprocess.call(command, env=environment)
     if status == 0:
-        for wheel in output_folder(sys.argv[1:]).glob("pathscout_native-*.whl"):
+        for wheel in output_folder(sys.argv[1:]).glob("winlauncher_native-*.whl"):
             if wheel.stat().st_mtime >= started - 1 and neutralize_sboms(wheel):
                 print(f"Removed the checkout path from the SBOM in {wheel.name}")
     return status

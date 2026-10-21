@@ -110,7 +110,7 @@ fn spawn_worker(
     stop: CancelFlag,
 ) -> PyResult<JoinHandle<()>> {
     thread::Builder::new()
-        .name(format!("pathscout-content-{index}"))
+        .name(format!("winlauncher-content-{index}"))
         .spawn(move || {
             while !stop.is_set() {
                 let job = jobs.lock().expect("content queue lock").recv();

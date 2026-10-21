@@ -535,7 +535,7 @@ fn use_unicode(version: &str) -> PyResult<()> {
 }
 
 #[pymodule]
-fn pathscout_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn winlauncher_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("API_VERSION", API_VERSION)?;
     module.add("UNICODE_VERSIONS", unicode::supported_versions())?;
     module.add_class::<CancelFlag>()?;

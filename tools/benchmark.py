@@ -14,12 +14,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pathscout.catalog.indexer import SCAN_BATCH_SIZE
-from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind
-from pathscout.catalog.store import CatalogStore
-from pathscout.search.query_parser import parse_query
-from pathscout.search.service import SearchService
-from pathscout.settings import Settings
+from winlauncher.catalog.indexer import SCAN_BATCH_SIZE
+from winlauncher.catalog.model import CatalogItem, CatalogSource, ItemKind
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.service import SearchService
+from winlauncher.settings import Settings
 
 NAMES = ("Project Report", "Budget Review", "Technical Drawing", "Meeting Notes", "Build Output")
 QUERIES = (
@@ -81,9 +81,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.entries < 1 or args.directories < 1:
         parser.error("Entries and directories must be positive.")
-    os.environ["PATHSCOUT_SEARCH_ENGINE"] = args.engine
-    os.environ["PATHSCOUT_NATIVE_PHASE"] = args.phase
-    with tempfile.TemporaryDirectory(prefix="pathscout-benchmark-") as temporary:
+    os.environ["WINLAUNCHER_SEARCH_ENGINE"] = args.engine
+    os.environ["WINLAUNCHER_NATIVE_PHASE"] = args.phase
+    with tempfile.TemporaryDirectory(prefix="winlauncher-benchmark-") as temporary:
         root = Path(temporary)
         for index in range(args.directories):
             (root / f"team-{index}").mkdir()

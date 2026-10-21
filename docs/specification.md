@@ -11,7 +11,12 @@ Configured roots are recursive, and each root folder is itself an entry, so `D:\
 is found by name; drive roots have no name and are not listed, and an Explorer
 folder outside every root only lends its scope. With application discovery enabled, Start menu
 directories are scanned for launchable entries and HKCU/HKLM App Paths are read in
-both registry views. This does not enumerate the UWP AppsFolder namespace.
+both registry views. Store apps, which have neither, are taken from Windows' "All apps"
+list (`shell:AppsFolder`, entries whose AppUserModelID names a package): before each
+full scan WinLauncher keeps one shortcut per Store app in
+`%LOCALAPPDATA%\WinLauncher\Store apps` and indexes that folder like a Start menu
+folder. Shortcuts show the icon they name or their target's, without the shortcut
+arrow.
 
 An explicitly selected root may be a symbolic link or directory junction. Links,
 junctions and offline directories encountered below that root are skipped. Metadata
@@ -70,7 +75,7 @@ priority rules with `search_priority: "ignored"` can also exclude files by name 
 
 A configured marker name found in any ancestor directory excludes that directory
 and its descendants, including when the ancestor is above a scan root. A marker
-is detected by existence; PathScout does not modify it. Defaults are `.nobackup`,
+is detected by existence; WinLauncher does not modify it. Defaults are `.nobackup`,
 `.no-backup`, `pyvenv.cfg` (Python virtual environments) and `conda-meta` (Conda
 environments); a marker may be a file or a directory. Default folder-name patterns
 exclude version-control metadata (`.git*` also covers copies such as `.git_old`,
@@ -279,7 +284,7 @@ configured display limit, 10–200 (default 60), is applied after candidate rank
 
 ## Independent relevance formula
 
-These weights are PathScout's own, chosen and tested independently.
+These weights are WinLauncher's own, chosen and tested independently.
 For each positive term, the first matching rule supplies its text score:
 
 | Match | Score |
@@ -376,7 +381,7 @@ Explorer. Applications receive their containing directory as the working directo
 Clipboard actions copy path, filename or parent path. Enter during an outstanding
 query waits for matching results rather than opening an older result; a new query
 selects its top result. These actions accept
-filesystem entries rather than shell commands; PathScout does not implement a
+filesystem entries rather than shell commands; WinLauncher does not implement a
 command interpreter. Excluding a result's directory asks for confirmation showing
 the exact directory, updates settings and refreshes the catalog. Unknown advanced-rule
 JSON keys are rejected instead of silently dropping the user's rules.
@@ -402,15 +407,15 @@ When the best result is a direct entry, Explorer selects it and scrolls it into
 view without taking the keyboard focus, replacing whatever Explorer's own
 type-ahead picked. Moving through the results with the arrow keys selects the same
 entry in Explorer, or the subfolder that contains a deeper match. The bar closes as
-soon as another program comes to the foreground: PathScout watches foreground
+soon as another program comes to the foreground: WinLauncher watches foreground
 changes through Windows itself, because Qt misses the activation of a window that
-PathScout forced to the front. Explorer completion shows matching direct folders and files
+WinLauncher forced to the front. Explorer completion shows matching direct folders and files
 first, then matches from subfolders below a separator line; subfolder matches
 always rank below every direct entry. A regular `in:` query lists direct
 entries before deeper matches; relevance orders each group, and priority classes
 still come first.
 
-When the query is a calculation (`pathscout/calculator.py`), the launcher shows
+When the query is a calculation (`winlauncher/calculator.py`), the launcher shows
 its result in a row above the results and selects it: Enter or a click copies the
 result, Down moves to the first result and Up from there returns to the
 calculation. The search still runs. Explorer typing has no calculator. A query
@@ -445,7 +450,7 @@ click opens the launcher. Restart starts a replacement process that waits for th
 running one to release its instance lock, so two keyboard hooks never run at once.
 
 Updates follow release tags (`vX.Y.Z`), never unreleased commits, because only a
-release ships the matching prebuilt Rust engine. When git is installed, PathScout
+release ships the matching prebuilt Rust engine. When git is installed, WinLauncher
 asks the remote for its tags (`git ls-remote`) shortly after start and every 30
 minutes and announces a release newer than its own version. A git checkout asks
 its `origin`; an installed package asks the project repository.
@@ -456,7 +461,7 @@ checkouts instead of merging and leaves a checkout already past the release wher
 it is. After a real update it marks a reinstall as pending and offers a restart;
 the next start runs `pip install -e ".[rust]"` before anything loads the old
 engine, whose `.pyd` Windows locks while it runs. For pipx and other installed
-packages, PathScout shows the exact install command to copy instead of replacing
+packages, WinLauncher shows the exact install command to copy instead of replacing
 its own running environment. Git never prompts for credentials; a stalled git is
 stopped after two minutes.
 
@@ -480,8 +485,8 @@ stale, changed or ambiguous targets fail instead of opening another window.
 File opening and global launcher actions retain their normal shell behavior.
 Clearing the scope restores the global launcher and drops the Explorer target.
 
-Start with Windows manages only `PathScout.lnk` in the current user's Startup known
-folder; the existence of PathScout's own shortcut is the state shown in both the
+Start with Windows manages only `WinLauncher.lnk` in the current user's Startup known
+folder; the existence of WinLauncher's own shortcut is the state shown in both the
 tray and the settings dialog. The checkbox applies immediately in either place,
 because it changes a file outside the settings document. A failure shows a message
 and restores the checkbox to the actual shortcut state. An unrelated shortcut with
@@ -494,11 +499,11 @@ limit, interval or input settings does not rescan and keeps an Explorer scope.
 Input settings (double-Ctrl interval, Explorer typing, Quick Switch) restart the
 keyboard listener.
 
-PathScout searches with the Rust engine. When the extension is missing or does
+WinLauncher searches with the Rust engine. When the extension is missing or does
 not support the running Python, it searches with the Python engine, shows the
 reason in the search bar and rejects `contains:` with that reason. An unexpected
 Rust error is logged once per kind, and that search is repeated in Python.
-`PATHSCOUT_SEARCH_ENGINE=python` forces the Python engine; `native` requires the
+`WINLAUNCHER_SEARCH_ENGINE=python` forces the Python engine; `native` requires the
 Rust engine and reports its errors instead of falling back.
 
 The Rust engine selects candidates from an in-memory copy of the catalog's
@@ -507,17 +512,17 @@ exactly the rows of the candidate SQL. A search never uses a copy older than the
 every change to an entry increments the catalog version, and a search that sees
 a newer version reloads the copy first, or uses candidate SQL while another
 search is reloading it. Launch history and favorites are read fresh on every
-search. `PATHSCOUT_NATIVE_PHASE=sqlite` (candidate SQL in Rust) and `rows`
+search. `WINLAUNCHER_NATIVE_PHASE=sqlite` (candidate SQL in Rust) and `rows`
 (candidate SQL in Python) select the earlier candidate sources for diagnosis.
 
 User configuration (`settings.json`), catalog/history/favorites and diagnostics
-live under `%USERPROFILE%\.PathScout` by default; `--data-dir` selects an isolated
+live under `%USERPROFILE%\.WinLauncher` by default; `--data-dir` selects an isolated
 directory. Existing LocalAppData settings and SQLite state are copied once, with
 the originals retained. Logs rotate at 5 MB with five backups. Search timing,
 shortcut dispatch, focus-owner changes and UI pauses are logged without recording
 query text or window titles. Shell icon retrieval must not block the GUI thread.
 
-PathScout starts in the tray without showing the search bar; `--show` opens it
+WinLauncher starts in the tray without showing the search bar; `--show` opens it
 right away, and it also opens when no system tray is available. A second start for
 the same data directory shows the running launcher, unless it was started with
 `--background`, in which case it exits without changing the window.

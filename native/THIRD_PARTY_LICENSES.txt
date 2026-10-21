@@ -1,4 +1,4 @@
-Third-party licenses of the PathScout native search engine
+Third-party licenses of the WinLauncher native search engine
 
 The native wheel statically links the Rust crates below and SQLite.
 

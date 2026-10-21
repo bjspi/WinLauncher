@@ -14,17 +14,17 @@ from unittest.mock import patch
 
 from ci_timing import PROMPT_LIMIT_S
 
-from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind
-from pathscout.catalog.priority import NamePriority, PriorityPolicy
-from pathscout.catalog.store import CatalogStore
-from pathscout.search.native_engine import API_VERSION, priority_spec, query_spec
-from pathscout.search.query_parser import parse_query, without_type_filter
-from pathscout.search.ranking import Ranker
-from pathscout.search.service import SearchService
-from pathscout.settings import Settings, settings_from_json
+from winlauncher.catalog.model import CatalogItem, CatalogSource, ItemKind
+from winlauncher.catalog.priority import NamePriority, PriorityPolicy
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search.native_engine import API_VERSION, priority_spec, query_spec
+from winlauncher.search.query_parser import parse_query, without_type_filter
+from winlauncher.search.ranking import Ranker
+from winlauncher.search.service import SearchService
+from winlauncher.settings import Settings, settings_from_json
 
 try:
-    NATIVE = importlib.import_module("pathscout_native")
+    NATIVE = importlib.import_module("winlauncher_native")
 except ImportError:
     NATIVE = None
 # Each native phase's entry point and the position of its query spec argument.
@@ -80,15 +80,15 @@ class ContentQueryTest(unittest.TestCase):
             store = CatalogStore(Path(temporary) / "catalog.sqlite3")
             service = SearchService(store)
             query = parse_query("report contains:needle")
-            with patch("pathscout.search.service.select_native", return_value=None):
+            with patch("winlauncher.search.service.select_native", return_value=None):
                 with self.assertRaisesRegex(ValueError, "needs the Rust search engine"):
                     service.search(query, Settings(roots=()))
             with (
-                patch("pathscout.search.service.select_native", return_value=object()),
+                patch("winlauncher.search.service.select_native", return_value=object()),
                 patch(
-                    "pathscout.search.service.rank_with_native", side_effect=ValueError("fixture")
+                    "winlauncher.search.service.rank_with_native", side_effect=ValueError("fixture")
                 ),
-                self.assertLogs("pathscout.search.service", level="ERROR"),
+                self.assertLogs("winlauncher.search.service", level="ERROR"),
                 self.assertRaisesRegex(RuntimeError, "content search failed"),
             ):
                 service.search(query, Settings(roots=()))
@@ -99,7 +99,7 @@ class ContentQueryTest(unittest.TestCase):
 )
 class NativeContentTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="pathscout-content-")
+        temporary = tempfile.TemporaryDirectory(prefix="winlauncher-content-")
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name).resolve()
         self.root = self.base / "library"
@@ -115,7 +115,9 @@ class NativeContentTest(unittest.TestCase):
             self.store.publish(connection, active_roots=(source,), preserved_roots=())
 
     def search(self, text, phase, threads=4):
-        with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native", PATHSCOUT_NATIVE_PHASE=phase):
+        with patch.dict(
+            os.environ, WINLAUNCHER_SEARCH_ENGINE="native", WINLAUNCHER_NATIVE_PHASE=phase
+        ):
             return self.service.search(
                 parse_query(text), replace(self.settings, content_search_threads=threads)
             )
@@ -187,7 +189,7 @@ class NativeContentTest(unittest.TestCase):
         (private / ".nobackup").touch()
         (private / "secret.json").write_text("needle")
         query = replace(parse_query("contains:needle", scope=self.root), explorer=True)
-        with patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE="native"):
+        with patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="native"):
             self.assertEqual(
                 [hit.item.path for hit in self.service.search(query, self.settings)], [path]
             )
@@ -304,7 +306,7 @@ class NativeContentTest(unittest.TestCase):
 
         canceller = threading.Thread(target=cancel_scan, daemon=True)
         canceller.start()
-        from pathscout.search.native_engine import _search_sql
+        from winlauncher.search.native_engine import _search_sql
 
         sql, parameters = _search_sql(query)
         # Repeat candidate reads so cancellation is exercised even on fast disks.

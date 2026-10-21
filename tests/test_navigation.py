@@ -10,17 +10,17 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from pathscout.catalog.model import ItemKind
-from pathscout.catalog.priority import NamePriority
-from pathscout.catalog.store import CatalogStore
-from pathscout.search.query_parser import parse_query
-from pathscout.search.service import SearchService
-from pathscout.settings import DEFAULT_EXCLUDED_PATTERNS, Settings
+from winlauncher.catalog.model import ItemKind
+from winlauncher.catalog.priority import NamePriority
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.service import SearchService
+from winlauncher.settings import DEFAULT_EXCLUDED_PATTERNS, Settings
 
 
 class PathNavigationTest(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="pathscout-navigation-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="winlauncher-navigation-")
         self.addCleanup(self.temporary.cleanup)
         self.home = Path(self.temporary.name).resolve()
         self.toolbox = self.home / ".toolbox"
@@ -73,7 +73,7 @@ class PathNavigationTest(unittest.TestCase):
             with (
                 self.subTest(text=text),
                 patch(
-                    "pathscout.search.service.select_native",
+                    "winlauncher.search.service.select_native",
                     side_effect=AssertionError("Not a catalog search"),
                 ),
             ):
@@ -130,7 +130,7 @@ class PathNavigationTest(unittest.TestCase):
             self.assertNotIn(self.home / name, paths)
             self.assertEqual(self.paths(f"~/{name}"), [])
             with patch(
-                "pathscout.search.navigation.os.scandir",
+                "winlauncher.search.navigation.os.scandir",
                 side_effect=AssertionError("Excluded subtree must not be read"),
             ):
                 self.assertEqual(self.paths(f"~/{name}/"), [])
@@ -149,11 +149,11 @@ class PathNavigationTest(unittest.TestCase):
         )
 
     def test_unknown_relative_and_cancelled_shortcuts(self):
-        with patch.dict(os.environ, {"PATHSCOUT_TEST_RELATIVE": "relative/path"}):
+        with patch.dict(os.environ, {"WINLAUNCHER_TEST_RELATIVE": "relative/path"}):
             with self.assertRaisesRegex(ValueError, "absolute path"):
-                self.paths("%PATHSCOUT_TEST_RELATIVE%")
+                self.paths("%WINLAUNCHER_TEST_RELATIVE%")
         with self.assertRaisesRegex(ValueError, "Unknown environment variable"):
-            self.paths("%PATHSCOUT_NONEXISTENT_VARIABLE%")
+            self.paths("%WINLAUNCHER_NONEXISTENT_VARIABLE%")
         cancel = threading.Event()
         cancel.set()
         self.assertEqual(self.paths("~/", cancel=cancel), [])

@@ -2,7 +2,7 @@
 
 ## Domain boundaries
 
-PathScout is organized around catalog indexing, filesystem change monitoring,
+WinLauncher is organized around catalog indexing, filesystem change monitoring,
 query parsing, filtering, text matching, ranking, platform integration and UI state.
 Value objects carry intent and policy; adapters own I/O. There is no service
 locator, dependency-injection framework or shared database connection. The
@@ -142,7 +142,7 @@ environment values; `in:` expands variables for catalog queries as well.
 `search/native_engine.py` imports the extension once (`native_availability`),
 checks `API_VERSION` and selects the Unicode tables of the running interpreter
 with `use_unicode(unicodedata.unidata_version)`. The reason it is unavailable is
-shown in the search bar. `PATHSCOUT_SEARCH_ENGINE=auto|python|native` selects the
+shown in the search bar. `WINLAUNCHER_SEARCH_ENGINE=auto|python|native` selects the
 engine for tests and diagnostics. The adapter builds one query specification and
 one dict-based priority specification from the Python domain objects, and
 reconstructs only the kept `Candidate`/`Ranking` objects. The Python loop in
@@ -242,7 +242,7 @@ during the outage were never reported.
 
 ## Platform integration
 
-PathScout uses an out-of-process low-level keyboard hook, pointer-sized ctypes
+WinLauncher uses an out-of-process low-level keyboard hook, pointer-sized ctypes
 declarations, and `Shell.Application` to resolve a filesystem folder. It accepts
 typing only in a recognized Explorer file view and never injects code into Explorer.
 After a dead key, the next key stays with Explorer so accent composition is not broken.
@@ -256,28 +256,28 @@ opens the same compact bar and routes a chosen result to
 `ItemActions.choose_in_dialog` instead of `navigate_to`; Ctrl+G queues a
 `FolderJumpRequested`. `platform/file_dialog.py` drives the dialog on the action
 worker with `WM_GETTEXT`, `WM_SETTEXT` and the default button's `WM_COMMAND`, all
-with timeouts, so a hung dialog cannot block PathScout.
+with timeouts, so a hung dialog cannot block WinLauncher.
 
-`StartupShortcut` manages only `PathScout.lnk` in the user's Startup known folder.
+`StartupShortcut` manages only `WinLauncher.lnk` in the user's Startup known folder.
 The shortcut file is the source of truth for the tray and the settings dialog. It
 starts `pythonw.exe` of the running environment with
-`-m pathscout --background --data-dir <dir>`, quoted with `list2cmdline`, in the
-directory that contains the `pathscout` package (a source checkout root or
-site-packages). Shortcuts without PathScout's description and arguments are
+`-m winlauncher --background --data-dir <dir>`, quoted with `list2cmdline`, in the
+directory that contains the `winlauncher` package (a source checkout root or
+site-packages). Shortcuts without WinLauncher's description and arguments are
 reported as unrelated and never changed. COM objects are released before the
 apartment is uninitialized.
 
 A per-data-directory `QLockFile` elects one primary process before it opens a
 user-restricted local server. A second foreground start asks the primary to show
 the launcher; a second `--background` start only confirms it is running.
-The default data directory is `Path.home() / ".PathScout"`. Startup copies existing
+The default data directory is `Path.home() / ".WinLauncher"`. Startup copies existing
 settings and catalog/history/favorites from the former LocalAppData directory
 without removing the originals or replacing existing new files. SQLite's backup
 API includes WAL data; a legacy instance lock prevents copying during an active
 session. Old Startup shortcuts naming the former default are redirected to the
 new directory. Other explicit `--data-dir` paths remain isolated.
 
-Only the instance-lock owner opens `pathscout.log`. A standard-library
+Only the instance-lock owner opens `winlauncher.log`. A standard-library
 `QueueHandler`/`QueueListener` writes UTF-8 logs outside the GUI/keyboard threads,
 rotating at 5 MB and keeping five backups. Startup, search engine/timing,
 shortcut dispatch delay, settings changes, focus transitions and event-loop gaps

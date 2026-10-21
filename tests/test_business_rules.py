@@ -13,18 +13,18 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from pathscout.actions import ExplorerTarget, ItemActions
-from pathscout.catalog import long_paths
-from pathscout.catalog.exclusions import ExclusionPolicy
-from pathscout.catalog.indexer import CatalogIndexer
-from pathscout.catalog.model import (
+from winlauncher.actions import ExplorerTarget, ItemActions
+from winlauncher.catalog import long_paths
+from winlauncher.catalog.exclusions import ExclusionPolicy
+from winlauncher.catalog.indexer import CatalogIndexer
+from winlauncher.catalog.model import (
     CatalogItem,
     CatalogSource,
     ItemKind,
     is_within,
     path_key,
 )
-from pathscout.catalog.priority import (
+from winlauncher.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
     FolderPriority,
@@ -32,20 +32,20 @@ from pathscout.catalog.priority import (
     PriorityPolicy,
     SearchPriority,
 )
-from pathscout.catalog.store import CatalogStore
-from pathscout.platform.gesture import DoubleCtrlGesture
-from pathscout.search.candidates import Candidate
-from pathscout.search.matching import fuzzy_score
-from pathscout.search.query import MatchMode
-from pathscout.search.query_parser import parse_query
-from pathscout.search.ranking import rank
-from pathscout.search.service import SearchService
-from pathscout.settings import Settings, SettingsFile
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.platform.gesture import DoubleCtrlGesture
+from winlauncher.search.candidates import Candidate
+from winlauncher.search.matching import fuzzy_score
+from winlauncher.search.query import MatchMode
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.ranking import rank
+from winlauncher.search.service import SearchService
+from winlauncher.settings import Settings, SettingsFile
 
 
 class BusinessRulesTest(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="pathscout-tests-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="winlauncher-tests-")
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name).resolve()
         self.root = self.base / "library"
@@ -103,7 +103,7 @@ class BusinessRulesTest(unittest.TestCase):
             "app/build/report.txt",
             "app/dist/report.txt",
             "android/.gradle/report.txt",
-            "pkg/pathscout.egg-info/report.txt",
+            "pkg/winlauncher.egg-info/report.txt",
             "env/Lib/report.txt",
             "conda-env/Lib/report.txt",
         ):
@@ -178,7 +178,7 @@ class BusinessRulesTest(unittest.TestCase):
         self.file("original.txt")
         self.scan()
         with patch(
-            "pathscout.catalog.indexer.os.scandir", side_effect=PermissionError("unavailable")
+            "winlauncher.catalog.indexer.os.scandir", side_effect=PermissionError("unavailable")
         ):
             report = self.indexer.scan(self.settings)
         self.assertTrue(report.errors)
@@ -311,7 +311,7 @@ class BusinessRulesTest(unittest.TestCase):
         for engine in ("python", "auto"):
             with (
                 self.subTest(engine=engine),
-                patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=engine),
+                patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE=engine),
             ):
                 hits = self.search.search(parse_query("editor"), settings)
                 self.assertEqual([hit.item.path for hit in hits], [shortcut])
@@ -519,7 +519,7 @@ class BusinessRulesTest(unittest.TestCase):
             for engine in ("python", "auto"):
                 with (
                     self.subTest(text=text, engine=engine),
-                    patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=engine),
+                    patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE=engine),
                 ):
                     self.assertEqual({hit.item.path for hit in self.hits(text)}, expected)
         self.assertGreater(len(self.hits("project plan")), 2)  # Fuzzy without quotes.
@@ -562,7 +562,9 @@ class BusinessRulesTest(unittest.TestCase):
             owners = {row[0] for row in connection.execute("SELECT root FROM entries")}
         self.assertEqual(owners, {CatalogSource(self.root).id})
         previous = self.store.count()
-        with patch("pathscout.catalog.indexer.os.scandir", side_effect=PermissionError("offline")):
+        with patch(
+            "winlauncher.catalog.indexer.os.scandir", side_effect=PermissionError("offline")
+        ):
             report = self.indexer.scan(self.settings)
         self.assertTrue(report.errors)
         self.assertEqual(self.store.count(), previous)
@@ -580,7 +582,7 @@ class BusinessRulesTest(unittest.TestCase):
                 raise PermissionError("locked fixture")
             return scan(path)
 
-        with patch("pathscout.catalog.indexer.os.scandir", side_effect=readable_only):
+        with patch("winlauncher.catalog.indexer.os.scandir", side_effect=readable_only):
             report = self.indexer.scan(self.settings)
         self.assertTrue(report.errors)
         self.assertTrue(self.hits("keep"))
@@ -770,15 +772,15 @@ class BusinessRulesTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows Explorer adapter")
     def test_explorer_navigation_uses_captured_tab_and_refuses_stale_targets(self):
-        from pathscout.platform.explorer import navigate_to
+        from winlauncher.platform.explorer import navigate_to
 
         first, selected = Mock(), Mock()
         destination = self.root / "folder, with spaces"
         with (
             patch("win32com.client.Dispatch") as dispatch,
-            patch("pathscout.platform.explorer._window_folder") as folder,
-            patch("pathscout.platform.explorer.active_tab", return_value=22) as active_tab,
-            patch("pathscout.platform.explorer.activate_window") as activate,
+            patch("winlauncher.platform.explorer._window_folder") as folder,
+            patch("winlauncher.platform.explorer.active_tab", return_value=22) as active_tab,
+            patch("winlauncher.platform.explorer.activate_window") as activate,
         ):
             dispatch.return_value.Windows.return_value = [first, selected]
             folder.side_effect = [(self.root, False), (self.root, True)]
@@ -813,7 +815,7 @@ class BusinessRulesTest(unittest.TestCase):
             ):
                 with (
                     self.subTest(engine=engine, text=text),
-                    patch.dict(os.environ, PATHSCOUT_SEARCH_ENGINE=engine),
+                    patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE=engine),
                 ):
                     query = replace(parse_query(text, scope=self.root), explorer=True)
                     hits = self.search.search(query, self.settings)
@@ -825,8 +827,8 @@ class BusinessRulesTest(unittest.TestCase):
         destination.mkdir()
         action = ItemActions(self.store)
         with (
-            patch("pathscout.platform.explorer.navigate_to") as navigate,
-            patch("pathscout.platform.shell.open_path") as launch,
+            patch("winlauncher.platform.explorer.navigate_to") as navigate,
+            patch("winlauncher.platform.shell.open_path") as launch,
             patch.object(self.store, "record_launch") as record,
         ):
             action.open(destination, "target", explorer=ExplorerTarget(11, 22, self.root))
@@ -933,7 +935,7 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertNotEqual(path_key(self.root / "Café"), path_key(self.root / "Cafe\u0301"))
 
     def test_scoped_sql_uses_the_path_index(self):
-        from pathscout.catalog.model import path_range
+        from winlauncher.catalog.model import path_range
 
         with self.store.connect() as connection:
             plan = connection.execute(
@@ -980,7 +982,7 @@ class BusinessRulesTest(unittest.TestCase):
     def test_only_successful_launches_are_learned(self):
         path = self.file("App.exe")
         self.scan()
-        with patch("pathscout.platform.shell.open_path", side_effect=OSError("failed")):
+        with patch("winlauncher.platform.shell.open_path", side_effect=OSError("failed")):
             with self.assertRaises(OSError):
                 ItemActions(self.store).open(path, "app")
         self.assertEqual(self.hits("app")[0].item.launches, 0)
@@ -991,7 +993,7 @@ class BusinessRulesTest(unittest.TestCase):
         self.scan()
         changed.write_text("updated content", encoding="utf8")
         with patch(
-            "pathscout.catalog.indexer.os.scandir", side_effect=AssertionError("Recursive scan")
+            "winlauncher.catalog.indexer.os.scandir", side_effect=AssertionError("Recursive scan")
         ):
             report = self.indexer.refresh_files(self.settings, (changed,))
         self.assertFalse(report.errors)
@@ -1029,7 +1031,7 @@ class BusinessRulesTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows shell actions")
     def test_shell_actions_set_working_directory_and_quote_comma_paths(self):
-        from pathscout.platform.shell import open_path, show_in_folder
+        from winlauncher.platform.shell import open_path, show_in_folder
 
         path = self.file("a,b.txt")
         with patch("os.startfile") as launch, patch("subprocess.Popen") as reveal:
@@ -1070,8 +1072,8 @@ class BusinessRulesTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows directory notifications")
     def test_native_watcher_reports_created_file_and_stops(self):
-        from pathscout.platform.changes import FileChange
-        from pathscout.platform.watcher import DirectoryWatcher
+        from winlauncher.platform.changes import FileChange
+        from winlauncher.platform.watcher import DirectoryWatcher
 
         events = queue.SimpleQueue()
         watcher = DirectoryWatcher(self.root, events)
@@ -1087,7 +1089,7 @@ class BusinessRulesTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows Explorer adapter")
     def test_explorer_cache_survives_resolution_only_for_unchanged_view(self):
-        from pathscout.platform.explorer import ExplorerContext, ExplorerTracker
+        from winlauncher.platform.explorer import ExplorerContext, ExplorerTracker
 
         for view, retained in (((1, 2), True), ((1, 3), False)):
             tracker = ExplorerTracker(on_failure=lambda message: None)
@@ -1102,8 +1104,8 @@ class BusinessRulesTest(unittest.TestCase):
 
             with (
                 patch("win32com.client.Dispatch"),
-                patch("pathscout.platform.explorer.explorer_file_view", return_value=view),
-                patch("pathscout.platform.explorer.resolve_folder", side_effect=resolve),
+                patch("winlauncher.platform.explorer.explorer_file_view", return_value=view),
+                patch("winlauncher.platform.explorer.resolve_folder", side_effect=resolve),
                 patch(
                     "pythoncom.PumpWaitingMessages",
                     side_effect=lambda observed=observed, tracker=tracker: observed.append(
@@ -1118,7 +1120,7 @@ class BusinessRulesTest(unittest.TestCase):
     def test_explorer_rejects_menu_and_drag_input(self):
         import ctypes
 
-        from pathscout.platform.windows import GuiThreadInfo, explorer_file_view, user32
+        from winlauncher.platform.windows import GuiThreadInfo, explorer_file_view, user32
 
         for field in ("flags", "hwndMenuOwner", "hwndCapture", "hwndMoveSize"):
 
@@ -1131,14 +1133,14 @@ class BusinessRulesTest(unittest.TestCase):
             with (
                 patch.object(user32, "GetForegroundWindow", return_value=1),
                 patch.object(user32, "GetGUIThreadInfo", side_effect=info),
-                patch("pathscout.platform.windows.class_name", return_value="CabinetWClass"),
+                patch("winlauncher.platform.windows.class_name", return_value="CabinetWClass"),
             ):
                 self.assertIsNone(explorer_file_view())
 
     @unittest.skipUnless(os.name == "nt", "Windows directory notifications")
     def test_watcher_filters_excluded_activity_but_keeps_marker_changes(self):
-        from pathscout.platform.changes import FolderChange, WatchFailed
-        from pathscout.platform.watcher import DirectoryWatcher
+        from winlauncher.platform.changes import FolderChange, WatchFailed
+        from winlauncher.platform.watcher import DirectoryWatcher
 
         self.file(".git/initial.txt")
         self.file("private/.nobackup", "")
@@ -1164,8 +1166,8 @@ class BusinessRulesTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows directory notifications")
     def test_nested_writes_and_git_locks_do_not_queue_recursive_parent_repairs(self):
-        from pathscout.platform.changes import FileChange, FolderChange
-        from pathscout.platform.watcher import DirectoryWatcher
+        from winlauncher.platform.changes import FileChange, FolderChange
+        from winlauncher.platform.watcher import DirectoryWatcher
 
         self.file("a/b/initial.txt")
         self.file("project/.git/initial.txt")

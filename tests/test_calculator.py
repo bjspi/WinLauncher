@@ -7,7 +7,7 @@ import unittest
 
 from ci_timing import PROMPT_LIMIT_S
 
-from pathscout.calculator import calculate
+from winlauncher.calculator import calculate
 
 
 def result(expression: str) -> str | None:

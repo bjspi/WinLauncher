@@ -9,13 +9,13 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from pathscout.catalog import store
-from pathscout.catalog.indexer import CatalogIndexer
-from pathscout.catalog.model import path_key
-from pathscout.catalog.store import CatalogStore
-from pathscout.search.query_parser import parse_query
-from pathscout.search.service import SearchService
-from pathscout.settings import Settings
+from winlauncher.catalog import store
+from winlauncher.catalog.indexer import CatalogIndexer
+from winlauncher.catalog.model import path_key
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.service import SearchService
+from winlauncher.settings import Settings
 
 SCANNED_FILES = 400
 LAUNCHES = 3
@@ -60,7 +60,7 @@ PRAGMA user_version=4;
 
 class CatalogStorageTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="pathscout-storage-")
+        temporary = tempfile.TemporaryDirectory(prefix="winlauncher-storage-")
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name).resolve()
         self.root = self.base / "library"

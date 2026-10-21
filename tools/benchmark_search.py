@@ -24,14 +24,14 @@ from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pathscout.catalog.store import CatalogStore
-from pathscout.search import native_engine
-from pathscout.search.candidates import candidate_sql
-from pathscout.search.native_engine import select_memory_candidates
-from pathscout.search.query import SearchQuery
-from pathscout.search.query_parser import parse_query
-from pathscout.search.service import SearchService
-from pathscout.settings import Settings, SettingsFile
+from winlauncher.catalog.store import CatalogStore
+from winlauncher.search import native_engine
+from winlauncher.search.candidates import candidate_sql
+from winlauncher.search.native_engine import select_memory_candidates
+from winlauncher.search.query import SearchQuery
+from winlauncher.search.query_parser import parse_query
+from winlauncher.search.service import SearchService
+from winlauncher.settings import Settings, SettingsFile
 
 QUERIES = (
     "d",

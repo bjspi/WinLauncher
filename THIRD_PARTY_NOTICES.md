@@ -1,6 +1,6 @@
 # Third-party notices
 
-PathScout's original source is provided under the [MIT license](LICENSE).
+WinLauncher's original source is provided under the [MIT license](LICENSE).
 Dependencies retain their own licenses. The repository does not bundle dependency
 binaries; normal installation obtains them as separate Python packages. The Rust
 search engine wheel statically links the crates listed below and ships their licenses.
@@ -20,7 +20,7 @@ No frozen executable is currently distributed by this project.
 
 ## Rust search engine
 
-`pathscout_native` is a separate distribution. Its dependency versions are locked
+`winlauncher_native` is a separate distribution. Its dependency versions are locked
 in `native/Cargo.lock`. The native wheel contains compiled Rust code and bundled
 SQLite (FTS5 enabled); it does not add dependencies to the Python package. The
 wheel ships the license text of every linked crate in
