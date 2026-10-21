@@ -67,7 +67,9 @@ class LongPathIndexTest(unittest.TestCase):
             handle.write("needle")
         self.assertGreater(len(str(self.file)), 300)
         self.store = CatalogStore(self.base / "catalog.sqlite3")
-        self.settings = Settings(roots=(str(self.root),), index_apps=False)
+        self.settings = Settings(
+            roots=(str(self.root),), index_apps=False, index_windows_tools=False
+        )
 
     def old_windows(self) -> ExitStack:
         stack = ExitStack()

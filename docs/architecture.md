@@ -48,6 +48,8 @@ flowchart TD
 | `settings.py` | Validated settings value object and atomic JSON file |
 | `actions.py` | Open, reveal and favorite use cases; only successful opens are learned |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
+| `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |
+| `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |

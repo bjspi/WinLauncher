@@ -57,7 +57,9 @@ class StartupTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="winlauncher-startup-race-") as temporary:
             data = Path(temporary)
-            SettingsFile(data / "settings.json").save(Settings(roots=(), index_apps=False))
+            SettingsFile(data / "settings.json").save(
+                Settings(roots=(), index_apps=False, index_windows_tools=False)
+            )
             # Foreground starts: the losing process must ask the winner to show itself.
             env = dict(
                 os.environ,
@@ -100,7 +102,9 @@ class StartupTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="winlauncher-startup-") as temporary:
             data = Path(temporary)
-            SettingsFile(data / "settings.json").save(Settings(roots=(), index_apps=False))
+            SettingsFile(data / "settings.json").save(
+                Settings(roots=(), index_apps=False, index_windows_tools=False)
+            )
             env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
             process = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--child", str(data)],

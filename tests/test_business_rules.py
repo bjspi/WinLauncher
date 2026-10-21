@@ -52,7 +52,9 @@ class BusinessRulesTest(unittest.TestCase):
         self.root.mkdir()
         self.store = CatalogStore(self.base / "state/catalog.sqlite3")
         self.indexer = CatalogIndexer(self.store)
-        self.settings = Settings(roots=(str(self.root),), index_apps=False)
+        self.settings = Settings(
+            roots=(str(self.root),), index_apps=False, index_windows_tools=False
+        )
         self.search = SearchService(self.store)
 
     def file(self, relative: str, text: str = "test") -> Path:

@@ -31,6 +31,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📂 **Type-to-search in Explorer** | Start typing in an Explorer file list and a slim bar docks to that window, searching the folder you are in — its own entries first. |
 | 🔀 **Quick Switch in Open/Save dialogs** | Type in a dialog's file list to search everywhere: a folder opens in the dialog, a file fills in its name. <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps the dialog to the folder of your last Explorer window. |
 | 🧩 **Every installed app** | Start menu programs, Microsoft Store apps such as Telegram Desktop or the Calculator, and registered programs — found without adding a folder, shown with their own icons. |
+| ⚙️ **Windows tools and settings** | Settings pages, Control Panel tasks, consoles such as `services.msc` or `gpedit.msc` and tools such as Task Manager — named in your Windows language, optionally in English too. Index every single setting or just the pages. |
 | 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. Umlauts are optional: `lohn` finds *Löhne*, and what you spell exactly comes first. |
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
@@ -75,7 +76,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.7.0"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.8.0"
 winlauncher --show
 ```
 

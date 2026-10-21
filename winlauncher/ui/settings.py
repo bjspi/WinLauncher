@@ -43,6 +43,7 @@ from winlauncher.catalog.priority import (
     NamePriority,
     SearchPriority,
 )
+from winlauncher.platform.windows_tools import display_languages
 from winlauncher.settings import (
     AUTO_HIDE_RANGE_SECONDS,
     CONTENT_SEARCH_THREADS_RANGE,
@@ -51,6 +52,7 @@ from winlauncher.settings import (
     RESULT_LIMIT_RANGE,
     Appearance,
     Settings,
+    WindowsSettingsDetail,
     priority_rules,
 )
 from winlauncher.ui.theme import app_icon, colors, theme
@@ -73,6 +75,10 @@ APPEARANCE_CHOICES = (
     ("Match Windows", Appearance.SYSTEM),
     ("Light", Appearance.LIGHT),
     ("Dark", Appearance.DARK),
+)
+WINDOWS_SETTINGS_DETAIL_CHOICES = (
+    ("Every setting", WindowsSettingsDetail.EVERY_SETTING),
+    ("Pages only", WindowsSettingsDetail.PAGES),
 )
 PATTERNS_HEIGHT = 150
 PRIORITIES_HEIGHT = 180
@@ -602,6 +608,25 @@ class SettingsDialog(QDialog):
         self.roots = PathList(settings.roots, "Search folders")
         self.apps = ToggleSwitch("Include Start menu, Store and registered applications")
         self.apps.setChecked(settings.index_apps)
+        self.windows_tools = ToggleSwitch("Include Windows tools and settings")
+        self.windows_tools.setChecked(settings.index_windows_tools)
+        self.windows_settings_detail = QComboBox()
+        self.windows_settings_detail.setAccessibleName("Windows settings detail")
+        for label, detail in WINDOWS_SETTINGS_DETAIL_CHOICES:
+            self.windows_settings_detail.addItem(label, detail.value)
+        self.windows_settings_detail.setCurrentIndex(
+            self.windows_settings_detail.findData(settings.windows_settings_detail)
+        )
+        self.windows_settings_detail.setEnabled(settings.index_windows_tools)
+        self.windows_tools.toggled.connect(self.windows_settings_detail.setEnabled)
+        self.windows_tools_english = ToggleSwitch("Also add their English names")
+        self.windows_tools_english.setChecked(settings.windows_tools_english)
+        # English names would only repeat the names of a Windows shown in English.
+        languages = display_languages()
+        english_windows = not languages or languages[0].startswith("en")
+        self.windows_tools_english.setEnabled(settings.index_windows_tools and not english_windows)
+        if not english_windows:
+            self.windows_tools.toggled.connect(self.windows_tools_english.setEnabled)
         self.scan_interval = _sized(
             NumberField(RESCAN_RANGE_SECONDS, settings.rescan_seconds, "seconds")
         )
@@ -620,6 +645,24 @@ class SettingsDialog(QDialog):
             "Include applications",
             "Start menu shortcuts, Microsoft Store apps and registered programs.",
             self.apps,
+        )
+        folders.add_row(
+            "Include Windows tools and settings",
+            "Control Panel tasks, Settings pages, consoles such as services.msc "
+            "and system tools such as Task Manager, named in your Windows language.",
+            self.windows_tools,
+        )
+        folders.add_row(
+            "Settings detail",
+            "Every setting, such as Change mouse pointer size, or only whole pages "
+            "of Settings and Control Panel.",
+            self.windows_settings_detail,
+        )
+        folders.add_row(
+            "Also in English",
+            "Adds the English names, such as Device Manager or Power Options, "
+            "which guides on the web use. For Windows in another language.",
+            self.windows_tools_english,
         )
         catalog = Card()
         catalog.add_row(
@@ -753,6 +796,9 @@ class SettingsDialog(QDialog):
             extension_priorities=advanced.extensions,
             attribute_priorities=advanced.attributes,
             index_apps=self.apps.isChecked(),
+            index_windows_tools=self.windows_tools.isChecked(),
+            windows_tools_english=self.windows_tools_english.isChecked(),
+            windows_settings_detail=self.windows_settings_detail.currentData(),
             explorer_typing=self.explorer.isChecked(),
             quick_switch=self.quick_switch.isChecked(),
             double_ctrl_ms=self.ctrl_interval.value(),

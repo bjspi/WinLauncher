@@ -123,6 +123,13 @@ class Appearance(StrEnum):
     DARK = "dark"
 
 
+class WindowsSettingsDetail(StrEnum):
+    """Which Windows settings are indexed: whole pages, or also each single setting."""
+
+    PAGES = "pages"
+    EVERY_SETTING = "every-setting"
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     roots: tuple[str, ...] = field(default_factory=default_roots)
@@ -134,6 +141,12 @@ class Settings:
     extension_priorities: tuple[ExtensionPriority, ...] = ()
     attribute_priorities: tuple[AttributePriority, ...] = ()
     index_apps: bool = True
+    # Control Panel tasks, Settings pages, management consoles and system programs.
+    index_windows_tools: bool = True
+    # Their English names too, for Windows in another language.
+    windows_tools_english: bool = False
+    # A `WindowsSettingsDetail`; a string in the JSON file.
+    windows_settings_detail: str = WindowsSettingsDetail.EVERY_SETTING.value
     explorer_typing: bool = True
     # Open and Save dialogs: typing searches their folder, Ctrl+G shows Explorer's folder.
     quick_switch: bool = True
@@ -151,6 +164,10 @@ class Settings:
     def __post_init__(self) -> None:
         if self.appearance not in tuple(Appearance):
             raise ValueError(f"Appearance must be one of {', '.join(Appearance)}.")
+        if self.windows_settings_detail not in tuple(WindowsSettingsDetail):
+            raise ValueError(
+                f"Windows settings detail must be one of {', '.join(WindowsSettingsDetail)}."
+            )
         self._validate_limits()
         self._validate_paths()
         self._validate_markers()
@@ -170,6 +187,9 @@ class Settings:
             self.extension_priorities,
             self.attribute_priorities,
             self.index_apps,
+            self.index_windows_tools,
+            self.windows_tools_english,
+            self.windows_settings_detail,
         )
 
     @property

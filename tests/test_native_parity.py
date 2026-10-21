@@ -563,7 +563,11 @@ class NativeParityTest(unittest.TestCase):
 
     def test_service_both_phases_preserve_hits_explanations_and_regex_fallback(self):
         settings = Settings(
-            roots=(str(self.root),), index_apps=False, marker_files=(), excluded_patterns=()
+            roots=(str(self.root),),
+            index_apps=False,
+            index_windows_tools=False,
+            marker_files=(),
+            excluded_patterns=(),
         )
         service = SearchService(self.store)
         scenarios = (
@@ -607,6 +611,7 @@ class NativeParityTest(unittest.TestCase):
         settings = Settings(
             roots=(str(self.root),),
             index_apps=False,
+            index_windows_tools=False,
             marker_files=(),
             excluded_patterns=(),
             name_priorities=(NamePriority("report", 3),),
@@ -900,7 +905,13 @@ class NativeAdapterFallbackTest(unittest.TestCase):
     def test_forced_native_execution_failure_is_not_hidden(self):
         with tempfile.TemporaryDirectory(prefix="winlauncher-native-forced-") as temporary:
             store = CatalogStore(Path(temporary) / "catalog.sqlite3")
-            settings = Settings(roots=(), index_apps=False, marker_files=(), excluded_patterns=())
+            settings = Settings(
+                roots=(),
+                index_apps=False,
+                index_windows_tools=False,
+                marker_files=(),
+                excluded_patterns=(),
+            )
             with (
                 patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE="native"),
                 patch("winlauncher.search.service.select_native", return_value=object()),
@@ -922,7 +933,11 @@ class NativeAdapterFallbackTest(unittest.TestCase):
                 store.stage(connection, ((item, source),))
                 store.publish(connection, active_roots=(source,), preserved_roots=())
             settings = Settings(
-                roots=(str(root),), index_apps=False, marker_files=(), excluded_patterns=()
+                roots=(str(root),),
+                index_apps=False,
+                index_windows_tools=False,
+                marker_files=(),
+                excluded_patterns=(),
             )
             service = SearchService(store)
             query = parse_query("report")

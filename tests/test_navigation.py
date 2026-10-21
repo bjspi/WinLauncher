@@ -27,7 +27,7 @@ class PathNavigationTest(unittest.TestCase):
         self.toolbox.mkdir()
         (self.home / "My Documents").mkdir()
         (self.home / "notes.txt").write_text("fixture")
-        self.settings = Settings(roots=(), index_apps=False)
+        self.settings = Settings(roots=(), index_apps=False, index_windows_tools=False)
         self.service = SearchService(CatalogStore(self.home / "state" / "catalog.sqlite3"))
         # Only these variables, so suggestions do not depend on the machine's own.
         system = {name: os.environ[name] for name in ("SYSTEMROOT", "WINDIR") if name in os.environ}

@@ -91,7 +91,7 @@ class UiFlowTest(unittest.TestCase):
         self.root.mkdir()
         self.data = self.root.parent / "state"
         SettingsFile(self.data / "settings.json").save(
-            Settings(roots=(str(self.root),), index_apps=False)
+            Settings(roots=(str(self.root),), index_apps=False, index_windows_tools=False)
         )
         with (
             patch("winlauncher.ui.controller.BackgroundTasks", DeferredTasks),

@@ -106,7 +106,9 @@ class NativeContentTest(unittest.TestCase):
         self.root.mkdir()
         self.store = CatalogStore(self.base / "catalog.sqlite3")
         self.service = SearchService(self.store)
-        self.settings = Settings(roots=(str(self.root),), max_results=10, index_apps=False)
+        self.settings = Settings(
+            roots=(str(self.root),), max_results=10, index_apps=False, index_windows_tools=False
+        )
 
     def publish(self, items):
         source = CatalogSource(self.root).id

@@ -58,7 +58,11 @@ class CatalogCase(unittest.TestCase):
         self.store = CatalogStore(self.base / "catalog.sqlite3")
         self.service = SearchService(self.store)
         self.settings = Settings(
-            roots=(str(self.root),), index_apps=False, marker_files=(), excluded_patterns=()
+            roots=(str(self.root),),
+            index_apps=False,
+            index_windows_tools=False,
+            marker_files=(),
+            excluded_patterns=(),
         )
 
     def publish(self, *relative_paths: str) -> None:

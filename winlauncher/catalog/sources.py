@@ -10,10 +10,12 @@ from winlauncher.settings import Settings
 
 
 def catalog_sources(settings: Settings, application_roots: Iterable[Path]) -> list[CatalogSource]:
-    """Configured roots plus Start-menu roots, without sources another one covers."""
+    """Configured roots plus application roots, without sources another one covers.
+
+    The caller passes only the application roots the settings include.
+    """
     candidates = [CatalogSource(Path(root)) for root in settings.roots]
-    if settings.index_apps:
-        candidates.extend(CatalogSource(root, apps_only=True) for root in application_roots)
+    candidates.extend(CatalogSource(root, apps_only=True) for root in application_roots)
     unique = list(dict.fromkeys(candidates))
     return [source for source in unique if not any(other.covers(source) for other in unique)]
 

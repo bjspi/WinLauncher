@@ -33,7 +33,7 @@ class AccentTest(unittest.TestCase):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text("test", encoding="utf-8")
         self.store = CatalogStore(Path(temporary.name) / "catalog.sqlite3")
-        self.settings = Settings(roots=(str(root),), index_apps=False)
+        self.settings = Settings(roots=(str(root),), index_apps=False, index_windows_tools=False)
         CatalogIndexer(self.store).scan(self.settings)
         self.search = SearchService(self.store)
 

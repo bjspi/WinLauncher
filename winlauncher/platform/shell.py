@@ -8,9 +8,14 @@ import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from winlauncher.catalog.model import path_key
 from winlauncher.platform.store_apps import store_app_folder
+from winlauncher.platform.windows_tools import windows_tools_folder
+
+if TYPE_CHECKING:
+    from winlauncher.settings import Settings
 
 APP_PATHS_KEY = r"Software\Microsoft\Windows\CurrentVersion\App Paths"
 START_MENU_SUBFOLDER = "Microsoft/Windows/Start Menu/Programs"
@@ -72,15 +77,28 @@ def known_folder(name: str) -> Path | None:
         return None
 
 
-def application_roots() -> tuple[Path, ...]:
-    """The per-user and all-users Start menu program folders and the Store app shortcuts."""
-    folders = [
-        Path(value) / START_MENU_SUBFOLDER
-        for variable in ("APPDATA", "PROGRAMDATA")
-        if (value := os.environ.get(variable))
-    ]
-    folders.append(store_app_folder())
+def application_roots(*, apps: bool = True, windows_tools: bool = False) -> tuple[Path, ...]:
+    """Existing application folders.
+
+    `apps`: the per-user and all-users Start menu program folders and the Store
+    app shortcuts. `windows_tools`: the Windows tool and setting shortcuts.
+    """
+    folders: list[Path | None] = []
+    if apps:
+        folders.extend(
+            Path(value) / START_MENU_SUBFOLDER
+            for variable in ("APPDATA", "PROGRAMDATA")
+            if (value := os.environ.get(variable))
+        )
+        folders.append(store_app_folder())
+    if windows_tools:
+        folders.append(windows_tools_folder())
     return tuple(folder for folder in folders if folder is not None and folder.is_dir())
+
+
+def indexed_application_roots(settings: Settings) -> tuple[Path, ...]:
+    """The application roots `settings` include in the catalog."""
+    return application_roots(apps=settings.index_apps, windows_tools=settings.index_windows_tools)
 
 
 def registered_applications() -> tuple[Path, ...]:

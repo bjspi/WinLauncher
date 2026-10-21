@@ -20,9 +20,10 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from winlauncher.catalog.indexer import CatalogIndexer
 from winlauncher.catalog.model import ScanReport, is_within
 from winlauncher.catalog.store import CatalogStore
-from winlauncher.platform.shell import application_roots, registered_applications
+from winlauncher.platform.shell import indexed_application_roots, registered_applications
 from winlauncher.platform.store_apps import store_app_folder, sync_store_apps
-from winlauncher.settings import Settings
+from winlauncher.platform.windows_tools import sync_windows_tools, windows_tools_folder
+from winlauncher.settings import Settings, WindowsSettingsDetail
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 
 FILE_REPAIR_BATCH_SIZE = 500
@@ -157,7 +158,14 @@ class IndexScheduler(QObject):
         full = job.kind == IndexJobKind.FULL
         if full and settings.index_apps and (folder := store_app_folder()) is not None:
             sync_store_apps(folder)  # Before the roots are listed: it may create the folder.
-        roots = application_roots() if settings.index_apps else ()
+        if full and settings.index_windows_tools and (folder := windows_tools_folder()):
+            sync_windows_tools(
+                folder,
+                every_setting=settings.windows_settings_detail
+                == WindowsSettingsDetail.EVERY_SETTING,
+                english=settings.windows_tools_english,
+            )
+        roots = indexed_application_roots(settings)
         if job.kind == IndexJobKind.FILES:
             report = self.indexer.refresh_files(
                 settings, job.files, application_roots=roots, cancel=job.cancel

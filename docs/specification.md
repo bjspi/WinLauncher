@@ -18,6 +18,35 @@ full scan WinLauncher keeps one shortcut per Store app in
 folder. Shortcuts show the icon they name or their target's, without the shortcut
 arrow.
 
+With Windows tools and settings enabled (the default), each full scan keeps
+shortcuts in `%LOCALAPPDATA%\WinLauncher\Windows settings`, indexed the same way,
+one subfolder per kind. All names come from Windows in the display language, so
+nothing is translated by WinLauncher:
+
+- `Control Panel`: all Control Panel items and the tasks of "All Tasks" (God Mode,
+  `shell:::{ED7BA470-8E54-465E-825C-99712043E01C}`), as shortcuts to their shell
+  items, with their own icons.
+- `Settings`: the entries of the Settings app's search index
+  (`%WINDIR%\ImmersiveControlPanel\Settings\AllSystemSettings_*.xml`), titled with
+  their resolved description and opening their page with `explorer.exe ms-settings:…`.
+  The page-to-link table is read from `SystemSettings.dll`, where each page id
+  precedes its `ms-settings:` link. Entries whose page has no link, and titles longer
+  than 90 characters, are left out.
+- `Tools`: the management consoles in `System32\*.msc`, titled from the console in
+  the display language (`System32\<language>\*.msc`), and a fixed list of system
+  programs titled with their file description. Both keep their file name in the
+  title, as in *Dienste (services.msc)* or *Task-Manager (taskmgr)*.
+
+*Settings detail* chooses between every setting (the default) and pages only.
+Pages only keeps the Control Panel items without the God Mode tasks, and only the
+search-index entries Windows names after their page (`AAA_<page id>`, variants
+`AAA_<page id>-<n>`), such as *Standard-Apps* or *Soundeinstellungen*.
+
+The option *Also in English* repeats this below `English` with the thread's display
+language set to `en-US`, leaving out names the display language already has. It
+can be enabled only for a Windows shown in another language; turning it off
+removes the `English` folder.
+
 An explicitly selected root may be a symbolic link or directory junction. Links,
 junctions and offline directories encountered below that root are skipped. Metadata
 for ordinary files, including some cloud placeholders, can be

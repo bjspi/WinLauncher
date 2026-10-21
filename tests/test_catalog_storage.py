@@ -65,7 +65,9 @@ class CatalogStorageTest(unittest.TestCase):
         self.base = Path(temporary.name).resolve()
         self.root = self.base / "library"
         self.root.mkdir()
-        self.settings = Settings(roots=(str(self.root),), index_apps=False)
+        self.settings = Settings(
+            roots=(str(self.root),), index_apps=False, index_windows_tools=False
+        )
 
     def test_version_4_catalog_drops_full_text_and_keeps_entries_and_usage(self):
         report = self.root / "Report Straße.txt"

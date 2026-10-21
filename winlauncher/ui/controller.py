@@ -37,7 +37,7 @@ from winlauncher.platform.gesture import (
     ShowRequested,
     ViewKind,
 )
-from winlauncher.platform.shell import application_roots, folder_shortcuts
+from winlauncher.platform.shell import folder_shortcuts, indexed_application_roots
 from winlauncher.platform.startup import PACKAGE_PARENT, StartupShortcut
 from winlauncher.releases import Release, install_command
 from winlauncher.search.native_engine import native_availability, warm_search_index
@@ -213,7 +213,7 @@ class LauncherController(QObject):
         return self.window.isVisible() and self.window.scope is not None
 
     def _configured_roots(self) -> list[Path]:
-        roots = application_roots() if self.settings.index_apps else ()
+        roots = indexed_application_roots(self.settings)
         return [source.root for source in catalog_sources(self.settings, roots)]
 
     # Keyboard -----------------------------------------------------------------
