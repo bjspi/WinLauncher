@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+from ci_timing import PROMPT_LIMIT_S
+
 from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind, normalize
 from pathscout.catalog.priority import PriorityPolicy
 from pathscout.catalog.store import CatalogStore
@@ -39,7 +41,6 @@ LIKE_PATTERN_ALPHABET = "ab%_\\.Aé🙂"
 LIKE_NAME_ALPHABET = "ab%_\\.é🙂"
 CONCURRENT_SEARCHERS = 4
 CONCURRENT_CHANGES = 15
-CANCEL_LIMIT_S = 0.5  # Loose enough for busy CI runners, far below a full scan.
 
 
 @contextmanager
@@ -247,7 +248,7 @@ class FreshnessTest(CatalogCase):
         canceller.join(6)
         self.assertTrue(cancelled_at, "the canceller did not run during the scan")
         self.assertEqual(result, [])
-        self.assertLess(returned_at - cancelled_at[0], CANCEL_LIMIT_S)
+        self.assertLess(returned_at - cancelled_at[0], PROMPT_LIMIT_S)
 
 
 @unittest.skipUnless(NATIVE is not None, "Optional pathscout_native module is not installed")

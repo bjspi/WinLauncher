@@ -540,7 +540,6 @@ class LauncherWindow(QWidget):
         self.menu_button.setAccessibleName("PathScout menu")
         self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_button.setMenu(self._build_menu())
-        row.addWidget(self.menu_button)
         self.settings_button = QToolButton()
         self.settings_button.setObjectName("settingsButton")
         self.settings_button.setIcon(line_icon("gear", Palette.MENU_ICON))
@@ -549,6 +548,7 @@ class LauncherWindow(QWidget):
         self.settings_button.setAccessibleName("Settings")
         self.settings_button.clicked.connect(self.settings_requested)
         row.addWidget(self.settings_button)
+        row.addWidget(self.menu_button)  # The logo stays the bar's right edge.
         return row
 
     def _build_menu(self) -> QMenu:

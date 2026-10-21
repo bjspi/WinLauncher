@@ -17,6 +17,8 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
+from ci_timing import PROMPT_LIMIT_S
+
 from pathscout.catalog.exclusions import ExclusionPolicy
 from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind, normalize
 from pathscout.catalog.priority import (
@@ -786,7 +788,7 @@ class NativeParityTest(unittest.TestCase):
                 self.assertFalse(canceller.is_alive())
                 self.assertTrue(cancelled_at, "Python canceller did not run during native ranking")
                 self.assertEqual(result, [])
-                self.assertLess(returned_at - cancelled_at[0], 0.1)
+                self.assertLess(returned_at - cancelled_at[0], PROMPT_LIMIT_S)
 
     def test_already_cancelled_native_calls_return_empty(self):
         query = parse_query("report")

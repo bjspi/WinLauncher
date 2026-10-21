@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 import unittest
 
+from ci_timing import PROMPT_LIMIT_S
+
 from pathscout.calculator import calculate
 
 
@@ -143,7 +145,7 @@ class CalculatorTest(unittest.TestCase):
             }
         )
         self.assertEqual(result("10^400"), "1e+400")
-        self.assertLess(time.perf_counter() - started, 1)
+        self.assertLess(time.perf_counter() - started, PROMPT_LIMIT_S)
 
 
 if __name__ == "__main__":

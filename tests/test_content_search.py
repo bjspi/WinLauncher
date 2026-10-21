@@ -12,6 +12,8 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from ci_timing import PROMPT_LIMIT_S
+
 from pathscout.catalog.model import CatalogItem, CatalogSource, ItemKind
 from pathscout.catalog.priority import NamePriority, PriorityPolicy
 from pathscout.catalog.store import CatalogStore
@@ -329,5 +331,5 @@ class NativeContentTest(unittest.TestCase):
         self.assertTrue(entered.is_set())
         self.assertTrue(cancelled_at, "Python cancellation did not run during the content scan")
         self.assertGreaterEqual(returned_at, cancelled_at[0])
-        self.assertLess(returned_at - cancelled_at[0], 0.5)
+        self.assertLess(returned_at - cancelled_at[0], PROMPT_LIMIT_S)
         self.assertEqual(result, [])

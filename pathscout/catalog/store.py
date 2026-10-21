@@ -145,7 +145,9 @@ def _legacy_owner_identity(path: str, owner: str) -> str:
 def _release_free_pages(connection: sqlite3.Connection) -> None:
     """Shrink the file after a write that freed many pages, as replacing a source does."""
     if connection.execute("PRAGMA freelist_count").fetchone()[0] > FREE_PAGES_KEPT:
-        connection.execute("PRAGMA incremental_vacuum").fetchall()  # Runs while stepped.
+        # Frees one page per step; Python 3.11's `execute` steps only once, while
+        # `executescript` always runs it to the end.
+        connection.executescript("PRAGMA incremental_vacuum")
 
 
 def _placeholders(values: tuple) -> str:

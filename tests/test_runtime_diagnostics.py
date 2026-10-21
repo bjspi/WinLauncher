@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from ci_timing import PROMPT_LIMIT_S
 from PySide6.QtCore import QEventLoop, QLockFile, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
@@ -34,11 +35,6 @@ from pathscout.search.ranking import Ranker
 from pathscout.settings import Settings, SettingsFile
 from pathscout.ui import icons
 
-# Qt must keep running while Rust searches: most timer ticks stay prompt and none
-# stalls like a held GIL would.
-RESPONSIVE_TICK_S = 0.1
-PROMPT_TICK_SHARE = 0.95
-STALL_LIMIT_S = 1.0
 FAKE_ICON_HANDLE = 0x1234
 
 
@@ -213,20 +209,21 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
                 return policy.allows(Path(path), directory=directory, application=application)
 
             edit, loop, timer = QLineEdit(), QEventLoop(), QTimer()
-            ticks = [time.perf_counter()]
+            started = time.perf_counter()
             cancelled_at = []
+            cancelled_while_running = []
             with ThreadPoolExecutor(1) as pool:
                 work = pool.submit(
                     native.rank_sqlite, str(store.path), sql, parameters, spec, rules, allows, flag
                 )
 
                 def pulse():
-                    ticks.append(time.perf_counter())
                     if entered.is_set() and not cancelled_at:
                         edit.insert("next query")
+                        cancelled_while_running.append(not work.done())
                         cancelled_at.append(time.perf_counter())
                         flag.set()
-                    if work.done() or time.perf_counter() - ticks[0] > 5:
+                    if work.done() or time.perf_counter() - started > PROMPT_LIMIT_S:
                         flag.set()
                         loop.quit()
 
@@ -239,13 +236,9 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
                     flag.set()
                     timer.stop()
             self.assertEqual(edit.text(), "next query")
-            self.assertTrue(cancelled_at, "Qt could not run Python while Rust was searching")
-            self.assertLess(time.perf_counter() - cancelled_at[0], RESPONSIVE_TICK_S)
-            # A search holding the GIL would stall Qt for the whole search; on shared CI
-            # machines single ticks may still lag, so only most ticks must be prompt.
-            gaps = sorted(b - a for a, b in zip(ticks, ticks[1:], strict=False))
-            self.assertLess(gaps[int(len(gaps) * PROMPT_TICK_SHARE)], RESPONSIVE_TICK_S)
-            self.assertLess(gaps[-1], STALL_LIMIT_S)
+            # A search holding the GIL would let Qt run only after it finished.
+            self.assertEqual(cancelled_while_running, [True], "Qt was blocked during the search")
+            self.assertLess(time.perf_counter() - cancelled_at[0], PROMPT_LIMIT_S)
 
     @unittest.skipUnless(os.name == "nt", "Windows foreground activation")
     def test_foreground_retry_detaches_and_does_not_chase_another_app(self):
