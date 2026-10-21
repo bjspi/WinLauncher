@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from winlauncher.catalog import store
 from winlauncher.catalog.indexer import CatalogIndexer
-from winlauncher.catalog.model import path_key
+from winlauncher.catalog.model import fold_case, path_key
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.service import SearchService
@@ -96,7 +96,9 @@ class CatalogStorageTest(unittest.TestCase):
         with catalog.connect() as connection:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
             self.assertFalse({name for name in tables if name.startswith("entry_fts")})
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], store.SCHEMA_VERSION
+            )
             self.assertEqual(
                 connection.execute("PRAGMA auto_vacuum").fetchone()[0],
                 store.INCREMENTAL_AUTO_VACUUM,
@@ -117,6 +119,28 @@ class CatalogStorageTest(unittest.TestCase):
                 connection.execute("SELECT generation FROM catalog_version").fetchone()[0],
                 generation,
             )
+
+    def test_version_5_search_text_loses_its_accents(self):
+        report = self.root / "Löhne.txt"
+        report.write_text("test", encoding="utf-8")
+        catalog = CatalogStore(self.base / "catalog.sqlite3")
+        CatalogIndexer(catalog).scan(self.settings)
+        with catalog.connect() as connection:  # Version 5 stored the text with accents.
+            connection.execute(
+                "UPDATE entries SET name = ?, search_path = ? WHERE path = ?",
+                ("löhne.txt", fold_case(str(report)), str(report)),
+            )
+            connection.execute("PRAGMA user_version=5")
+
+        catalog = CatalogStore(catalog.path)
+
+        with catalog.connect() as connection:
+            name, search_path = connection.execute(
+                "SELECT name, search_path FROM entries WHERE path = ?", (str(report),)
+            ).fetchone()
+        self.assertEqual((name, search_path), ("lohne.txt", store.normalize(str(report))))
+        hit = SearchService(catalog).search(parse_query("lohn"), self.settings)[0]
+        self.assertEqual(hit.item.path, report)
 
     def test_new_catalog_returns_pages_a_large_removal_freed(self):
         catalog = CatalogStore(self.base / "catalog.sqlite3")

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from winlauncher.catalog.model import (
     CatalogItem,
+    ItemKind,
     normalize,
     normalize_extension,
     path_key,
@@ -18,7 +19,7 @@ from winlauncher.catalog.model import (
 )
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 CONNECTION_TIMEOUT_SECONDS = 15
 # Free pages a write leaves behind; beyond this many they go back to the file system.
 FREE_PAGES_KEPT = 1024  # 4 MiB at SQLite's default page size.
@@ -119,6 +120,14 @@ _COMPACT_MIGRATION = (
     *_VERSION_TRACKING,
 )
 
+# Version 6 matches without accents (`normalize`), so `lohn` finds `Löhne`: the
+# stored search text is computed again from each path.
+_SEARCH_TEXT_MIGRATION = """
+    UPDATE entries SET name = search_name(path, kind), search_path = search_text(path),
+        extension = search_extension(path)
+    WHERE name != search_name(path, kind) OR search_path != search_text(path)
+"""
+
 _MERGE_STAGED = """
     INSERT INTO entries SELECT * FROM staged WHERE 1  -- WHERE avoids an upsert parse ambiguity.
     ON CONFLICT(path_key) DO UPDATE SET
@@ -140,6 +149,14 @@ def _legacy_owner_identity(path: str, owner: str) -> str:
         return owner
     depth = len(Path(previous).parts)
     return category + ":" + path_key(Path(*Path(path).parts[:depth]))
+
+
+def _search_name(path: str, kind: str) -> str:
+    return normalize(CatalogItem(Path(path), ItemKind(kind)).name)
+
+
+def _search_extension(path: str) -> str:
+    return normalize_extension(Path(path).suffix)
 
 
 def _release_free_pages(connection: sqlite3.Connection) -> None:
@@ -194,10 +211,16 @@ class CatalogStore:
                 f"BEGIN;\n{script}PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
             )
             return
-        if version not in (1, 2, 3, 4):
+        if not 1 <= version < SCHEMA_VERSION:
             raise ValueError(f"Unsupported catalog schema: {version}; expected {SCHEMA_VERSION}.")
-        connection.create_function("path_identity", 1, path_key, deterministic=True)
-        connection.create_function("owner_identity", 2, _legacy_owner_identity, deterministic=True)
+        for name, arguments, function in (
+            ("path_identity", 1, path_key),
+            ("owner_identity", 2, _legacy_owner_identity),
+            ("search_name", 2, _search_name),
+            ("search_text", 1, normalize),
+            ("search_extension", 1, _search_extension),
+        ):
+            connection.create_function(name, arguments, function, deterministic=True)
         connection.execute("BEGIN IMMEDIATE")
         if version == 1:
             connection.execute(
@@ -206,8 +229,10 @@ class CatalogStore:
         if version in (1, 2):
             for statement in _IDENTITY_MIGRATION:
                 connection.execute(statement)
-        for statement in _COMPACT_MIGRATION:
-            connection.execute(statement)
+        if version <= 4:
+            for statement in _COMPACT_MIGRATION:
+                connection.execute(statement)
+        connection.execute(_SEARCH_TEXT_MIGRATION)
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         connection.commit()
 

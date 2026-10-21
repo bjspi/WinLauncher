@@ -43,7 +43,7 @@ from winlauncher.releases import Release, install_command
 from winlauncher.search.native_engine import native_availability, warm_search_index
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.service import SearchService
-from winlauncher.settings import Settings, SettingsFile
+from winlauncher.settings import Appearance, Settings, SettingsFile
 from winlauncher.ui.about import AboutDialog
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
@@ -52,7 +52,7 @@ from winlauncher.ui.search_session import SearchSession
 from winlauncher.ui.settings import SettingsDialog
 from winlauncher.ui.status import ProblemTopic, StatusBoard
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
-from winlauncher.ui.theme import Palette
+from winlauncher.ui.theme import colors, theme
 from winlauncher.ui.tray import TrayMenu
 from winlauncher.ui.update_dialog import UpdateCommandDialog
 from winlauncher.ui.updater import ReleaseUpdater
@@ -95,6 +95,7 @@ class LauncherController(QObject):
         self.settings = self.settings_file.load()
         if not self.settings_file.path.exists():
             self.settings_file.save(self.settings)
+        theme().use(Appearance(self.settings.appearance))  # Before any window exists.
         self.store = CatalogStore(data_dir / "catalog.sqlite3")
         self.actions = ItemActions(self.store)
         self.startup = StartupShortcut(data_dir)
@@ -416,7 +417,7 @@ class LauncherController(QObject):
 
     def show_index_status(self) -> None:
         report = self.indexing.last_report
-        dialog = InfoDialog("Index status", "", line_icon("activity", Palette.ACCENT), self.window)
+        dialog = InfoDialog("Index status", "", line_icon("activity", colors().accent), self.window)
         if report is None:
             dialog.subtitle.setText("The first scan is still running.")
         else:
@@ -618,6 +619,7 @@ class LauncherController(QObject):
             self.indexing.restart_periodic_timer()
 
     def _apply_window_settings(self, settings: Settings) -> None:
+        theme().use(Appearance(settings.appearance))
         self.window.set_auto_hide(settings.auto_hide, settings.auto_hide_seconds)
 
     def _restart_indexing(self) -> None:

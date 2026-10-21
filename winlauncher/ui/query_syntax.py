@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QInputMethodEvent, QTextCharFormat
 from PySide6.QtWidgets import QLineEdit
 
 from winlauncher.search.query_parser import QuerySpan, SpanRole, query_spans
-from winlauncher.ui.theme import Palette
+from winlauncher.ui.theme import colors, theme
 
 
 def _format(foreground: str, background: str) -> QTextCharFormat:
@@ -19,9 +19,9 @@ def _format(foreground: str, background: str) -> QTextCharFormat:
 
 def _invalid_format() -> QTextCharFormat:
     text_format = QTextCharFormat()
-    text_format.setForeground(QColor(Palette.INVALID))
+    text_format.setForeground(QColor(colors().invalid))
     text_format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
-    text_format.setUnderlineColor(QColor(Palette.INVALID))
+    text_format.setUnderlineColor(QColor(colors().invalid))
     return text_format
 
 
@@ -36,15 +36,23 @@ class QuerySyntax(QObject):
     def __init__(self, field: QLineEdit):
         super().__init__(field)
         self.field = field
-        self.formats = {
-            SpanRole.FILTER: _format(Palette.FILTER, Palette.FILTER_BACKGROUND),
-            SpanRole.CONTENT: _format(Palette.CONTENT, Palette.CONTENT_BACKGROUND),
-            SpanRole.EXCLUSION: _format(Palette.EXCLUSION, Palette.EXCLUSION_BACKGROUND),
-        }
-        self.invalid = _invalid_format()
+        self._use_theme_colors()
+        theme().changed.connect(self._theme_changed)
         field.textChanged.connect(self.refresh)
         # Leaving a filter may reveal that its value is invalid.
         field.cursorPositionChanged.connect(self.refresh)
+
+    def _use_theme_colors(self) -> None:
+        self.formats = {
+            SpanRole.FILTER: _format(colors().filter, colors().filter_background),
+            SpanRole.CONTENT: _format(colors().content, colors().content_background),
+            SpanRole.EXCLUSION: _format(colors().exclusion, colors().exclusion_background),
+        }
+        self.invalid = _invalid_format()
+
+    def _theme_changed(self) -> None:
+        self._use_theme_colors()
+        self.refresh()
 
     def refresh(self) -> None:
         """Re-format the current text; call it after changing text with signals blocked."""

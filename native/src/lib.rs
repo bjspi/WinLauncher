@@ -39,7 +39,7 @@ use priority::{Policy, SearchClass};
 use query::{Candidate, Kind, Query, CANDIDATE_COLUMNS};
 
 /// Bumped whenever the Python-facing contract changes; Python checks it on import.
-const API_VERSION: u32 = 11;
+const API_VERSION: u32 = 13;
 const CANCEL_CHECK_INSTRUCTIONS: i32 = 1000;
 /// Same as Python's `CatalogStore` connections.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(15);

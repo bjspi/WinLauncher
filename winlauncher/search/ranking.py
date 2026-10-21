@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-from winlauncher.catalog.model import CatalogItem, ItemKind, normalize
+from winlauncher.catalog.model import CatalogItem, ItemKind, fold_case, normalize
 from winlauncher.catalog.priority import NO_PRIORITY, PriorityDecision, SearchPriority
 from winlauncher.search.candidates import Candidate
 from winlauncher.search.filters import StructuredFilters
@@ -39,6 +39,11 @@ QUERY_LAUNCH_BONUS_CAP = 35
 RECENCY_BONUS = 12  # Halves after RECENCY_HALF_VALUE_DAYS without use.
 RECENCY_HALF_VALUE_DAYS = 7
 SECONDS_PER_DAY = 86400
+# Per term the path contains only with other accents than typed. Accents a user
+# types are deliberate: without them a match drops by about one kind of match
+# (an exact name below a prefix), while `lohn` keeps Löhne close behind Lohn.
+EXTRA_ACCENTS_PENALTY = 5
+MISSING_ACCENTS_PENALTY = 45
 # Absorbs float rounding, so an upper bound is never a hair below the real score.
 BOUND_TOLERANCE = 1e-6
 _LN2 = math.log(2.0)
@@ -101,6 +106,7 @@ class Ranker:
             self.fuzzy and term not in query.exact_terms for term in query.terms
         )
         self.path_terms = tuple(matches_path(term) for term in query.terms)
+        self.spellings = query.spellings or query.terms
 
     def eligible(self, candidate: Candidate, priority: PriorityDecision) -> bool:
         return priority.search != SearchPriority.IGNORED and self.filters.accepts(candidate)
@@ -157,7 +163,31 @@ class Ranker:
             reasons.append(match.reason)
         if query.folder_parts:
             reasons.append("Ordered folder path")
+        if penalty := self.accent_penalty(candidate):
+            points -= penalty
+            reasons.append("Spelled with other accents")
         return ScorePart(points, tuple(reasons))
+
+    def accent_penalty(self, candidate: Candidate) -> int:
+        """Points for terms the path contains only when accents are ignored.
+
+        An ASCII path is spelled as typed unless the term has accents, so it needs
+        no case-folded copy. Fuzzy matches are left alone: their kind of match
+        already ranks them.
+        """
+        typed_path = None
+        penalty = 0
+        for term, spelling in zip(self.query.terms, self.spellings, strict=True):
+            typed_accents = spelling != term
+            if not typed_accents and candidate.path_text.isascii():
+                continue
+            if term not in candidate.search_path:
+                continue
+            if typed_path is None:
+                typed_path = fold_case(candidate.path_text)
+            if spelling not in typed_path:
+                penalty += MISSING_ACCENTS_PENALTY if typed_accents else EXTRA_ACCENTS_PENALTY
+        return penalty
 
     def matching_path(self, candidate: Candidate) -> str:
         """Explorer searches match the path below the searched folder, so the folder's

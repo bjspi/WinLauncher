@@ -5,6 +5,7 @@ use crate::matching::{
 };
 use crate::priority::{Decision, SearchClass};
 use crate::query::{Candidate, Kind, Query};
+use crate::unicode::fold_case;
 
 const APP_BONUS: f64 = 12.0;
 const FAVORITE_BONUS: f64 = 80.0;
@@ -16,6 +17,9 @@ const QUERY_LAUNCH_BONUS_CAP: f64 = 35.0;
 const RECENCY_BONUS: f64 = 12.0;
 const RECENCY_HALF_VALUE_DAYS: f64 = 7.0;
 const SECONDS_PER_DAY: f64 = 86400.0;
+/// Per term the path contains only with other accents than typed, as in Python.
+const EXTRA_ACCENTS_PENALTY: f64 = 5.0;
+const MISSING_ACCENTS_PENALTY: f64 = 45.0;
 /// Absorbs float rounding, so an upper bound is never a hair below the real score.
 const BOUND_TOLERANCE: f64 = 1e-6;
 
@@ -157,7 +161,38 @@ fn text_relevance(query: &Query, row: &Candidate) -> Option<(f64, Vec<String>)> 
     if !query.folder_parts.is_empty() {
         reasons.push("Ordered folder path".into());
     }
+    let penalty = accent_penalty(query, row);
+    if penalty > 0.0 {
+        score -= penalty;
+        reasons.push("Spelled with other accents".into());
+    }
     Some((score, reasons))
+}
+
+/// Points for terms the path contains only when accents are ignored, as Python's
+/// `Ranker.accent_penalty`; fuzzy matches are left alone.
+fn accent_penalty(query: &Query, row: &Candidate) -> f64 {
+    let mut typed_path: Option<String> = None;
+    let mut penalty = 0.0;
+    for term in &query.terms {
+        let typed_accents = term.spelling.is_some();
+        if !typed_accents && row.path_text.is_ascii() {
+            continue;
+        }
+        if !row.search_path.contains(term.text.as_str()) {
+            continue;
+        }
+        let spelling = term.spelling.as_deref().unwrap_or(&term.text);
+        let path = typed_path.get_or_insert_with(|| fold_case(&row.path_text));
+        if !path.contains(spelling) {
+            penalty += if typed_accents {
+                MISSING_ACCENTS_PENALTY
+            } else {
+                EXTRA_ACCENTS_PENALTY
+            };
+        }
+    }
+    penalty
 }
 
 #[cfg(test)]

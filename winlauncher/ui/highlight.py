@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from winlauncher.catalog.model import normalize
+
 
 def matched_positions(name: str, terms: tuple[str, ...]) -> set[int]:
     """Character positions of `name` covered by the search terms.
 
     A term marks its first contiguous occurrence, or else its letters in order
-    (as fuzzy matching would). Highlighting is presentation only: names whose
-    case folding changes their length are shown without highlight.
+    (as fuzzy matching would); `ö` counts as the `o` a term has. Highlighting is
+    presentation only: a name with a character whose search text is not exactly
+    one character, such as `ß`, is shown without highlight.
     """
-    folded = name.casefold()
-    if len(folded) != len(name):
+    characters = [normalize(char) for char in name]
+    if any(len(char) != 1 for char in characters):
         return set()
+    folded = "".join(characters)
     positions: set[int] = set()
     for term in terms:
         positions |= _contiguous(folded, term) or _in_order(folded, term)

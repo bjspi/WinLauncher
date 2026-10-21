@@ -29,8 +29,9 @@ from winlauncher.install import (
     take_pending_reinstall,
 )
 from winlauncher.platform.git import checkout_root
+from winlauncher.settings import Appearance
 from winlauncher.ui.controller import LauncherController
-from winlauncher.ui.theme import STYLESHEET, app_icon
+from winlauncher.ui.theme import app_icon, theme
 
 SHOW_REQUEST = b"show"
 PING_REQUEST = b"ping"  # A second background start only confirms the owner.
@@ -82,7 +83,7 @@ def _create_application() -> QApplication:
     app.setApplicationVersion(__version__)
     app.setQuitOnLastWindowClosed(False)  # The tray keeps WinLauncher running.
     app.setStyle("Fusion")
-    app.setStyleSheet(STYLESHEET)
+    theme().use(Appearance.SYSTEM)  # Until the controller applies the user's choice.
     app.setWindowIcon(app_icon())
     _use_windows_tls()
     return app

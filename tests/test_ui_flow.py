@@ -39,7 +39,7 @@ from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFE
 from winlauncher.ui.indexing import IndexJobKind
 from winlauncher.ui.settings import NUMBER_FIELD_WIDTH, SettingsDialog
 from winlauncher.ui.tasks import TaskCategory
-from winlauncher.ui.theme import Palette
+from winlauncher.ui.theme import colors
 from winlauncher.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MARGIN
 from winlauncher.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
 
@@ -555,6 +555,7 @@ class UiFlowTest(unittest.TestCase):
 
         self.assertEqual(matched_positions("tomato_salad", ("tom",)), {0, 1, 2})
         self.assertEqual(matched_positions("tabulator_map", ("tom",)), {0, 7, 10})
+        self.assertEqual(matched_positions("Löhne.pdf", ("lohn",)), {0, 1, 2, 3})
         self.assertEqual(matched_positions("Straße", ("xyz",)), set())
 
     def test_unknown_advanced_rule_key_is_rejected(self):
@@ -1114,7 +1115,7 @@ class UiFlowTest(unittest.TestCase):
     def test_query_filters_are_colored_without_changing_the_text(self):
         def shows_filter_color() -> bool:
             image = self.window.query.grab().toImage()
-            filter_background = QColor(Palette.FILTER_BACKGROUND).rgb()
+            filter_background = QColor(colors().filter_background).rgb()
             return any(
                 image.pixel(x, y) == filter_background
                 for x in range(image.width())
@@ -1139,7 +1140,7 @@ class UiFlowTest(unittest.TestCase):
     def test_invalid_filter_is_marked_only_after_the_cursor_leaves_it(self):
         def shows_invalid_color() -> bool:
             image = self.window.query.grab().toImage()
-            invalid = QColor(Palette.INVALID).rgb()
+            invalid = QColor(colors().invalid).rgb()
             return any(
                 image.pixel(x, y) == invalid
                 for x in range(image.width())

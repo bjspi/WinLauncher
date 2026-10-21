@@ -87,9 +87,14 @@ fn active() -> &'static Tables {
         .expect("Unicode tables are selected before any search")
 }
 
-/// Search normalization: NFC first, then full case folding (as `normalize` in Python).
+/// Search normalization: `fold_case` without accents (as `normalize` in Python).
 pub fn normalize(value: &str) -> String {
     active().normalize(value)
+}
+
+/// NFC first, then full case folding (as `fold_case` in Python); accents stay.
+pub fn fold_case(value: &str) -> String {
+    active().fold_case(value)
 }
 
 /// Sort ties use Python's `casefold` directly, without NFC normalization.
@@ -111,10 +116,28 @@ pub fn islower(character: char) -> bool {
 
 impl Tables {
     pub fn normalize(&self, value: &str) -> String {
+        let folded = self.fold_case(value);
+        if folded.is_ascii() {
+            return folded;
+        }
+        self.without_accents(&folded)
+    }
+
+    pub fn fold_case(&self, value: &str) -> String {
         if value.is_ascii() {
             return value.to_ascii_lowercase();
         }
         self.casefold(&self.nfc(value))
+    }
+
+    /// The canonical decomposition without its combining marks, composed again.
+    fn without_accents(&self, value: &str) -> String {
+        let mut characters = Vec::with_capacity(value.len());
+        for character in value.chars() {
+            self.decompose(character, &mut characters);
+        }
+        characters.retain(|&character| self.combining_class(character) == 0);
+        self.compose(&characters).into_iter().collect()
     }
 
     pub fn casefold(&self, value: &str) -> String {
@@ -363,10 +386,15 @@ mod tests {
     fn normalization_examples() {
         let tables = &v15_0::TABLES;
         assert_eq!(tables.normalize("Straße ẞ"), "strasse ss");
-        assert_eq!(tables.normalize("Cafe\u{301}"), "café");
-        assert_eq!(tables.normalize("ǅΣςİﬃ"), "ǆσσi\u{307}ffi");
+        assert_eq!(tables.normalize("Cafe\u{301}"), "cafe");
+        assert_eq!(tables.normalize("LÖHNE"), "lohne");
+        assert_eq!(tables.normalize("ǅΣςİﬃ"), "ǆσσiffi");
         assert_eq!(tables.normalize("\u{1100}\u{1161}"), "가");
-        assert_eq!(tables.normalize("\u{1e9b}\u{323}"), "\u{1e61}\u{323}");
+        assert_eq!(tables.normalize("\u{1e9b}\u{323}"), "s");
+        assert_eq!(tables.normalize("ø"), "ø"); // A letter of its own, not an accent.
+        assert_eq!(tables.fold_case("Cafe\u{301}"), "café");
+        assert_eq!(tables.fold_case("ǅΣςİﬃ"), "ǆσσi\u{307}ffi");
+        assert_eq!(tables.fold_case("\u{1e9b}\u{323}"), "\u{1e61}\u{323}");
         assert_eq!(tables.casefold("Cafe\u{301}"), "cafe\u{301}");
     }
 

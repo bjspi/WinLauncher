@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass, field, fields
+from enum import StrEnum
 from pathlib import Path
 
 from winlauncher.catalog.exclusions import DEFAULT_MARKER_FILES, ExclusionPolicy
@@ -114,6 +115,14 @@ def _require_range(value: int, bounds: tuple[int, int], message: str) -> None:
         raise ValueError(message.format(low=low, high=high))
 
 
+class Appearance(StrEnum):
+    """Light or dark colors; `system` follows the Windows setting."""
+
+    SYSTEM = "system"
+    LIGHT = "light"
+    DARK = "dark"
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     roots: tuple[str, ...] = field(default_factory=default_roots)
@@ -137,8 +146,11 @@ class Settings:
     max_results: int = 60
     content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS
     websites: tuple[WebsiteShortcut, ...] = DEFAULT_WEBSITES
+    appearance: str = Appearance.SYSTEM.value  # An `Appearance`; a string in the JSON file.
 
     def __post_init__(self) -> None:
+        if self.appearance not in tuple(Appearance):
+            raise ValueError(f"Appearance must be one of {', '.join(Appearance)}.")
         self._validate_limits()
         self._validate_paths()
         self._validate_markers()

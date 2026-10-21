@@ -1,6 +1,8 @@
 """Render the README screenshots from the real widgets with fictional catalog items.
 
-python tools/readme_screenshots.py [output folder, default docs/images]
+python tools/readme_screenshots.py [output folder, default docs/images] [light|dark]
+
+The README shows the light theme, whatever Windows uses.
 """
 
 import sys
@@ -14,16 +16,19 @@ from winlauncher.__main__ import _create_application
 from winlauncher.catalog.model import CatalogItem, ItemKind
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
-from winlauncher.settings import Settings
+from winlauncher.settings import Appearance, Settings
 from winlauncher.ui.about import AboutDialog
 from winlauncher.ui.settings import SettingsDialog
+from winlauncher.ui.theme import theme
 from winlauncher.ui.tray import TrayMenu
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.window import LauncherWindow
 
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parents[1] / "docs/images"
 OUT.mkdir(parents=True, exist_ok=True)
+APPEARANCE = Appearance(sys.argv[2]) if len(sys.argv) > 2 else Appearance.LIGHT
 app = _create_application()
+theme().use(APPEARANCE)
 NOW = time.time()
 
 
@@ -44,26 +49,40 @@ def settle(widget, rounds=30):
         time.sleep(0.02)
 
 
+ROAD_RESULTS = [
+    (r"D:\Work\Projects\Roadmap 2026", ItemKind.FOLDER, 2, True),
+    (r"D:\Work\Projects\Roadmap 2026\Roadmap draft.docx", ItemKind.FILE, 1, False),
+    (r"D:\Work\Reports\Roadshow deck.pdf", ItemKind.FILE, 5, False),
+    (r"D:\Work\Reports\road-trip-budget.xlsx", ItemKind.FILE, 9, False),
+    (r"D:\Work\Notes\Road safety checklist.md", ItemKind.FILE, 20, False),
+]
+SETTINGS = Settings(roots=(r"D:\Work", r"D:\Projects", r"C:\Users\you\Desktop"))
+SETTINGS_HEIGHT = 700  # Shows the General page without scrolling.
+
+
+def save_launcher(name: str) -> None:
+    window = LauncherWindow(website_icons)
+    window.set_catalog_count(48213)
+    window.present(text="road")
+    window.set_results(hits(ROAD_RESULTS), 4, query=parse_query("road"))
+    settle(window)
+    window.grab().save(str(OUT / name))
+    window.hide()
+
+
+def settings_dialog() -> SettingsDialog:
+    dialog = SettingsDialog(
+        SETTINGS,
+        startup_enabled=True,
+        set_startup=lambda _enabled: None,
+        website_icons=website_icons,
+    )
+    dialog.show()
+    return dialog
+
+
 website_icons = WebsiteIcons()
-window = LauncherWindow(website_icons)
-window.set_catalog_count(48213)
-window.present(text="road")
-window.set_results(
-    hits(
-        [
-            (r"D:\Work\Projects\Roadmap 2026", ItemKind.FOLDER, 2, True),
-            (r"D:\Work\Projects\Roadmap 2026\Roadmap draft.docx", ItemKind.FILE, 1, False),
-            (r"D:\Work\Reports\Roadshow deck.pdf", ItemKind.FILE, 5, False),
-            (r"D:\Work\Reports\road-trip-budget.xlsx", ItemKind.FILE, 9, False),
-            (r"D:\Work\Notes\Road safety checklist.md", ItemKind.FILE, 20, False),
-        ]
-    ),
-    4,
-    query=parse_query("road"),
-)
-settle(window)
-window.grab().save(str(OUT / "launcher.png"))
-window.hide()
+save_launcher("launcher.png")
 
 explorer = LauncherWindow(website_icons)
 explorer.set_catalog_count(48213)
@@ -102,16 +121,10 @@ settle(launcher)
 launcher.grab().save(str(OUT / "query-syntax.png"))
 launcher.hide()
 
-dialog = SettingsDialog(
-    Settings(roots=(r"D:\Work", r"D:\Projects", r"C:\Users\you\Desktop")),
-    startup_enabled=True,
-    set_startup=lambda _enabled: None,
-    website_icons=website_icons,
-)
-dialog.show()
+dialog = settings_dialog()
 # The shortcuts page scrolls; its screenshot gets the height to show every key.
 for row, name, height in (
-    (0, "settings", 660),
+    (0, "settings", SETTINGS_HEIGHT),
     (1, "settings-folders", 660),
     (7, "settings-shortcuts", 1010),
 ):
@@ -136,4 +149,13 @@ about.show()
 settle(about)
 about.grab().save(str(OUT / "about.png"))
 about.hide()
+
+if APPEARANCE == Appearance.LIGHT:  # The gallery also shows the dark theme.
+    theme().use(Appearance.DARK)
+    save_launcher("launcher-dark.png")
+    dialog = settings_dialog()
+    dialog.resize(dialog.width(), SETTINGS_HEIGHT)
+    settle(dialog)
+    dialog.grab().save(str(OUT / "settings-dark.png"))
+    dialog.hide()
 print(f"Saved screenshots to {OUT}")

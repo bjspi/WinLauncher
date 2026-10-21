@@ -31,7 +31,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📂 **Type-to-search in Explorer** | Start typing in an Explorer file list and a slim bar docks to that window, searching the folder you are in — its own entries first. |
 | 🔀 **Quick Switch in Open/Save dialogs** | Type in a dialog's file list to search everywhere: a folder opens in the dialog, a file fills in its name. <kbd>Ctrl</kbd>+<kbd>G</kbd> jumps the dialog to the folder of your last Explorer window. |
 | 🧩 **Every installed app** | Start menu programs, Microsoft Store apps such as Telegram Desktop or the Calculator, and registered programs — found without adding a folder, shown with their own icons. |
-| 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. |
+| 🧠 **Smart matching** | Exact, prefix, word starts, camelCase initials (`vsc` → *Visual Studio Code*) and fuzzy subsequences, with matched letters highlighted. Umlauts are optional: `lohn` finds *Löhne*, and what you spell exactly comes first. |
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
 | 🌐 **Website keywords** | Define a title, keyword and URL in Settings → Websites. `az headphones` searches Amazon; `yt Python tutorial` searches YouTube. |
@@ -39,6 +39,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
 | ⌨️ **Keyboard first** | <kbd>Enter</kbd> opens, <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> opens a numbered result, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> shows it in its folder. |
+| 🌗 **Light or dark** | Follows the Windows color scheme, or stays light or dark as you choose in **Settings → General**. |
 | 🔒 **Private** | No telemetry. File searches stay local; website searches open in your browser. Settings and the catalog stay in `%USERPROFILE%\.WinLauncher`. |
 | ⬆️ **Release updates** | WinLauncher notices new releases. A git checkout updates itself with one click; pipx installs get the exact command to run. |
 
@@ -74,7 +75,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.6.0"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.7.0"
 winlauncher --show
 ```
 
@@ -190,6 +191,7 @@ Use `t:` as shorthand for `type:`, for example `t:dir`, `t:file` or `t:app`.
 
 ```text
 report                                  name or path contains "report"
+lohn                                    also finds Löhne; löhn lists Löhne first
 vsc type:app                            initials of an application
 *.json                                  shell-style filename wildcard
 report[0-9].json                        one digit in the filename
@@ -398,6 +400,7 @@ the top group; the number fine-tunes the order.
 | <img src="docs/images/query-syntax.png" width="420" alt="Filters colored while typing"><br>Filters and exclusions are colored as you type | <img src="docs/images/tray-menu.png" width="200" alt="Tray menu"><br>The tray menu |
 | <img src="docs/images/settings.png" width="420" alt="General settings"><br>Settings: startup and the search bar | <img src="docs/images/settings-folders.png" width="420" alt="Search folder settings"><br>Search folders, drag and drop included |
 | <img src="docs/images/settings-shortcuts.png" width="420" alt="Keyboard shortcuts"><br>Every shortcut on one page | <img src="docs/images/about.png" width="420" alt="About WinLauncher"><br>About, with the data folder one click away |
+| <img src="docs/images/launcher-dark.png" width="420" alt="The search bar in the dark theme"><br>The dark theme, chosen or following Windows | <img src="docs/images/settings-dark.png" width="420" alt="Settings in the dark theme"><br>Settings in the dark theme |
 
 </div>
 

@@ -40,7 +40,7 @@ from winlauncher.search.query import SearchQuery
 from winlauncher.search.ranking import PriorityBand, Ranker, Ranking
 from winlauncher.settings import DEFAULT_CONTENT_SEARCH_THREADS
 
-API_VERSION = 11
+API_VERSION = 13
 ENGINE_VARIABLE = "WINLAUNCHER_SEARCH_ENGINE"
 PHASE_VARIABLE = "WINLAUNCHER_NATIVE_PHASE"
 _ENGINES = ("auto", "python", "native")
@@ -135,6 +135,7 @@ def query_spec(
         "exact_terms": list(query.exact_terms),
         "folder_parts": list(query.folder_parts),
         "excluded_terms": list(query.excluded_terms),
+        "spellings": list(query.spellings or query.terms),
         "kind": str(query.kind) if query.kind is not None else None,
         "extensions": list(query.extensions),
         "excluded_extensions": list(query.excluded_extensions),

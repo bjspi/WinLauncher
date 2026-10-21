@@ -433,15 +433,20 @@ class BusinessRulesTest(unittest.TestCase):
         paths = {name: self.file(name) for name in names}
         self.scan()
         for text, expected in (
-            ("ext:doc,docx", {"report.doc", "report.docx"}),
-            ("ext:(doc,docx)", {"report.doc", "report.docx"}),
-            ("ext:doc*", {"report.doc", "report.docx", "report.docm", "report.docxx"}),
+            # Extensions match with and without accents.
+            ("ext:doc,docx", {"report.doc", "report.docx", "sample.döc"}),
+            ("ext:(doc,docx)", {"report.doc", "report.docx", "sample.döc"}),
+            ("ext:döc", {"report.doc", "sample.döc"}),
+            (
+                "ext:doc*",
+                {"report.doc", "report.docx", "report.docm", "report.docxx", "sample.döc"},
+            ),
             ("ext:doc?", {"report.docx", "report.docm"}),
             ("ext:doc[!x]", {"report.docm"}),
             ("ext:d?c", {"report.doc", "sample.döc"}),
             ("ext:(jpg, png)", {"image.JPG", "image.png"}),
             ("ext:(doc?,p*)", {"report.docx", "report.docm", "image.png"}),
-            ("ext:doc ext:txt", {"report.doc", "report.txt"}),
+            ("ext:doc ext:txt", {"report.doc", "report.txt", "sample.döc"}),
             ("ext:100%_*", {"literal.100%_ext"}),
         ):
             with self.subTest(text=text):

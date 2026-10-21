@@ -72,7 +72,7 @@ from winlauncher.ui.icons import ResultIcons
 from winlauncher.ui.menus import Menu
 from winlauncher.ui.query_syntax import QuerySyntax
 from winlauncher.ui.result_rows import LauncherHit, ResultRow, result_row
-from winlauncher.ui.theme import Palette, app_icon
+from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.widgets import line_icon
 from winlauncher.websites import WebsiteTarget
@@ -208,7 +208,7 @@ class ResultDelegate(QStyledItemDelegate):
         if result.starts_subfolders:
             # The gap stays unhighlighted, so selection never hides the line.
             line = row.top() + SEPARATOR_GAP // 2
-            painter.setPen(QColor(Palette.DIVIDER))
+            painter.setPen(QColor(colors().results_divider))
             painter.drawLine(
                 row.left() + SEPARATOR_INSET, line, row.right() - SEPARATOR_INSET, line
             )
@@ -251,7 +251,7 @@ class ResultDelegate(QStyledItemDelegate):
         if color is not None:
             painter.fillRect(row, QColor(color))
         if state & QStyle.StateFlag.State_HasFocus:
-            painter.fillRect(QRect(row.left(), row.top(), 3, row.height()), QColor(Palette.ACCENT))
+            painter.fillRect(QRect(row.left(), row.top(), 3, row.height()), QColor(colors().accent))
 
     def _paint_name(self, painter: QPainter, area: QRect, name: str, *, baseline: int) -> int:
         """Draw the name with matched characters highlighted; return where it ends."""
@@ -262,7 +262,7 @@ class ResultDelegate(QStyledItemDelegate):
         highlighted = matched_positions(name, self.terms) if visible == name else set()
         x = area.left()
         for start, end, matched in _runs(visible, highlighted):
-            painter.setPen(QColor(Palette.ACCENT if matched else Palette.TEXT))
+            painter.setPen(QColor(colors().accent if matched else colors().text))
             segment = visible[start:end]
             painter.drawText(x, baseline, segment)
             x += metrics.horizontalAdvance(segment)
@@ -274,7 +274,7 @@ class ResultDelegate(QStyledItemDelegate):
             return
         font = QFont("Segoe UI", 8)
         painter.setFont(font)
-        painter.setPen(QColor(Palette.MUTED))
+        painter.setPen(QColor(colors().faint))
         text = QFontMetrics(font).elidedText(folder, Qt.TextElideMode.ElideMiddle, area.width())
         painter.drawText(area.left(), baseline, text)
 
@@ -286,7 +286,7 @@ class ResultDelegate(QStyledItemDelegate):
             return 0
         font = QFont("Segoe UI", 10 if self.rows.two_lines else 8)
         painter.setFont(font)
-        painter.setPen(QColor(Palette.SHORTCUT))
+        painter.setPen(QColor(colors().hint))
         width = QFontMetrics(font).horizontalAdvance(label) + 24
         area = QRect(row.right() - width - 4, row.top(), width, row.height())
         painter.drawText(area, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, label)
@@ -295,9 +295,9 @@ class ResultDelegate(QStyledItemDelegate):
 
 def _row_color(state: QStyle.StateFlag) -> str | None:
     if state & QStyle.StateFlag.State_Selected:
-        return Palette.SELECTED
+        return colors().selected
     if state & QStyle.StateFlag.State_MouseOver:
-        return Palette.HOVER
+        return colors().hover
     return None
 
 
@@ -542,14 +542,23 @@ class LauncherWindow(QWidget):
         self.menu_button.setMenu(self._build_menu())
         self.settings_button = QToolButton()
         self.settings_button.setObjectName("settingsButton")
-        self.settings_button.setIcon(line_icon("gear", Palette.MENU_ICON))
         self.settings_button.setIconSize(QSize(SETTINGS_ICON_SIZE, SETTINGS_ICON_SIZE))
         self.settings_button.setToolTip("Settings (Ctrl+,)")
         self.settings_button.setAccessibleName("Settings")
         self.settings_button.clicked.connect(self.settings_requested)
+        self._use_theme_icons()
+        theme().changed.connect(self._theme_changed)
         row.addWidget(self.settings_button)
         row.addWidget(self.menu_button)  # The logo stays the bar's right edge.
         return row
+
+    def _use_theme_icons(self) -> None:
+        self.settings_button.setIcon(line_icon("gear", colors().muted))
+
+    def _theme_changed(self) -> None:
+        """Results paint with the active colors; icons keep the colors they were made with."""
+        self._use_theme_icons()
+        self.results.viewport().update()
 
     def _build_menu(self) -> QMenu:
         menu = Menu(self)

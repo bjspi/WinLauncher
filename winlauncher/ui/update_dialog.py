@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QLineEdit
 
 from winlauncher import __version__
 from winlauncher.releases import Release
-from winlauncher.ui.theme import Palette
+from winlauncher.ui.theme import colors
 from winlauncher.ui.widgets import InfoDialog, line_icon
 
 UPDATE_DIALOG_WIDTH = 620  # Most of the install command stays visible.
@@ -22,7 +22,7 @@ class UpdateCommandDialog(InfoDialog):
             f"WinLauncher {release.tag} is available",
             f"You are running {__version__}. Quit WinLauncher, run this command in a terminal, "
             "then start it again.",
-            line_icon("download", Palette.ACCENT),
+            line_icon("download", colors().accent),
             parent,
             width=UPDATE_DIALOG_WIDTH,
         )

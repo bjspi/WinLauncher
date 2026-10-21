@@ -22,10 +22,10 @@ from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 from winlauncher.catalog.model import ItemKind
-from winlauncher.settings import DEFAULT_DOUBLE_CTRL_MS, Settings, SettingsFile
+from winlauncher.settings import DEFAULT_DOUBLE_CTRL_MS, Appearance, Settings, SettingsFile
 from winlauncher.ui.controller import LauncherController
 from winlauncher.ui.settings import SettingsDialog
-from winlauncher.ui.theme import STYLESHEET, app_icon
+from winlauncher.ui.theme import app_icon, theme
 
 TIMEOUT_SECONDS = 15
 FIXTURE_FILES = (
@@ -63,7 +63,7 @@ def create_application() -> QApplication:
         if (fonts / filename).is_file():
             QFontDatabase.addApplicationFont(str(fonts / filename))
     app.setStyle("Fusion")
-    app.setStyleSheet(STYLESHEET)
+    theme().use(Appearance.LIGHT)
     app.setWindowIcon(app_icon())
     app.setQuitOnLastWindowClosed(False)
     return app

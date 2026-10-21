@@ -22,7 +22,7 @@ from math import ceil, floor
 from pathlib import Path
 from typing import TypeVar
 
-from winlauncher.catalog.model import ItemKind, normalize, normalize_extension
+from winlauncher.catalog.model import ItemKind, fold_case, normalize, normalize_extension
 from winlauncher.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
 
 MAX_QUERY_LENGTH = 512
@@ -286,6 +286,14 @@ class _QueryDraft:
     min_size: int | None = None
     max_size: int | None = None
     content_text: str | None = None
+    spellings: list[str] = field(default_factory=list)
+
+    def add_term(self, value: str) -> str:
+        """Search text for `value`; its spelling ranks results written the same way higher."""
+        term = normalize(value)
+        self.terms.append(term)
+        self.spellings.append(fold_case(value))
+        return term
 
     def add(self, token: str, *, quoted: bool = False) -> None:
         """`quoted` makes an ordinary term exact; filters and exclusions ignore it."""
@@ -298,8 +306,7 @@ class _QueryDraft:
         elif _is_folder_shorthand(token):
             self.add_folder(token)
         else:
-            term = normalize(token)
-            self.terms.append(term)
+            term = self.add_term(token)
             if quoted:
                 self.exact_terms.append(term)
 
@@ -337,7 +344,7 @@ class _QueryDraft:
         elif name == "name":
             self.basename_only = True
             if value:
-                self.terms.append(normalize(value))
+                self.add_term(value)
         elif name == "match":
             self.match_mode = _parse_choice(MatchMode, name, value)
         elif name == "sort":
@@ -389,6 +396,7 @@ class _QueryDraft:
             max_size=self.max_size,
             content_text=self.content_text,
             score_mode=self.score_mode,
+            spellings=tuple(self.spellings),
         )
 
     def _validate(self) -> None:

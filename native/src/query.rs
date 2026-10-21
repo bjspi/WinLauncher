@@ -103,9 +103,14 @@ impl Query {
         let kind: Option<String> = required(dict, "kind")?;
         let sort: String = required(dict, "sort")?;
         let exact_terms: Vec<String> = required(dict, "exact_terms")?;
+        let spellings: Vec<String> = required(dict, "spellings")?;
         let mut terms = compile_terms(required(dict, "terms")?)?;
-        for term in &mut terms {
+        if spellings.len() != terms.len() {
+            return Err(invalid("spellings must match terms"));
+        }
+        for (term, spelling) in terms.iter_mut().zip(spellings) {
             term.exact = exact_terms.contains(&term.text);
+            term.spelling = (spelling != term.text).then_some(spelling);
         }
         let query = Self {
             terms,

@@ -1,7 +1,7 @@
 """Catalog value objects and the two kinds of path normalization.
 
 `path_key` is filesystem identity (Windows ordinal case-insensitivity). `normalize`
-is search matching (Unicode NFC plus case folding). They must never be mixed.
+is search matching (Unicode NFC, case folding and no accents). They must never be mixed.
 """
 
 from __future__ import annotations
@@ -17,8 +17,23 @@ APPLICATION_SOURCE_PREFIX = "apps:"  # Start-menu sources; see `CatalogSource.id
 """Source id of applications discovered through the App Paths registry keys."""
 
 
-def normalize(value: str) -> str:
+def fold_case(value: str) -> str:
+    """Unicode NFC plus full case folding: `Löhne` becomes `löhne`."""
     return unicodedata.normalize("NFC", value).casefold()
+
+
+def normalize(value: str) -> str:
+    """Search text: `fold_case` without accents, so `Löhne` and `lohne` both become `lohne`.
+
+    Accents are the combining marks of the canonical decomposition; letters that
+    only look alike, such as `ø` or `ł`, stay. Results spelled as typed rank a
+    little higher (`SearchQuery.spellings`).
+    """
+    folded = fold_case(value)
+    if folded.isascii():
+        return folded
+    letters = (c for c in unicodedata.normalize("NFD", folded) if not unicodedata.combining(c))
+    return unicodedata.normalize("NFC", "".join(letters))
 
 
 def normalize_extension(extension: str) -> str:

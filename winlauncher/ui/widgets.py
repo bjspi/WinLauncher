@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from winlauncher.ui.theme import Palette
+from winlauncher.ui.theme import colors
 
 ICONS = Path(__file__).with_name("assets") / "icons"
 ICON_TINT_PLACEHOLDER = "#000000"  # The stroke color the SVG files are drawn with.
@@ -53,11 +53,20 @@ SUBTITLE_MIN_WIDTH = 320
 ROW_SPACING = 16  # Between a row's text and its control.
 
 
+def line_icon(name: str, color: str | None = None, selected_color: str | None = None) -> QIcon:
+    """A tinted line icon from `assets/icons`; `selected_color` tints the selected state.
+
+    Without a color it takes the active theme's faint text color, as it is now:
+    callers that keep the icon set it again when the theme changes.
+    """
+    color = color or colors().faint
+    return _tinted_icon(name, color, selected_color or color)
+
+
 @cache
-def line_icon(name: str, color: str = Palette.MUTED, selected_color: str | None = None) -> QIcon:
-    """A tinted line icon from `assets/icons`; `selected_color` tints the selected state."""
+def _tinted_icon(name: str, color: str, selected_color: str) -> QIcon:
     icon = QIcon()
-    for mode, tint in ((QIcon.Mode.Normal, color), (QIcon.Mode.Selected, selected_color or color)):
+    for mode, tint in ((QIcon.Mode.Normal, color), (QIcon.Mode.Selected, selected_color)):
         svg = (
             (ICONS / f"{name}.svg").read_text(encoding="utf-8").replace(ICON_TINT_PLACEHOLDER, tint)
         )
@@ -126,7 +135,7 @@ class ToggleSwitch(QCheckBox):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         track = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         radius = track.height() / 2
-        off, on = QColor(Palette.SWITCH_OFF), QColor(Palette.ACCENT)
+        off, on = QColor(colors().switch_off), QColor(colors().accent)
         mixed = QColor(
             *(
                 round(a + (b - a) * self._position)
@@ -139,7 +148,7 @@ class ToggleSwitch(QCheckBox):
         painter.setBrush(mixed)
         painter.drawRoundedRect(track, radius, radius)
         if self.hasFocus():
-            painter.setPen(QColor(Palette.FOCUS_RING))
+            painter.setPen(QColor(colors().accent_strong))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(track, radius, radius)
         knob = track.height() - 2 * SWITCH_KNOB_MARGIN
@@ -149,7 +158,7 @@ class ToggleSwitch(QCheckBox):
             track.center().y(),
         )
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#ffffff"))
+        painter.setBrush(QColor(colors().on_accent))
         painter.drawEllipse(center, knob / 2, knob / 2)
 
 

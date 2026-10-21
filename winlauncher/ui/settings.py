@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -48,10 +49,11 @@ from winlauncher.settings import (
     DOUBLE_CTRL_RANGE_MS,
     RESCAN_RANGE_SECONDS,
     RESULT_LIMIT_RANGE,
+    Appearance,
     Settings,
     priority_rules,
 )
-from winlauncher.ui.theme import Palette, app_icon
+from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
 from winlauncher.ui.widgets import Card, PageHeader, ToggleSwitch, line_icon, section_title
@@ -67,6 +69,11 @@ PAGE_MARGINS = (32, 26, 32, 24)  # Left, top, right, bottom around a page's card
 PAGE_SPACING = 10
 NUMBER_FIELD_WIDTH = 88
 PATH_LIST_HEIGHT = 132
+APPEARANCE_CHOICES = (
+    ("Match Windows", Appearance.SYSTEM),
+    ("Light", Appearance.LIGHT),
+    ("Dark", Appearance.DARK),
+)
 PATTERNS_HEIGHT = 150
 PRIORITIES_HEIGHT = 180
 RULES_HEIGHT = 300
@@ -399,6 +406,7 @@ class SettingsDialog(QDialog):
         self.nav.setObjectName("nav")
         self.nav.setAccessibleName("Settings pages")
         self.nav.setIconSize(QSize(NAV_ICON_SIZE, NAV_ICON_SIZE))
+        self.nav_icons: list[str] = []
         for icon, title, subtitle, page in (
             (
                 "sliders",
@@ -449,9 +457,11 @@ class SettingsDialog(QDialog):
                 _shortcuts_page(),
             ),
         ):
-            item = QListWidgetItem(line_icon(icon, Palette.MUTED, Palette.ACCENT), title)
-            self.nav.addItem(item)
+            self.nav_icons.append(icon)
+            self.nav.addItem(QListWidgetItem(title))
             self.pages.addWidget(_page(title, subtitle, page))
+        self._use_theme_icons()
+        theme().changed.connect(self._use_theme_icons)
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.nav.setCurrentRow(0)
         self.buttons = QDialogButtonBox(
@@ -568,7 +578,25 @@ class SettingsDialog(QDialog):
         bar.add_row(
             "Maximum results", "How many results a search lists.", _with_unit(self.limit, "")
         )
-        return [section_title("Startup"), startup, section_title("Search bar"), bar]
+        self.appearance = QComboBox()
+        self.appearance.setAccessibleName("Appearance")
+        for label, appearance in APPEARANCE_CHOICES:
+            self.appearance.addItem(label, appearance.value)
+        self.appearance.setCurrentIndex(self.appearance.findData(settings.appearance))
+        looks = Card()
+        looks.add_row(
+            "Theme",
+            "Light or dark colors; Match Windows follows your Windows setting.",
+            self.appearance,
+        )
+        return [
+            section_title("Startup"),
+            startup,
+            section_title("Appearance"),
+            looks,
+            section_title("Search bar"),
+            bar,
+        ]
 
     def _folders_page(self, settings: Settings) -> list[QWidget]:
         self.roots = PathList(settings.roots, "Search folders")
@@ -707,6 +735,10 @@ class SettingsDialog(QDialog):
         actual = self.startup_state() if self.startup_state else not enabled
         self.autostart.setChecked(actual)
 
+    def _use_theme_icons(self) -> None:
+        for row, icon in enumerate(self.nav_icons):
+            self.nav.item(row).setIcon(line_icon(icon, colors().faint, colors().accent))
+
     def read_settings(self) -> Settings:
         """Raise ValueError with a user-facing message for invalid input."""
         advanced = parse_advanced_rules(self.rule_json.toPlainText())
@@ -730,6 +762,7 @@ class SettingsDialog(QDialog):
             max_results=self.limit.value(),
             content_search_threads=self.content_threads.value(),
             websites=self.websites.websites(),
+            appearance=self.appearance.currentData(),
         )
 
     def save(self) -> None:

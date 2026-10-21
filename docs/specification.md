@@ -53,8 +53,8 @@ long-path setting.
 
 An explicit directory exclusion applies to itself and every descendant, with path
 component boundaries (`cache` does not exclude `cache-copy`). Matching uses absolute,
-nonexpanding uppercase path identities. Search text independently uses NFC/casefold
-normalization. Alternate Windows casing retains favorites and usage; Unicode names
+nonexpanding uppercase path identities. Search text independently uses NFC, full
+case folding and no accents (the combining marks of the canonical decomposition). Alternate Windows casing retains favorites and usage; Unicode names
 that merely share search normalization remain separate identities. Case-sensitive
 NTFS directory namespaces are not supported.
 
@@ -99,7 +99,12 @@ subsequence; quoted filter values and exclusions are unaffected. Repeated `ext:`
 `path:` and folder filters accumulate; size bounds intersect, and so do all date
 bounds (`date:`, `after:`, `before:`); for other filters the last value wins.
 Unsupported dates return a validation error. Windows backslashes remain literal.
-Matching is NFC-normalized and case-insensitive.
+Matching is NFC-normalized, case-insensitive and accent-insensitive in both directions:
+`lohn` and `löhn` both find `Lohn` and `Löhne`. A term the path contains only with other
+accents than typed ranks lower: by 5 points when the path has accents the term lacks
+(`lohn` lists `Lohn` before `Löhne`), and by 45, about one kind of match, when typed
+accents are missing (`löhn` lists `Löhne` before `Lohn`). Fuzzy matches, folder parts,
+extensions and exclusions ignore accents.
 
 | Expression | Contract |
 | --- | --- |

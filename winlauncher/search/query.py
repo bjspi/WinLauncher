@@ -49,6 +49,10 @@ class SearchQuery:
     min_size: int | None = None  # Inclusive byte bounds; folders have no searchable size.
     max_size: int | None = None
     content_text: str | None = None  # Case-insensitive fnmatch text; native backend only.
+    # `terms` as typed, with their accents (`catalog.model.fold_case`); empty means
+    # `terms`. A match spelled otherwise ranks a little lower: `lohn` finds Lohn
+    # before Löhne, `löhn` finds Löhne before Lohn.
+    spellings: tuple[str, ...] = ()
     explorer: bool = False  # Live direct entries first, then catalog matches in subfolders.
 
     @property

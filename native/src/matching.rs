@@ -27,6 +27,8 @@ pub struct Term {
     pub exact: bool,
     /// May match the path as well as the name; see `MIN_PATH_TERM_LENGTH`.
     pub matches_path: bool,
+    /// The term as typed, with its accents, when that differs from `text`.
+    pub spelling: Option<String>,
     pattern: Option<Regex>,
 }
 
@@ -42,6 +44,7 @@ impl Term {
             text,
             exact: false,
             matches_path,
+            spelling: None,
             pattern,
         })
     }
@@ -324,9 +327,9 @@ mod tests {
         let name = NameForms::new("éUpper lowerUpper 9Code ²frac_ǅName Cafe\u{301}X.txt", None);
         assert_eq!(
             name.words(),
-            ["éupper", "lower", "upper", "9", "code", "²frac", "ǆname", "cafe", "x", "txt"]
+            ["eupper", "lower", "upper", "9", "code", "²frac", "ǆname", "cafe", "x", "txt"]
         );
-        assert_eq!(name.initials(), "élu9c²ǆcxt");
+        assert_eq!(name.initials(), "elu9c²ǆcxt");
     }
 
     #[test]

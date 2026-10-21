@@ -132,9 +132,9 @@ mod tests {
         let cases = [
             ("ss", "ß", Some(45.0)),
             ("ffi", "ﬃ", Some(41.66666666666667)),
-            ("éx", "e\u{301}_X", Some(45.65)),
-            ("σς", "Σς", None), // Query terms are already folded by the parser.
-            ("i\u{307}", "İ", Some(45.0)),
+            ("ex", "e\u{301}_X", Some(45.65)), // The parser removes typed accents.
+            ("σς", "Σς", None),                // Query terms are already folded by the parser.
+            ("i", "İ", Some(55.0)),
             ("12", "x¹_²", None),
             ("ab", "ǅª_B", None),
             ("cfx", "Cafe\u{301}X", Some(39.86666666666667)),

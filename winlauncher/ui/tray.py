@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from winlauncher.ui.menus import Menu
-from winlauncher.ui.theme import Palette, app_icon
+from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.widgets import line_icon
 
 HEADER_ICON_SIZE = 30
@@ -40,6 +40,8 @@ class TrayMenu(QObject):
         self.icon.setToolTip(f"WinLauncher — double Ctrl or {SEARCH_SHORTCUT}")
         self.menu = Menu()
         self.menu.setObjectName("tray")
+        self.icon_names: dict[QAction, str] = {}  # Tinted again when the theme changes.
+        self.update_available = False
         self.status = QLabel("Ready to search")
         self.status.setObjectName("trayStatus")
         self.menu.addAction(self._header())
@@ -54,7 +56,6 @@ class TrayMenu(QObject):
         self.autostart.setCheckable(True)
         self.autostart.setEnabled(autostart_available)
         self.autostart.toggled.connect(self._show_check)
-        self._show_check(False)
         self._add_action("Clear search history", self.clear_history_requested, "trash")
         self.menu.addSeparator()
         self.update = self._add_action("Check for updates…", self.update_requested, "download")
@@ -62,6 +63,8 @@ class TrayMenu(QObject):
         self.menu.addSeparator()
         self._add_action("Restart WinLauncher", self.restart_requested, "restart")
         self._add_action("Quit WinLauncher", self.quit_requested, "quit")
+        self._use_theme_icons()
+        theme().changed.connect(self._use_theme_icons)
         self.menu.aboutToShow.connect(self.opening)
         self.icon.setContextMenu(self.menu)
         self.icon.activated.connect(self._activated)
@@ -94,22 +97,27 @@ class TrayMenu(QObject):
         # The text after a tab is shown right-aligned, as a shortcut hint.
         action = self.menu.addAction(f"{text}\t{shortcut}" if shortcut else text)
         if icon is not None:
-            action.setIcon(line_icon(icon, Palette.MENU_ICON))
+            self.icon_names[action] = icon
         action.triggered.connect(signal)  # Qt forwards `checked` only where accepted.
         return action
 
+    def _use_theme_icons(self) -> None:
+        for action, icon in self.icon_names.items():
+            action.setIcon(line_icon(icon, colors().muted))
+        self._show_check(self.autostart.isChecked())
+        self.set_update_available(self.update_available)
+
     def _show_check(self, checked: bool) -> None:
         # A null icon keeps the column free, so the text stays aligned.
-        self.autostart.setIcon(line_icon("check", Palette.ACCENT) if checked else QIcon())
+        self.autostart.setIcon(line_icon("check", colors().accent) if checked else QIcon())
 
     def set_catalog_count(self, count: int) -> None:
         self.status.setText(f"{count:,} items indexed" if count else "Ready to search")
 
     def set_update_available(self, available: bool) -> None:
+        self.update_available = available
         self.update.setText("Install update…" if available else "Check for updates…")
-        self.update.setIcon(
-            line_icon("download", Palette.ACCENT if available else Palette.MENU_ICON)
-        )
+        self.update.setIcon(line_icon("download", colors().accent if available else colors().muted))
 
     def show(self) -> None:
         if QSystemTrayIcon.isSystemTrayAvailable():
