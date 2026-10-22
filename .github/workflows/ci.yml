@@ -2,6 +2,8 @@ name: CI
 
 # Jobs run in parallel wherever nothing connects them: the Rust engine wheel is
 # compiled once, with a cache, and every Rust test job installs that same wheel.
+# pip is not cached: its key would follow pyproject.toml, which every release
+# changes, and each miss would store another ~1 GB that crowds out the Rust cache.
 
 on:
   push:
@@ -36,8 +38,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -64,8 +64,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - run: python -m pip install -e .
       - run: python -m unittest discover -s tests -v
         env:
@@ -90,8 +88,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - uses: actions/download-artifact@v4
         with:
           name: native-wheel
@@ -115,8 +111,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - uses: actions/download-artifact@v4
         with:
           name: native-wheel
