@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from winlauncher.catalog.store import CatalogStore
+from winlauncher.commands import MenuCommand
 from winlauncher.platform import shell
 
 
@@ -77,6 +78,11 @@ class ItemActions:
             from winlauncher.platform.explorer import select_item
 
             select_item(entry, explorer.window, explorer.tab, explorer.folder)
+
+    def run_command(self, command: MenuCommand, path: Path) -> None:
+        """Run a context-menu command in `path`, or in its folder for a file."""
+        folder = path if path.is_dir() else path.parent
+        shell.run_command(command.command_line(path, folder), folder)
 
     def favorite(self, path: Path, enabled: bool) -> None:
         self.store.set_favorite(path, enabled)

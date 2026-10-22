@@ -152,6 +152,18 @@ def show_in_folder(path: Path) -> None:
     subprocess.Popen(f'"{explorer}" /select,"{path}"')
 
 
+def run_command(command_line: str, folder: Path) -> None:
+    """Start a command line in `folder`, as typed in the Run dialog.
+
+    A console program gets a console of its own instead of WinLauncher's.
+    """
+    _require_existing(folder)
+    try:
+        subprocess.Popen(command_line, cwd=folder, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    except OSError as exc:
+        raise OSError(f"Windows could not run {command_line}: {exc.strerror or exc}") from exc
+
+
 def _require_existing(path: Path) -> None:
     if not path.exists():
         raise FileNotFoundError(f"This item no longer exists: {path}")

@@ -11,6 +11,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import partial
 from html import escape
 from pathlib import Path
 
@@ -62,6 +63,7 @@ from PySide6.QtWidgets import (
 
 from winlauncher.calculator import Calculation, calculate
 from winlauncher.catalog.model import ItemKind
+from winlauncher.commands import MenuCommand
 from winlauncher.platform.gesture import ViewKind
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
@@ -342,6 +344,15 @@ def _with_subfolder_separator(rows: list[ResultRow]) -> list[ResultRow]:
     return rows
 
 
+def _menu_commands(commands: tuple[MenuCommand, ...], kind: ItemKind) -> list[MenuCommand]:
+    """The commands shown for a result of `kind`; applications have none."""
+    if kind == ItemKind.FOLDER:
+        return [command for command in commands if command.folders]
+    if kind == ItemKind.FILE:
+        return [command for command in commands if command.files]
+    return []
+
+
 def _containing_folder(hit: SearchHit) -> Path:
     return hit.item.path if hit.item.kind == ItemKind.FOLDER else hit.item.path.parent
 
@@ -432,6 +443,8 @@ class LauncherWindow(QWidget):
     # SearchHit and whether to add the extended (Shift) entries: Windows' own menu.
     shell_menu_requested = Signal(object, bool)
     exclude_requested = Signal(object)
+    # SearchHit and the MenuCommand to run for it.
+    command_requested = Signal(object, object)
     settings_requested = Signal()
     rescan_requested = Signal()
     restart_requested = Signal()
@@ -465,6 +478,7 @@ class LauncherWindow(QWidget):
         self.auto_hide.timeout.connect(self._hide_if_unused)
         self.auto_hide_enabled = False
         self.auto_hide_ms = 0
+        self.menu_commands: tuple[MenuCommand, ...] = ()
         self.foreground_watcher = None
         if self._native_focus():
             from winlauncher.platform.windows import ForegroundWatcher
@@ -1034,6 +1048,10 @@ class LauncherWindow(QWidget):
         if not enabled:
             self.auto_hide.stop()
 
+    def set_menu_commands(self, commands: tuple[MenuCommand, ...]) -> None:
+        """The user's own entries in the context menu of folder and file results."""
+        self.menu_commands = commands
+
     def close_focus_watch(self) -> None:
         if self.foreground_watcher is not None:
             self.foreground_watcher.close()
@@ -1305,6 +1323,10 @@ class LauncherWindow(QWidget):
         menu.addAction("Open", lambda: self.open_requested.emit(hit))
         menu.addAction("Show in containing folder", lambda: self.reveal_requested.emit(hit))
         menu.addSeparator()
+        if commands := _menu_commands(self.menu_commands, hit.item.kind):
+            for command in commands:
+                menu.addAction(command.title, partial(self.command_requested.emit, hit, command))
+            menu.addSeparator()
         menu.addAction("Copy\tCtrl+C", lambda: self.copy_selected(row))
         menu.addAction("Cut\tCtrl+X", lambda: self.copy_selected(row, cut=True))
         menu.addAction("Copy path\tCtrl+Shift+C", lambda: self.copy_target(row))

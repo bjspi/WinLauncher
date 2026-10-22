@@ -19,6 +19,7 @@ from winlauncher.catalog.priority import (
     PriorityRule,
     SearchPriority,
 )
+from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
 from winlauncher.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
 DEFAULT_DOUBLE_CTRL_MS = 350
@@ -159,6 +160,8 @@ class Settings:
     max_results: int = 60
     content_search_threads: int = DEFAULT_CONTENT_SEARCH_THREADS
     websites: tuple[WebsiteShortcut, ...] = DEFAULT_WEBSITES
+    # Own entries in the result context menu, in menu order.
+    menu_commands: tuple[MenuCommand, ...] = DEFAULT_MENU_COMMANDS
     appearance: str = Appearance.SYSTEM.value  # An `Appearance`; a string in the JSON file.
 
     def __post_init__(self) -> None:
@@ -322,14 +325,22 @@ def settings_from_json(data: object) -> Settings:
     return Settings(**values)
 
 
+# Settings fields holding a list of records, with the record type and its name in messages.
+_RECORD_TYPES = {
+    "websites": (WebsiteShortcut, "website"),
+    "menu_commands": (MenuCommand, "command"),
+}
+
+
 def _setting_value(name: str, value: object) -> object:
-    if name == "websites":
-        if not isinstance(value, list) or not all(isinstance(site, dict) for site in value):
-            raise ValueError("websites must be a list of objects.")
+    if name in _RECORD_TYPES:
+        record_type, label = _RECORD_TYPES[name]
+        if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
+            raise ValueError(f"{name} must be a list of objects.")
         try:
-            return tuple(WebsiteShortcut(**site) for site in value)
+            return tuple(record_type(**entry) for entry in value)
         except TypeError as exc:
-            raise ValueError(f"Invalid website: {exc}") from None
+            raise ValueError(f"Invalid {label}: {exc}") from None
     if name in _RULE_TYPES:
         return priority_rules(name, value)
     default = getattr(_DEFAULTS, name)

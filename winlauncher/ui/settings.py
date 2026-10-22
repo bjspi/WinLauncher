@@ -55,6 +55,7 @@ from winlauncher.settings import (
     WindowsSettingsDetail,
     priority_rules,
 )
+from winlauncher.ui.commands import CommandList
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
@@ -407,6 +408,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("WinLauncher settings")
         self.resize(DIALOG_SIZE)
         self.websites = WebsiteList(settings.websites, website_icons)
+        self.menu_commands = CommandList(settings.menu_commands)
         self.pages = QStackedWidget()
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
@@ -443,6 +445,12 @@ class SettingsDialog(QDialog):
                 "Websites",
                 "Type a keyword to search a website, such as az headphones.",
                 self._websites_page(),
+            ),
+            (
+                "terminal",
+                "Context menu",
+                "Your own entries in a result's right-click menu, such as Open in Terminal.",
+                self._menu_commands_page(),
             ),
             (
                 "chart",
@@ -732,6 +740,11 @@ class SettingsDialog(QDialog):
         card.add_block("", "", self.websites)
         return [card]
 
+    def _menu_commands_page(self) -> list[QWidget]:
+        card = Card()
+        card.add_block("", "", self.menu_commands)
+        return [card]
+
     def _ranking_page(self, settings: Settings) -> list[QWidget]:
         self.priorities = QPlainTextEdit(format_folder_priorities(settings.folder_priorities))
         self.priorities.setPlaceholderText(f"{FOLDER_PRIORITY_FORMAT}\n-20 | C:\\Archive | low")
@@ -808,6 +821,7 @@ class SettingsDialog(QDialog):
             max_results=self.limit.value(),
             content_search_threads=self.content_threads.value(),
             websites=self.websites.websites(),
+            menu_commands=self.menu_commands.commands(),
             appearance=self.appearance.currentData(),
         )
 

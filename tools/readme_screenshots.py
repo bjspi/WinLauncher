@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPoint
+from PySide6.QtCore import QObject, QPoint, Qt
 
 from winlauncher.__main__ import _create_application
 from winlauncher.catalog.model import CatalogItem, ItemKind
@@ -123,13 +123,13 @@ launcher.hide()
 
 dialog = settings_dialog()
 # The shortcuts page scrolls; its screenshot gets the height to show every key.
-for row, name, height in (
-    (0, "settings", SETTINGS_HEIGHT),
-    (1, "settings-folders", 660),
-    (7, "settings-shortcuts", 1010),
+for page, name, height in (
+    ("General", "settings", SETTINGS_HEIGHT),
+    ("Search folders", "settings-folders", 660),
+    ("Shortcuts", "settings-shortcuts", 1010),
 ):
     dialog.resize(dialog.width(), height)
-    dialog.nav.setCurrentRow(row)
+    dialog.nav.setCurrentItem(dialog.nav.findItems(page, Qt.MatchFlag.MatchExactly)[0])
     settle(dialog)
     dialog.grab().save(str(OUT / f"{name}.png"))
 dialog.hide()

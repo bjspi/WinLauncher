@@ -10,6 +10,7 @@ import unittest
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMenu, QMe
 from winlauncher.actions import ExplorerTarget
 from winlauncher.catalog import long_paths
 from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.commands import MenuCommand
 from winlauncher.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from winlauncher.platform.gesture import (
     ExplorerTyping,
@@ -246,6 +248,42 @@ class UiFlowTest(unittest.TestCase):
             QTimer.singleShot(20, choose_more_options)
             self.window.context_menu(point)
             shell_menu.assert_called_with(hit, False)
+
+    def test_own_menu_commands_show_for_their_kind_and_run(self):
+        folder = self.root / "project"
+        folder.mkdir()
+        terminal = MenuCommand("Terminal here", "cmd.exe")
+        editor = MenuCommand("Edit", 'code "{path}"', folders=False, files=True)
+        c = self.controller
+        c.apply_settings(replace(c.settings, menu_commands=(terminal, editor)))
+        file_hit = self.show_file_result()
+        folder_hit = SearchHit(CatalogItem(folder, ItemKind.FOLDER), 100, "Fixture")
+        app_hit = SearchHit(CatalogItem(self.root / "Tool.lnk", ItemKind.APP), 100, "Fixture")
+        shown = {}
+
+        def choose(kind: ItemKind):
+            for menu in self.window.findChildren(QMenu):
+                if menu.isVisible():
+                    actions = {a.text().partition("\t")[0]: a for a in menu.actions()}
+                    shown[kind] = actions.keys()
+                    menu.close()
+                    if kind == ItemKind.FOLDER:
+                        actions[terminal.title].trigger()
+
+        for hit in (file_hit, app_hit, folder_hit):
+            self.window.set_results([hit], 1)
+            point = self.window.results.visualItemRect(self.window.results.item(0)).center()
+            QTimer.singleShot(20, partial(choose, hit.item.kind))
+            self.window.context_menu(point)
+        self.assertIn(editor.title, shown[ItemKind.FILE])
+        self.assertNotIn(terminal.title, shown[ItemKind.FILE])
+        self.assertTrue({editor.title, terminal.title}.isdisjoint(shown[ItemKind.APP]))
+        self.assertIn(terminal.title, shown[ItemKind.FOLDER])
+        self.assertNotIn(editor.title, shown[ItemKind.FOLDER])
+        self.assertFalse(self.window.isVisible())
+        with patch("winlauncher.actions.shell.run_command") as run:
+            self.tasks.finish(TaskCategory.ACTION)
+        run.assert_called_once_with("cmd.exe", folder)
 
     @unittest.skipUnless(os.name == "nt", "Windows shell context menus")
     def test_windows_context_menu_is_built_by_the_shell(self):
@@ -1267,10 +1305,21 @@ class UiFlowTest(unittest.TestCase):
         with patch("winlauncher.ui.controller.ExcludeFolderDialog") as dialog:
             dialog.return_value.exec.return_value = True
             dialog.return_value.chosen_folder.return_value = folder.parent
+            dialog.return_value.pattern = None
             c.exclude_folder(folder)
         choices = dialog.call_args.args[0]
         self.assertEqual([choice.folder for choice in choices][-1], self.root)
         self.assertIn(str(folder.parent), c.settings.excluded_paths)
+        # A custom rule becomes a pattern, not an excluded folder.
+        excluded_paths = c.settings.excluded_paths
+        with patch("winlauncher.ui.controller.ExcludeFolderDialog") as dialog:
+            dialog.return_value.exec.return_value = True
+            dialog.return_value.chosen_folder.return_value = folder
+            dialog.return_value.pattern = "**\\node_stuff\\deep"
+            c.exclude_folder(folder)
+        self.assertEqual(c.settings.excluded_paths, excluded_paths)
+        self.assertEqual(c.settings.excluded_patterns[-1], "**\\node_stuff\\deep")
+        self.assertFalse(c.settings.exclusions().allows(folder / "file.txt"))
 
     def test_autostart_tray_and_settings_share_state_and_restore_on_error(self):
         c = self.controller

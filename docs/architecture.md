@@ -46,7 +46,8 @@ flowchart TD
 | `search/memory_index.py` | What the Rust memory index loads and the candidate plans it evaluates |
 | `search/service.py` | Streaming candidates into a bounded best-hits heap |
 | `settings.py` | Validated settings value object and atomic JSON file |
-| `actions.py` | Open, reveal and favorite use cases; only successful opens are learned |
+| `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
+| `commands.py` | The user's context-menu commands and their command lines |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
 | `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |
 | `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |

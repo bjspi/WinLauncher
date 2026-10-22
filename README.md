@@ -36,6 +36,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
 | 🌐 **Website keywords** | Define a title, keyword and URL in Settings → Websites. `az headphones` searches Amazon; `yt Python tutorial` searches YouTube. |
+| 🖱️ **Your own menu commands** | Right-click a folder → **Open in Windows Terminal** or **Open Command Prompt here**, or add any command line of your own in Settings → Context menu. |
 | 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more, colored as you type; invalid values are underlined. |
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
 | 🔄 **Always current** | Watches your folders live; file changes refresh exactly that file, folder changes only their subtree. |
@@ -76,7 +77,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.8.0"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.8.1"
 winlauncher --show
 ```
 
@@ -150,6 +151,22 @@ and keeps Settings open. Cancel / Close discards only edits since the last save.
 Favicons load in the background directly from each site's
 `/favicon.ico`; unavailable icons use a globe.
 
+In **Settings → Context menu**, add your own entries to a result's right-click
+menu: a title, a command line and whether it shows for folders, files or both.
+**Open in Windows Terminal** and **Open Command Prompt here** are included for
+folders by default:
+
+| Title | Command line |
+| --- | --- |
+| Open in Windows Terminal | `wt.exe -d "{folder}"` |
+| Open Command Prompt here | `cmd.exe /k pushd "{folder}"` |
+| Open in VS Code (example) | `code "{path}"` |
+
+`{folder}` is the folder (or a file's folder), `{path}` the folder or file itself
+and `{name}` its name; quote them, since paths may contain spaces. `%VARIABLES%`
+such as `%LOCALAPPDATA%` are expanded. Programs start in `{folder}`, and console
+programs get a window of their own. Apps have no own commands.
+
 ### 📋 Requirements
 
 - Windows 10 or 11
@@ -174,13 +191,15 @@ Favicons load in the background directly from each site's
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> | Toggle favorite |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | Select the query |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
-| <kbd>Shift</kbd>+<kbd>F10</kbd> / right-click | Open, reveal, copy, favorite, exclude |
+| <kbd>Shift</kbd>+<kbd>F10</kbd> / right-click | Open, reveal, your own commands, copy, favorite, exclude |
 | <kbd>Esc</kbd> | Hide (indexing keeps running in the tray) |
 
 Click the icon at the right of the bar for the **All / Apps / Files / Folders**
 filters, refresh, an expanded view, settings, About and restart. Right-click a
 result → **Exclude this or a parent folder…** to drop a noisy folder tree; the
-picker shows how many catalog entries each choice removes.
+picker shows how many catalog entries each choice removes. **Custom rule…** turns
+the chosen folder into an exclusion pattern you edit first, for example
+`**\patches\src` for every `src` folder directly inside a `patches` folder.
 
 The three icons in the bottom bar restrict results to **Files / Folders / Apps**.
 Click the selected icon again for **All**, or use **Alt+1 / Alt+2 / Alt+3** and

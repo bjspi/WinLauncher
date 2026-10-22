@@ -27,6 +27,7 @@ from winlauncher.catalog.indexer import CatalogIndexer
 from winlauncher.catalog.model import ScanReport, is_within
 from winlauncher.catalog.sources import catalog_sources
 from winlauncher.catalog.store import CatalogStore
+from winlauncher.commands import MenuCommand
 from winlauncher.install import mark_reinstall_pending
 from winlauncher.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from winlauncher.platform.gesture import (
@@ -171,6 +172,7 @@ class LauncherController(QObject):
         window.dialog_text_returned.connect(self._return_text_to_dialog)
         window.shell_menu_requested.connect(self.show_shell_menu)
         window.exclude_requested.connect(self.exclude_folder)
+        window.command_requested.connect(self.run_menu_command)
         window.settings_requested.connect(self.edit_settings)
         window.rescan_requested.connect(self.rescan)
         window.hidden.connect(self._after_hide)
@@ -516,6 +518,10 @@ class LauncherController(QObject):
         if ran:
             self.window.hide()
 
+    def run_menu_command(self, hit: SearchHit, command: MenuCommand) -> None:
+        self.window.hide()
+        self._run_action(partial(self.actions.run_command, command, hit.item.path))
+
     def reveal_item(self, hit: SearchHit) -> None:
         self.window.hide()
         self._run_action(partial(self.actions.reveal, hit.item.path))
@@ -558,13 +564,21 @@ class LauncherController(QObject):
         candidates = exclusion_candidates(folder, self._configured_roots())
         choices = [FolderChoice(path, self.store.count_within(path)) for path in candidates]
         dialog = ExcludeFolderDialog(choices, self.window)
-        chosen = dialog.chosen_folder() if dialog.exec() else None
+        accepted = dialog.exec()
+        chosen, pattern = dialog.chosen_folder(), dialog.pattern
         dialog.deleteLater()
-        if chosen is None:
+        if not accepted:
             return
-        excluded = tuple(dict.fromkeys((*self.settings.excluded_paths, str(chosen))))
+        if pattern is not None:
+            patterns = tuple(dict.fromkeys((*self.settings.excluded_patterns, pattern)))
+            changed = replace(self.settings, excluded_patterns=patterns)
+        elif chosen is not None:
+            excluded = tuple(dict.fromkeys((*self.settings.excluded_paths, str(chosen))))
+            changed = replace(self.settings, excluded_paths=excluded)
+        else:
+            return
         try:
-            self.apply_settings(replace(self.settings, excluded_paths=excluded))
+            self.apply_settings(changed)
         except OSError as exc:
             QMessageBox.warning(self.window, "Cannot save settings", str(exc))
 
@@ -621,6 +635,7 @@ class LauncherController(QObject):
     def _apply_window_settings(self, settings: Settings) -> None:
         theme().use(Appearance(settings.appearance))
         self.window.set_auto_hide(settings.auto_hide, settings.auto_hide_seconds)
+        self.window.set_menu_commands(settings.menu_commands)
 
     def _restart_indexing(self) -> None:
         self._stop_monitor()

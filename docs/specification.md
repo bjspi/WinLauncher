@@ -471,10 +471,28 @@ the extended entries Explorer shows with Shift. A hidden owner window passes men
 messages to the shell's IContextMenu3 so lazily filled submenus work; the bar
 closes after a command runs.
 
+Below Open and Show in containing folder, the menu lists the user's own commands
+from Settings → Context menu: a title, a single-line command line and whether it
+shows for folders, files or both; applications get none. `{path}` is the result,
+`{folder}` the result if it is a folder and otherwise its folder, `{name}` its
+name. `%VARIABLE%` references take the environment's value and stay as typed when
+undefined. Variables expand before the placeholders, and placeholders are replaced
+in one pass, so a path containing `%` or `{name}` is inserted unchanged. A drive or
+share root gains a trailing `.` (`D:\.`), so `"{folder}"` never ends in `\"`, which
+programs read as an escaped quote. The command line goes to CreateProcess as typed,
+without a shell, with `{folder}` as the working directory and a new console for
+console programs; the bar closes first, and a program that cannot start is
+reported. Defaults: **Open in Windows Terminal** (`wt.exe -d "{folder}"`) and
+**Open Command Prompt here** (`cmd.exe /k pushd "{folder}"`, like Explorer's own
+entry; `pushd` also maps network folders), both for folders.
+
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
 the result's folder and its parents up to the configured root (or up to, but not
 including, the drive for folders outside every root), each with its number of
 catalog entries. The chosen folder is added to the excluded directories.
+**Custom rule…** instead opens the chosen folder's path for editing, for example
+into `**\patches\src`; the edited text, trimmed and unless empty, is added to the
+excluded patterns.
 
 ## Tray, settings and autostart
 

@@ -8,12 +8,13 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog, QInputDialog
 
 from winlauncher.releases import Release
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
@@ -60,6 +61,37 @@ class FolderFeaturesTest(unittest.TestCase):
         self.assertEqual(dialog.chosen_folder(), self.base / "a")
         self.assertIn("900", dialog.folders.item(1).text())
         dialog.deleteLater()
+
+    def test_exclude_dialog_custom_rule_starts_from_the_selected_folder(self):
+        choices = [FolderChoice(self.base / "a" / "b", 3), FolderChoice(self.base / "a", 900)]
+        offered = []
+
+        def edit(editor: QInputDialog) -> int:
+            offered.append(editor.textValue())
+            editor.setTextValue("  **\\a\\b  ")
+            return QDialog.DialogCode.Accepted
+
+        dialog = ExcludeFolderDialog(choices)
+        dialog.folders.setCurrentRow(1)
+        with patch.object(QInputDialog, "exec", edit):
+            dialog.edit_pattern()
+        self.assertEqual(offered, [str(self.base / "a")])
+        self.assertEqual(dialog.pattern, "**\\a\\b")
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        dialog.deleteLater()
+        # Cancelling the editor, or leaving the rule empty, keeps the picker open.
+        for result, text in (
+            (QDialog.DialogCode.Rejected, "x"),
+            (QDialog.DialogCode.Accepted, " "),
+        ):
+            dialog = ExcludeFolderDialog(choices)
+            dialog.show()
+            with patch.object(QInputDialog, "exec", return_value=result):
+                with patch.object(QInputDialog, "textValue", return_value=text):
+                    dialog.edit_pattern()
+            self.assertIsNone(dialog.pattern)
+            self.assertTrue(dialog.isVisible())
+            dialog.deleteLater()
 
 
 @unittest.skipUnless(shutil.which("git"), "git is required")
