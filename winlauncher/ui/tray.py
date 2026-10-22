@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
+from winlauncher import __version__
 from winlauncher.ui.menus import Menu
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.widgets import line_icon
@@ -70,7 +71,7 @@ class TrayMenu(QObject):
         self.icon.activated.connect(self._activated)
 
     def _header(self) -> QWidgetAction:
-        """WinLauncher's logo, name and current state; not a clickable entry."""
+        """WinLauncher's logo, name, version and current state; not a clickable entry."""
         header = QWidget()
         header.setObjectName("trayHeader")
         layout = QHBoxLayout(header)
@@ -82,7 +83,14 @@ class TrayMenu(QObject):
         texts.setSpacing(0)
         name = QLabel("WinLauncher")
         name.setObjectName("trayTitle")
-        texts.addWidget(name)
+        version = QLabel(__version__)
+        version.setObjectName("trayVersion")
+        title = QHBoxLayout()
+        title.setSpacing(6)
+        title.addWidget(name)
+        title.addWidget(version, 0, Qt.AlignmentFlag.AlignBaseline)
+        title.addStretch(1)
+        texts.addLayout(title)
         texts.addWidget(self.status)
         layout.addWidget(logo)
         layout.addLayout(texts, 1)

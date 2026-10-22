@@ -343,6 +343,7 @@ QMenu#tray::indicator { width: 0; height: 0; }  /* Checks are icons, see TrayMen
 QWidget#trayHeader { background: transparent; }
 QLabel#trayTitle { font-size: 10pt; font-weight: 600; color: $title; }
 QLabel#trayStatus { font-size: 8pt; color: $faint; }
+QLabel#trayVersion { font-size: 8pt; color: $fainter; }
 QDialog#infoDialog { background: $page; }
 QLabel#infoTitle { font-size: 14pt; font-weight: 600; color: $title; }
 QLabel#factValue { color: $secondary; }

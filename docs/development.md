@@ -55,9 +55,13 @@ and reloads in about 100 ms after a catalog change.
 and Clippy, runs the Windows tests with each engine, tests the Rust wheel on
 Python 3.11, 3.12, 3.13 and 3.14, checks the Qt/keyboard flow, and builds and
 verifies the Python wheel/source distribution and the Windows x64 Rust wheel. Download them from the run's `winlauncher-windows-packages` artifact.
+Independent jobs run in parallel: the Rust wheel is compiled once, with a cache,
+and every Rust test job installs that wheel. A commit message containing
+`[skip ci]` pushes without starting CI.
 
-Pushing a `v*` tag runs the same checks and publishes a GitHub Release only after
-they pass, attaching those packages and a clean source ZIP. The tag must match
+Pushing a `v*` tag publishes a GitHub Release once the CI run of the tagged commit
+passed, attaching that run's packages and a clean source ZIP; it builds and tests
+nothing again. Push `main` first, so that run exists. The tag must match
 `winlauncher/__init__.py`, `pyproject.toml`, `native/pyproject.toml` and
 `native/Cargo.toml` (for example `v0.2.2`), and the `rust` extra in `pyproject.toml`
 must point to that release's native wheel. Install both wheels from a release
@@ -67,6 +71,7 @@ installing a compiler. Source ZIPs retain `native/` for local builds.
 For example, publish version 0.2.2 from a clean, committed checkout with:
 
 ```powershell
+git push origin main
 git tag -a v0.2.2 -m "WinLauncher 0.2.2"
 git push origin v0.2.2
 ```

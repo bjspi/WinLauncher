@@ -1,5 +1,9 @@
 name: Release
 
+# Publishes the packages CI built and tested for the tagged commit, instead of
+# building and testing it a second time. Push `main` first, then the tag: the
+# release waits for that commit's CI run and fails if CI fails.
+
 on:
   push:
     tags: ['v*']
@@ -8,14 +12,12 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
-
   release:
     name: Publish GitHub Release
-    needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@v5
@@ -39,10 +41,33 @@ jobs:
           extra = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['optional-dependencies']['rust'][0]
           assert f'/v{version}/winlauncher_native-{version}-' in extra, 'The rust extra points to another release'
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: winlauncher-windows-packages
-          path: dist
+      - name: Wait for the tagged commit's CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 240); do
+            run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
+              --event push --limit 1 --json databaseId,status,conclusion \
+              --jq '.[] | "\(.databaseId) \(.status) \(.conclusion)"')
+            read -r id status conclusion <<< "$run"
+            if [ -n "$id" ] && [ "$status" = completed ]; then
+              if [ "$conclusion" != success ]; then
+                echo "::error::CI run $id for this commit ended with: $conclusion"
+                exit 1
+              fi
+              echo "CI_RUN=$id" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "Waiting for CI${id:+ run $id} ($status)..."
+            sleep 15
+          done
+          echo "::error::No finished CI run for $GITHUB_SHA; push main before the tag."
+          exit 1
+
+      - name: Download the packages CI built
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$CI_RUN" --repo "$GITHUB_REPOSITORY" --name winlauncher-windows-packages --dir dist
       - name: Build source ZIP
         run: git archive --format=zip --prefix WinLauncher/ -o "dist/WinLauncher-${GITHUB_REF_NAME}.zip" "${GITHUB_REF_NAME}"
       - name: Create GitHub Release
