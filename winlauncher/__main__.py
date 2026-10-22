@@ -24,6 +24,7 @@ from winlauncher import __version__
 from winlauncher.catalog.model import path_key
 from winlauncher.install import (
     REINSTALL_TIMEOUT_MS,
+    finish_reinstall,
     reinstall_arguments,
     reinstall_command,
     take_pending_reinstall,
@@ -138,8 +139,11 @@ def _log_uncaught_exceptions() -> None:
     threading.excepthook = log_thread_exception
 
 
-def _finish_update(root: Path) -> None:
-    """Reinstall the updated checkout before anything loads the old Rust engine."""
+def _finish_update(root: Path, data_dir: Path) -> None:
+    """Reinstall the updated checkout before anything loads the old Rust engine.
+
+    A failure keeps the reinstall pending, so the next start tries again.
+    """
     progress = QProgressDialog("Finishing the WinLauncher update…", None, 0, 0)
     progress.setWindowTitle("WinLauncher")
     progress.setMinimumDuration(0)
@@ -157,14 +161,17 @@ def _finish_update(root: Path) -> None:
     output = bytes(process.readAll().data()).decode("utf-8", errors="replace").strip()
     succeeded = process.exitStatus() == QProcess.ExitStatus.NormalExit and process.exitCode() == 0
     logging.info("Update reinstall finished: succeeded=%s output=%s", succeeded, output)
-    if not succeeded:
-        QMessageBox.warning(
-            None,
-            "WinLauncher update incomplete",
-            "The new version runs, but its packages could not be reinstalled, so the "
-            f"Rust search engine may be unavailable.\n\n{output}\n\n"
-            f"Run this once to finish:\n{reinstall_command(root)}",
-        )
+    if succeeded:
+        finish_reinstall(data_dir)
+        return
+    QMessageBox.warning(
+        None,
+        "WinLauncher update incomplete",
+        "The new version runs, but its packages could not be reinstalled, so the "
+        f"Rust search engine may be unavailable.\n\n{output}\n\n"
+        "WinLauncher tries again at its next start. To finish it now, run:\n"
+        f"{reinstall_command(root)}",
+    )
 
 
 def _instance_name(data_dir: Path) -> str:
@@ -253,7 +260,7 @@ def main() -> int:
             not args.no_hooks,
         )
         if take_pending_reinstall(data_dir) and (root := checkout_root()) is not None:
-            _finish_update(root)
+            _finish_update(root, data_dir)
         server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         if not server.listen(instance):
             raise OSError(server.errorString())

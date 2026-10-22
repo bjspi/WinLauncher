@@ -518,14 +518,21 @@ Updates follow release tags (`vX.Y.Z`), never unreleased commits, because only a
 release ships the matching prebuilt Rust engine. When git is installed, WinLauncher
 asks the remote for its tags (`git ls-remote`) shortly after start and every 30
 minutes and announces a release newer than its own version. A git checkout asks
-its `origin`; an installed package asks the project repository.
+its `origin`; an installed package asks the project repository. Pushing a tag
+starts the workflow that tests and only then publishes the release, so a newer tag
+is announced only once its Rust engine wheel exists: a HEAD request for the wheel,
+without following GitHub's redirect to the download host, answers with a redirect
+for a published release and 404 before. A 404 is asked again after 5 minutes;
+an unreachable GitHub waits for the next regular check.
 
 **Check for updates** (or **Install update**) in a checkout fetches the tags and
 runs `git merge --ff-only` to the release, which refuses diverged or modified
 checkouts instead of merging and leaves a checkout already past the release where
 it is. After a real update it marks a reinstall as pending and offers a restart;
 the next start runs `pip install -e ".[rust]"` before anything loads the old
-engine, whose `.pyd` Windows locks while it runs. For pipx and other installed
+engine, whose `.pyd` Windows locks while it runs. A failed reinstall, for example
+offline, stays pending: the next starts try again, three in all, and the message
+shows the command to finish it by hand. For pipx and other installed
 packages, WinLauncher shows the exact install command to copy instead of replacing
 its own running environment. Git never prompts for credentials; a stalled git is
 stopped after two minutes.

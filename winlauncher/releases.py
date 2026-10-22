@@ -1,7 +1,10 @@
 """Which published release is newest, and how each kind of installation updates to it.
 
 Updates follow release tags such as `v0.2.3`, never untested commits: only a
-release ships the matching prebuilt Rust engine. No Qt and no git calls here.
+release ships the matching prebuilt Rust engine. A tag exists before its release:
+pushing it starts the workflow that tests and then publishes the release, so a
+new tag counts only once its engine wheel can be downloaded. No Qt and no git
+calls here.
 """
 
 from __future__ import annotations
@@ -14,6 +17,11 @@ from enum import Enum
 from pathlib import Path
 
 REPOSITORY_URL = "https://github.com/bjspi/WinLauncher.git"
+# The Rust engine wheel a release publishes; the `rust` extra in pyproject.toml names it.
+NATIVE_WHEEL_URL = (
+    "https://github.com/bjspi/WinLauncher/releases/download/"
+    "{tag}/winlauncher_native-{version}-cp311-abi3-win_amd64.whl"
+)
 _RELEASE_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 
 
@@ -39,8 +47,17 @@ class Release:
         return cls.from_tag(f"v{version}")
 
     @property
+    def version(self) -> str:
+        return f"{self.major}.{self.minor}.{self.patch}"
+
+    @property
     def tag(self) -> str:
-        return f"v{self.major}.{self.minor}.{self.patch}"
+        return f"v{self.version}"
+
+    @property
+    def native_wheel_url(self) -> str:
+        """Published only once the release workflow finished, minutes after the tag."""
+        return NATIVE_WHEEL_URL.format(tag=self.tag, version=self.version)
 
 
 def newest_release(tags: Iterable[str]) -> Release | None:

@@ -16,7 +16,8 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, QUrl, Signal
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from winlauncher import __version__
 from winlauncher.platform.git import checkout_root, current_head, git_available
@@ -33,6 +34,13 @@ logger = logging.getLogger(__name__)
 FIRST_CHECK_DELAY_MS = 20_000  # Do not slow down startup.
 CHECK_INTERVAL_MS = 30 * 60 * 1000
 GIT_TIMEOUT_MS = 120_000  # A stalled network or credential helper is killed.
+# A new tag's release is published once its workflow passed, about ten minutes later.
+UNPUBLISHED_RETRY_MS = 5 * 60 * 1000
+WHEEL_CHECK_TIMEOUT_MS = 20_000
+NOT_FOUND = 404
+
+# Answers whether a release's engine wheel can be downloaded; None if unknown.
+PublishedCheck = Callable[[Release, Callable[[bool | None], None]], None]
 
 
 class ReleaseUpdater(QObject):
@@ -48,9 +56,16 @@ class ReleaseUpdater(QObject):
         self._check: QProcess | None = None
         self._update: QProcess | None = None
         self._head_before_update: str | None = None
+        self._confirming = False  # Asking whether a new tag's release is published.
+        self.ask_published: PublishedCheck = self._ask_published
+        self._network: QNetworkAccessManager | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(CHECK_INTERVAL_MS)
         self._timer.timeout.connect(self._check_in_background)
+        self._unpublished_retry = QTimer(self)
+        self._unpublished_retry.setSingleShot(True)
+        self._unpublished_retry.setInterval(UNPUBLISHED_RETRY_MS)
+        self._unpublished_retry.timeout.connect(self._check_in_background)
 
     @property
     def installation(self) -> Installation:
@@ -81,6 +96,7 @@ class ReleaseUpdater(QObject):
 
     def stop(self) -> None:
         self._timer.stop()
+        self._unpublished_retry.stop()
         for process in (self._check, self._update):
             if process is not None:
                 process.kill()
@@ -123,11 +139,11 @@ class ReleaseUpdater(QObject):
         """Ask for the newest release now; `checked` reports when the answer is in."""
         if not self.supported or self.updating:
             self.checked.emit(False)
-        elif self._check is None:
+        elif self._check is None and not self._confirming:
             self._start_check()
 
     def _check_in_background(self) -> None:
-        if not (self.available or self.updating or self._check is not None):
+        if not (self.available or self.updating or self._check is not None or self._confirming):
             self._start_check()
 
     def _start_check(self) -> None:
@@ -143,8 +159,37 @@ class ReleaseUpdater(QObject):
             return
         newest = newest_release(remote_tags(output))
         if newest is not None and self.current is not None and newest > self.current:
-            self._set_latest(newest)
+            self._confirming = True
+            self.ask_published(newest, lambda published: self._confirmed(newest, published))
+            return
         self.checked.emit(True)
+
+    def _confirmed(self, release: Release, published: bool | None) -> None:
+        """Offer `release` only once installing it can download its engine wheel."""
+        self._confirming = False
+        if published:
+            self._set_latest(release)
+        elif published is False:
+            logger.info("Release %s is tagged but not published yet", release.tag)
+            self._unpublished_retry.start()
+        self.checked.emit(published is not None)
+
+    def _ask_published(self, release: Release, answer: Callable[[bool | None], None]) -> None:
+        """Ask GitHub for the wheel without following its redirect to the download host.
+
+        An uploaded asset answers with a redirect, a missing one with 404; the
+        download host may still answer 404 for a short while after the upload.
+        """
+        if self._network is None:
+            self._network = QNetworkAccessManager(self)
+        request = QNetworkRequest(QUrl(release.native_wheel_url))
+        request.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.ManualRedirectPolicy,
+        )
+        request.setTransferTimeout(WHEEL_CHECK_TIMEOUT_MS)
+        reply = self._network.head(request)
+        reply.finished.connect(lambda: answer(_published(reply)))
 
     def _start_git(self, arguments: list[str], on_done: Callable[[int, str], None]) -> QProcess:
         process = QProcess(self)
@@ -167,6 +212,18 @@ class ReleaseUpdater(QObject):
     def _set_latest(self, release: Release | None) -> None:
         self.latest = release
         self.availability_changed.emit(release is not None)
+
+
+def _published(reply: QNetworkReply) -> bool | None:
+    """True for a found or redirected asset, False for 404, None if GitHub was unreachable."""
+    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    reply.deleteLater()
+    if not status:
+        logger.debug("Release check unanswered: %s", reply.errorString())
+        return None
+    if status == NOT_FOUND:
+        return False
+    return 200 <= status < 400 or None
 
 
 def _read_output(process: QProcess) -> str:

@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
-from winlauncher.install import mark_reinstall_pending, take_pending_reinstall
+from winlauncher import __version__
+from winlauncher.install import (
+    REINSTALL_ATTEMPTS,
+    finish_reinstall,
+    mark_reinstall_pending,
+    take_pending_reinstall,
+)
 from winlauncher.releases import (
     Installation,
     Release,
@@ -43,13 +50,32 @@ class ReleaseTest(unittest.TestCase):
         )
         self.assertIn("pip install --upgrade", install_command(Installation.PACKAGE, release))
 
-    def test_pending_reinstall_is_taken_once(self):
+    def test_the_rust_extra_names_this_releases_engine_wheel(self):
+        project = Path(__file__).parents[1] / "pyproject.toml"
+        extra = tomllib.loads(project.read_text(encoding="utf-8"))["project"]
+        rust = extra["optional-dependencies"]["rust"][0]
+        url = Release.from_version(__version__).native_wheel_url
+        self.assertIn(f"@ {url} ;", rust)
+        self.assertEqual(
+            Release(0, 9, 1).native_wheel_url,
+            "https://github.com/bjspi/WinLauncher/releases/download/v0.9.1/"
+            "winlauncher_native-0.9.1-cp311-abi3-win_amd64.whl",
+        )
+
+    def test_a_failed_reinstall_is_tried_again_at_later_starts(self):
         with tempfile.TemporaryDirectory() as directory:
             data_dir = Path(directory)
             self.assertFalse(take_pending_reinstall(data_dir))
             mark_reinstall_pending(data_dir)
+            for _attempt in range(REINSTALL_ATTEMPTS):
+                self.assertTrue(take_pending_reinstall(data_dir))  # Each start fails.
+            self.assertFalse(take_pending_reinstall(data_dir))  # Then it gives up.
+            mark_reinstall_pending(data_dir)
             self.assertTrue(take_pending_reinstall(data_dir))
+            finish_reinstall(data_dir)  # It succeeded.
             self.assertFalse(take_pending_reinstall(data_dir))
+            (data_dir / "reinstall-pending").touch()  # Left by an older WinLauncher.
+            self.assertTrue(take_pending_reinstall(data_dir))
 
 
 if __name__ == "__main__":

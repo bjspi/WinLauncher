@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -176,10 +176,18 @@ class ReleaseUpdaterTest(unittest.TestCase):
             QTest.qWait(50)
         self.fail("Timed out waiting for git")
 
-    def updater(self) -> ReleaseUpdater:
+    def updater(self, published: bool | None = True) -> ReleaseUpdater:
+        """`published` answers whether a release's engine wheel exists; GitHub is never asked."""
         updater = ReleaseUpdater()
         updater.root = self.checkout
         updater.current = Release(1, 0, 0)
+        self.asked: list[Release] = []
+
+        def ask(release: Release, answer) -> None:
+            self.asked.append(release)
+            answer(published)
+
+        updater.ask_published = ask
         self.addCleanup(updater.stop)
         return updater
 
@@ -218,6 +226,31 @@ class ReleaseUpdaterTest(unittest.TestCase):
         self.wait_for(lambda: checks)
         self.assertEqual(checks, [True])
         self.assertFalse(updater.available)
+
+    def test_a_tag_counts_only_once_its_release_is_published(self):
+        """The tag starts the release workflow; its engine wheel follows minutes later."""
+        self.release("second", "v1.1.0")
+        for published, reachable in ((False, True), (None, False)):
+            with self.subTest(published=published):
+                updater = self.updater(published)
+                checks = []
+                updater.checked.connect(checks.append)
+                updater.check_now()
+                self.wait_for(lambda checks=checks: checks)
+                self.assertEqual(self.asked, [Release(1, 1, 0)])
+                self.assertEqual(checks, [reachable])
+                self.assertFalse(updater.available)
+                # A missing wheel is asked again soon, not after the usual interval.
+                self.assertEqual(updater._unpublished_retry.isActive(), published is False)
+
+    def test_github_answers_map_to_published_or_unknown(self):
+        from winlauncher.ui.updater import _published
+
+        for status, expected in ((302, True), (200, True), (404, False), (500, None), (0, None)):
+            with self.subTest(status=status):
+                reply = Mock()
+                reply.attribute.return_value = status or None
+                self.assertIs(_published(reply), expected)
 
     def test_checkout_past_the_release_stays_where_it_is(self):
         self.release("second", "v1.1.0")

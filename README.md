@@ -77,7 +77,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.9.0"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.9.1"
 winlauncher --show
 ```
 
