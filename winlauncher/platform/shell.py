@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import ctypes
 import functools
 import logging
 import os
 import subprocess
 from collections.abc import Iterator
+from ctypes import wintypes
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -162,6 +164,57 @@ def run_command(command_line: str, folder: Path) -> None:
         subprocess.Popen(command_line, cwd=folder, creationflags=subprocess.CREATE_NEW_CONSOLE)
     except OSError as exc:
         raise OSError(f"Windows could not run {command_line}: {exc.strerror or exc}") from exc
+
+
+IO_REPARSE_TAG_APPEXECLINK = 0x8000001B
+FSCTL_GET_REPARSE_POINT = 0x000900A8
+APPEXECLINK_HEADER = 12  # Reparse tag, data length, reserved, then the link version.
+
+
+def alias_target(path: Path) -> Path:
+    """The program an app execution alias such as `WindowsApps\\wt.exe` starts.
+
+    The alias is an empty file whose reparse data names the packaged program;
+    its own icon is a generic one. Any other path is returned unchanged.
+    """
+    try:
+        if getattr(os.lstat(path), "st_reparse_tag", 0) != IO_REPARSE_TAG_APPEXECLINK:
+            return path
+        data = _reparse_data(path)
+    except OSError:
+        return path
+    # Null-terminated UTF-16 strings: package, app user model ID, target, ...
+    strings = data[APPEXECLINK_HEADER:].decode("utf-16-le", "replace").split("\0")
+    return Path(strings[2]) if len(strings) > 2 and strings[2] else path
+
+
+def _reparse_data(path: Path) -> bytes:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    share_all, open_existing = 7, 3
+    reparse_point, backup_semantics = 0x00200000, 0x02000000
+    handle = kernel32.CreateFileW(
+        str(path), 0, share_all, None, open_existing, reparse_point | backup_semantics, None
+    )
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        buffer = ctypes.create_string_buffer(16 * 1024)
+        size = wintypes.DWORD()
+        if not kernel32.DeviceIoControl(
+            wintypes.HANDLE(handle),
+            FSCTL_GET_REPARSE_POINT,
+            None,
+            0,
+            buffer,
+            len(buffer),
+            ctypes.byref(size),
+            None,
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return buffer.raw[: size.value]
+    finally:
+        kernel32.CloseHandle(wintypes.HANDLE(handle))
 
 
 def _require_existing(path: Path) -> None:

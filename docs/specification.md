@@ -383,12 +383,13 @@ After a dead key, the next key is left to Explorer, so accented type-ahead remai
 Explorer's. IME composition needs target-system validation.
 
 Quick Switch (setting `quick_switch`, on by default) extends Explorer typing to the
-common Open and Save dialogs of other programs: a `#32770` dialog that hosts a
-`SHELLDLL_DefView` file list. Typing starts while that file list has the focus,
-or while an Open dialog's empty file-name box has it (control 1148, which Save
-dialogs lack; Open dialogs start there). Its emptiness is asked with a 50 ms
-timeout so a hung program never stalls the keyboard hook. A Save dialog's
-file-name box, the address bar, search box and navigation pane keep their keys.
+common Open and Save dialogs: a `#32770` dialog that hosts a `SHELLDLL_DefView`
+file list. Typing starts only while that file list has the focus, that is after
+the user clicked into it. The file-name box (where Open dialogs start), the address
+bar, search box and navigation pane keep their keys, so names typed there are left
+to the dialog. WinLauncher's own file and folder pickers in Settings work the same:
+they are modal only to the Settings window, never to the whole application, because
+Qt would otherwise block the search bar's keyboard input while they are open.
 Escape in the dialog's bar returns the typed text to the file-name box with the
 caret at its end, so a name or path meant for the dialog is not lost. `Shell.Application` does not list dialogs, so the folder is read from the
 dialog's breadcrumb toolbar, whose text is a localized label followed by the path
@@ -486,10 +487,22 @@ reported. Defaults: **Open in Windows Terminal** (`wt.exe -d "{folder}"`) and
 **Open Command Prompt here** (`cmd.exe /k pushd "{folder}"`, like Explorer's own
 entry; `pushd` also maps network folders), both for folders.
 
+Each command shows an icon: its chosen `.ico`, `.png`, `.svg`, `.exe` or `.dll` file
+(`%VARIABLES%` expand), or else the first icon of the program its command line
+starts, the quoted or first word found on the PATH. An app execution alias such as
+`WindowsApps\wt.exe` is an empty file, so its icon is read from the packaged
+program its reparse data names. Icons load when the menu first shows them and are
+kept until the commands change; a command without one shows none. In a menu with
+icons, every title starts in the same column. **Duplicate** in the settings copies
+the selected command below it, for variants such as Claude Code and Codex.
+
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
-the result's folder and its parents up to the configured root (or up to, but not
+the result itself and its parents up to the configured root (or up to, but not
 including, the drive for folders outside every root), each with its number of
-catalog entries. The chosen folder is added to the excluded directories.
+catalog entries. The chosen path is added to the excluded directories; a file
+there excludes exactly that entry, applications and Windows tools included. For a
+shortcut WinLauncher generates (Store apps, Windows tools and settings) the picker
+offers only the entry itself, since its folders are switched off in Settings.
 **Custom rule…** instead opens the chosen folder's path for editing, for example
 into `**\patches\src`; the edited text, trimmed and unless empty, is added to the
 excluded patterns.
@@ -543,6 +556,14 @@ tray and the settings dialog. The checkbox applies immediately in either place,
 because it changes a file outside the settings document. A failure shows a message
 and restores the checkbox to the actual shortcut state. An unrelated shortcut with
 the same name is never replaced or deleted.
+
+Settings is a window of its own, not modal and without an owner, so the search bar
+can come in front of it and stays usable, for example to try a new context-menu
+command. Opening Settings, or again, which brings the open window forward, hides the
+bar: the bar stays on top of every window, so whatever opened last is in front, and
+the bar returns over Settings when called again. An exclusion added
+from a result's menu meanwhile is saved at once and also joins the open window's
+fields, so its next Save keeps it.
 
 All other settings apply on Save. Validation or save errors keep the dialog open
 with the edits intact. Changing roots, exclusions, markers, priority rules or

@@ -25,6 +25,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -51,6 +52,26 @@ FACT_LABEL_WIDTH = 150
 # A wrapping label claims the height it would need at its minimum width; keep it sane.
 SUBTITLE_MIN_WIDTH = 320
 ROW_SPACING = 16  # Between a row's text and its control.
+
+
+def pick_path(parent: QWidget, title: str, filters: str | None = None) -> Path | None:
+    """A file matching `filters`, or a folder without them; None if cancelled.
+
+    The picker is modal only to `parent`'s window. QFileDialog's static functions
+    make it modal to the whole application, which blocks the search bar, so Quick
+    Switch could not search for the file while the picker is open.
+    """
+    dialog = QFileDialog(parent, title)
+    if filters is None:
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly)
+    else:
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilters(filters.split(";;"))
+    dialog.setWindowModality(Qt.WindowModality.WindowModal)
+    chosen = dialog.selectedFiles() if dialog.exec() else []
+    dialog.deleteLater()
+    return Path(chosen[0]) if chosen else None
 
 
 def line_icon(name: str, color: str | None = None, selected_color: str | None = None) -> QIcon:

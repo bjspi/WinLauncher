@@ -40,6 +40,8 @@ from winlauncher.platform.gesture import (
 )
 from winlauncher.platform.shell import folder_shortcuts, indexed_application_roots
 from winlauncher.platform.startup import PACKAGE_PARENT, StartupShortcut
+from winlauncher.platform.store_apps import store_app_folder
+from winlauncher.platform.windows_tools import windows_tools_folder
 from winlauncher.releases import Release, install_command
 from winlauncher.search.native_engine import native_availability, warm_search_index
 from winlauncher.search.ranking import SearchHit
@@ -106,6 +108,7 @@ class LauncherController(QObject):
         self.keyboard_events: queue.SimpleQueue[KeyboardIntent] = queue.SimpleQueue()
         self.watch_events: queue.SimpleQueue = queue.SimpleQueue()
         self.favorite_pending = False
+        self.settings_dialog: SettingsDialog | None = None  # While Settings is open.
         self._closed = False
 
         # Shared by the result list and the Websites settings.
@@ -559,9 +562,10 @@ class LauncherController(QObject):
     def _action_failed(self, message: str) -> None:
         QMessageBox.warning(self.window, "WinLauncher", message)
 
-    def exclude_folder(self, folder: Path) -> None:
-        """Let the user exclude the result's folder or one of its parents."""
-        candidates = exclusion_candidates(folder, self._configured_roots())
+    def exclude_folder(self, path: Path) -> None:
+        """Let the user exclude a result itself, or its folder or one of their parents."""
+        generated = tuple(f for f in (store_app_folder(), windows_tools_folder()) if f)
+        candidates = exclusion_candidates(path, self._configured_roots(), generated)
         choices = [FolderChoice(path, self.store.count_within(path)) for path in candidates]
         dialog = ExcludeFolderDialog(choices, self.window)
         accepted = dialog.exec()
@@ -581,22 +585,44 @@ class LauncherController(QObject):
             self.apply_settings(changed)
         except OSError as exc:
             QMessageBox.warning(self.window, "Cannot save settings", str(exc))
+            return
+        if self.settings_dialog is not None:  # Its next Save must keep the new rule.
+            self.settings_dialog.add_exclusion(
+                folder=chosen if pattern is None else None, pattern=pattern
+            )
 
     # Settings -----------------------------------------------------------------
 
     def edit_settings(self) -> None:
+        """Show Settings as a window of its own, so the search bar stays usable in front.
+
+        A second request brings the open window forward instead of opening another.
+        The bar stays on top of every window, so it steps aside: what opened last
+        is in front, and the bar comes back over Settings when it is called again.
+        """
+        self.window.hide()
+        if (dialog := self.settings_dialog) is not None:
+            dialog.showNormal()
+            dialog.raise_()
+            dialog.activateWindow()
+            return
         self._sync_autostart()
-        dialog = SettingsDialog(
+        dialog = self.settings_dialog = SettingsDialog(
             self.settings,
-            self.window,
             save=self.apply_settings,
             startup_enabled=self.tray.autostart.isChecked(),
             set_startup=self._set_autostart if os.name == "nt" else None,
             startup_state=self.tray.autostart.isChecked,
             website_icons=self.website_icons,
         )
-        dialog.exec()
-        dialog.deleteLater()
+        dialog.finished.connect(self._settings_closed)
+        dialog.show()
+        dialog.activateWindow()
+
+    def _settings_closed(self) -> None:
+        if (dialog := self.settings_dialog) is not None:
+            self.settings_dialog = None
+            dialog.deleteLater()
 
     def apply_settings(self, settings: Settings) -> None:
         """Save first (raises OSError), then restart only what the change affects.
@@ -784,6 +810,8 @@ class LauncherController(QObject):
         self.website_icons.close()
         self.tray.hide()
         self.window.hide()
+        if self.settings_dialog is not None:
+            self.settings_dialog.reject()
 
 
 def _details(title: str, text: str) -> QPlainTextEdit:

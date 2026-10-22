@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,8 @@ class MenuCommand:
     command: str
     folders: bool = True
     files: bool = False
+    # An .ico, .png, .svg, .exe or .dll file; empty means the icon of the program it runs.
+    icon: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -37,14 +40,28 @@ class MenuCommand:
             raise ValueError("Command folders/files flags must be JSON booleans.")
         if not (self.folders or self.files):
             raise ValueError(f"Show the command {self.title!r} for folders, files or both.")
+        if not isinstance(self.icon, str) or any(ord(c) < 32 for c in self.icon):
+            raise ValueError(f"The icon of {self.title!r} must be a file path.")
 
     def command_line(self, path: Path, folder: Path) -> str:
         """The command line for `path`; `folder` is where it starts."""
         values = {"path": _argument(path), "folder": _argument(folder), "name": path.name}
-        line = _ENVIRONMENT_VARIABLE.sub(
-            lambda match: os.environ.get(match[1], match[0]), self.command
-        )
-        return _PLACEHOLDER.sub(lambda match: values[match[1]], line)
+        return _PLACEHOLDER.sub(lambda match: values[match[1]], _expand(self.command))
+
+    def icon_file(self) -> Path | None:
+        """The file whose icon the menu shows: the chosen one, or the program's if found."""
+        if self.icon.strip():
+            return Path(_expand(self.icon.strip().strip('"')))
+        line = _expand(self.command).strip()
+        # As CreateProcess reads it: a quoted program name, or up to the first space.
+        program = line[1:].partition('"')[0] if line.startswith('"') else line.split(" ")[0]
+        found = shutil.which(program) if program else None
+        return Path(found) if found else None
+
+
+def _expand(text: str) -> str:
+    """`%VARIABLE%` references with the environment's value; unknown ones stay as typed."""
+    return _ENVIRONMENT_VARIABLE.sub(lambda match: os.environ.get(match[1], match[0]), text)
 
 
 def _argument(path: Path) -> str:

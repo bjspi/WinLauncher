@@ -21,6 +21,7 @@ kind Windows cannot list keeps its shortcuts until the next scan.
 
 from __future__ import annotations
 
+import ctypes
 import glob
 import logging
 import os
@@ -29,6 +30,7 @@ import shutil
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
+from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 
@@ -114,8 +116,6 @@ def display_languages() -> list[str]:
     """The user's display languages, such as `de-DE`, most preferred first."""
     if os.name != "nt":
         return []
-    import ctypes
-    from ctypes import wintypes
 
     count, size = wintypes.ULONG(), wintypes.ULONG()
     get = ctypes.windll.kernel32.GetUserPreferredUILanguages
@@ -163,7 +163,6 @@ def _sync_kinds(
 @contextmanager
 def _thread_languages(language: str) -> Iterator[None]:
     """Windows resources this thread loads come in `language` where it is installed."""
-    import ctypes
 
     set_languages = ctypes.windll.kernel32.SetThreadPreferredUILanguages
     set_languages(MUI_LANGUAGE_NAME, ctypes.create_unicode_buffer(language + "\0"), None)
@@ -252,7 +251,6 @@ def _is_page_entry(file_name: str, page: str) -> bool:
 
 
 def _load_indirect_string(reference: str) -> str | None:
-    import ctypes
 
     buffer = ctypes.create_unicode_buffer(1024)
     result = ctypes.windll.shlwapi.SHLoadIndirectString(reference, buffer, len(buffer), None)

@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -59,12 +58,21 @@ from winlauncher.ui.commands import CommandList
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
-from winlauncher.ui.widgets import Card, PageHeader, ToggleSwitch, line_icon, section_title
+from winlauncher.ui.widgets import (
+    Card,
+    PageHeader,
+    ToggleSwitch,
+    line_icon,
+    pick_path,
+    section_title,
+)
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
 SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
 FOLDER_PRIORITY_FORMAT = "25 | D:\\Projects | high"
-DIALOG_SIZE = QSize(920, 660)
+DIALOG_SIZE = QSize(920, 660)  # The smallest size; taller where the screen allows.
+TALLEST_UNSCROLLED_PAGE = 1  # Search folders: the dialog grows to show it whole.
+SCREEN_MARGIN = 40  # Kept free above and below the dialog.
 SIDEBAR_WIDTH = 228
 NAV_ICON_SIZE = 18
 BRAND_ICON_SIZE = 32
@@ -367,9 +375,8 @@ class PathList(QWidget):
         layout.addLayout(buttons)
 
     def add_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Choose folder")
-        if folder:
-            self.add_folders([Path(folder)])
+        if folder := pick_path(self, "Choose folder"):
+            self.add_folders([folder])
 
     def add_folders(self, folders: list[Path]) -> None:
         known = {path_key(path) for path in self.paths()}
@@ -498,10 +505,22 @@ class SettingsDialog(QDialog):
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(0)
         content.addWidget(self.pages, 1)
-        content.addWidget(self._footer())
+        footer = self._footer()
+        content.addWidget(footer)
         layout.addLayout(content, 1)
+        self._fit_height(TALLEST_UNSCROLLED_PAGE, footer)
 
     # Frame ----------------------------------------------------------------------
+
+    def _fit_height(self, row: int, footer: QWidget) -> None:
+        """Tall enough to show page `row` without scrolling, where the screen has room."""
+        self.ensurePolished()
+        page = self.pages.widget(row).widget()
+        needed = page.sizeHint().height() + footer.sizeHint().height()
+        height = max(DIALOG_SIZE.height(), needed)
+        if (screen := self.screen()) is not None:
+            height = min(height, screen.availableGeometry().height() - SCREEN_MARGIN)
+        self.resize(self.width(), max(height, DIALOG_SIZE.height()))
 
     def _sidebar(self) -> QFrame:
         sidebar = QFrame()
@@ -721,7 +740,11 @@ class SettingsDialog(QDialog):
         self.markers = QLineEdit(", ".join(settings.marker_files))
         self.markers.setAccessibleName("Marker file names, comma-separated")
         card = Card()
-        card.add_block("Excluded folders", "Skipped with everything inside them.", self.excluded)
+        card.add_block(
+            "Excluded folders and entries",
+            "Skipped with everything inside them; single entries come from a result's menu.",
+            self.excluded,
+        )
         card.add_block(
             "Patterns",
             "One per line: names such as node_modules or *.lnk, or paths such as Android/**/build.",
@@ -794,6 +817,16 @@ class SettingsDialog(QDialog):
     def _use_theme_icons(self) -> None:
         for row, icon in enumerate(self.nav_icons):
             self.nav.item(row).setIcon(line_icon(icon, colors().faint, colors().accent))
+
+    def add_exclusion(self, *, folder: Path | None = None, pattern: str | None = None) -> None:
+        """An exclusion saved elsewhere meanwhile, such as from a result's menu.
+
+        It joins the fields, so a later Save here keeps it instead of dropping it.
+        """
+        if folder is not None:
+            self.excluded.add_folders([folder])
+        if pattern and pattern not in _split_lines(self.patterns.toPlainText()):
+            self.patterns.appendPlainText(pattern)
 
     def read_settings(self) -> Settings:
         """Raise ValueError with a user-facing message for invalid input."""

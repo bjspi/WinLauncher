@@ -17,14 +17,12 @@ import time
 from pathlib import Path
 
 from winlauncher.platform.windows import (
-    DIALOG_CLASS,
     FILE_VIEW_CLASS,
     ULONG_PTR,
     activate_window,
     class_name,
     descendants,
     dialog_file_view,
-    idle_focus_window,
     user32,
 )
 
@@ -43,8 +41,6 @@ BN_CLICKED = 0
 IDOK = 1
 SMTO_ABORTIFHUNG = 0x0002
 MESSAGE_TIMEOUT_MS = 500  # A hung dialog fails the action instead of blocking a worker.
-# The keyboard hook asks whether the file-name box is empty; it must answer fast.
-TYPING_CHECK_TIMEOUT_MS = 50
 
 # The breadcrumb toolbar's window text is "<localized label>: <folder path>",
 # e.g. "Address: C:\Users" or "Adresse: C:\Users", also with the edit box closed.
@@ -203,31 +199,11 @@ class FileDialog:
 def dialog_typing_view() -> tuple[int, int] | None:
     """`(dialog, file view)` when typing in the foreground dialog opens the search bar.
 
-    The file list counts in Open and Save dialogs alike. An Open dialog starts with
-    the focus in its file-name box, which counts too while it is empty, as there is
-    nothing to type over. A Save dialog's box never counts: new names are typed there.
+    Only the file list counts, once the user clicked into it. The file-name box
+    keeps its keys in Open and Save dialogs alike, so names typed there are left
+    to the dialog and its own completion.
     """
-    return dialog_file_view() or _empty_open_file_name_view()
-
-
-def _empty_open_file_name_view() -> tuple[int, int] | None:
-    dialog = user32.GetForegroundWindow()
-    if class_name(dialog) != DIALOG_CLASS:
-        return None
-    # Only Open dialogs have the file-name combo box; Save dialogs use another control.
-    combo = user32.GetDlgItem(dialog, FILE_NAME_COMBO_ID)
-    focus = idle_focus_window()
-    if not combo or not focus or class_name(focus) != EDIT_CLASS:
-        return None
-    if not user32.IsChild(combo, focus):
-        return None
-    try:
-        if send_message(focus, WM_GETTEXTLENGTH, timeout_ms=TYPING_CHECK_TIMEOUT_MS):
-            return None
-    except OSError:
-        return None
-    view = next((w for w in descendants(dialog) if class_name(w) == FILE_VIEW_CLASS), None)
-    return (dialog, view) if view else None
+    return dialog_file_view()
 
 
 def _find_file_name_edit(dialog: int) -> int | None:

@@ -68,6 +68,7 @@ from winlauncher.platform.gesture import ViewKind
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
 from winlauncher.search.ranking import SearchHit
+from winlauncher.ui.commands import command_icon
 from winlauncher.ui.file_transfer import file_mime_data, url_mime_data
 from winlauncher.ui.highlight import matched_positions
 from winlauncher.ui.icons import ResultIcons
@@ -353,10 +354,6 @@ def _menu_commands(commands: tuple[MenuCommand, ...], kind: ItemKind) -> list[Me
     return []
 
 
-def _containing_folder(hit: SearchHit) -> Path:
-    return hit.item.path if hit.item.kind == ItemKind.FOLDER else hit.item.path.parent
-
-
 def _paint_soft_shadow(painter: QPainter, surface: QRectF) -> None:
     """Stack faint rounded rectangles that darken towards the surface.
 
@@ -479,6 +476,7 @@ class LauncherWindow(QWidget):
         self.auto_hide_enabled = False
         self.auto_hide_ms = 0
         self.menu_commands: tuple[MenuCommand, ...] = ()
+        self._command_icons: dict[MenuCommand, QIcon] = {}  # Loaded when first shown.
         self.foreground_watcher = None
         if self._native_focus():
             from winlauncher.platform.windows import ForegroundWatcher
@@ -1051,6 +1049,12 @@ class LauncherWindow(QWidget):
     def set_menu_commands(self, commands: tuple[MenuCommand, ...]) -> None:
         """The user's own entries in the context menu of folder and file results."""
         self.menu_commands = commands
+        self._command_icons.clear()
+
+    def _command_icon(self, command: MenuCommand) -> QIcon:
+        if (icon := self._command_icons.get(command)) is None:
+            icon = self._command_icons[command] = command_icon(command)
+        return icon
 
     def close_focus_watch(self) -> None:
         if self.foreground_watcher is not None:
@@ -1324,8 +1328,13 @@ class LauncherWindow(QWidget):
         menu.addAction("Show in containing folder", lambda: self.reveal_requested.emit(hit))
         menu.addSeparator()
         if commands := _menu_commands(self.menu_commands, hit.item.kind):
+            menu.setObjectName("withIcons")
             for command in commands:
-                menu.addAction(command.title, partial(self.command_requested.emit, hit, command))
+                menu.addAction(
+                    self._command_icon(command),
+                    command.title,
+                    partial(self.command_requested.emit, hit, command),
+                )
             menu.addSeparator()
         menu.addAction("Copy\tCtrl+C", lambda: self.copy_selected(row))
         menu.addAction("Cut\tCtrl+X", lambda: self.copy_selected(row, cut=True))
@@ -1337,9 +1346,9 @@ class LauncherWindow(QWidget):
         menu.addSeparator()
         favorite_label = "Remove favorite" if hit.item.pinned else "Add to favorites"
         menu.addAction(favorite_label, lambda: self.favorite_requested.emit(hit))
-        folder = _containing_folder(hit)
         menu.addAction(
-            "Exclude this or a parent folder…", lambda: self.exclude_requested.emit(folder)
+            "Exclude this or a parent folder…",
+            lambda: self.exclude_requested.emit(hit.item.path),
         )
         menu.addSeparator()
         menu.addAction(

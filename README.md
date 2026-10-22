@@ -58,9 +58,9 @@ indexing and recursive search. Clicking a folder or pressing Enter navigates the
 original Explorer tab, without opening another window. Clearing the scope returns
 to the global launcher.
 
-**Quick Switch** brings the same bar to the Open and Save dialogs of other
-programs. Start typing in an Open dialog, or in the file list of any Open or Save
-dialog, to search all your folders, wherever the dialog opened (<kbd>Esc</kbd>
+**Quick Switch** brings the same bar to Open and Save dialogs. Click into a
+dialog's file list and start typing to search all your folders, wherever the
+dialog opened; typing in the file-name box stays ordinary typing (<kbd>Esc</kbd>
 puts what you typed back into the file-name box): choosing a folder
 opens it in the dialog, choosing a file opens its folder and enters its name in
 the file-name box. WinLauncher never confirms the dialog for you, so a Save dialog
@@ -77,7 +77,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.8.1"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.9.0"
 winlauncher --show
 ```
 
@@ -160,12 +160,19 @@ folders by default:
 | --- | --- |
 | Open in Windows Terminal | `wt.exe -d "{folder}"` |
 | Open Command Prompt here | `cmd.exe /k pushd "{folder}"` |
+| Open Claude Code here (example) | `wt.exe -d "{folder}" cmd /k claude` |
 | Open in VS Code (example) | `code "{path}"` |
 
 `{folder}` is the folder (or a file's folder), `{path}` the folder or file itself
 and `{name}` its name; quote them, since paths may contain spaces. `%VARIABLES%`
 such as `%LOCALAPPDATA%` are expanded. Programs start in `{folder}`, and console
 programs get a window of their own. Apps have no own commands.
+
+Windows Terminal runs what follows its options in the new tab, so no `&&` is
+needed; `cmd /k` keeps the prompt open after Claude Code ends. Replace `claude`
+with `codex` or `copilot` for those tools; **Duplicate** copies an entry to start
+from. Each entry shows its program's icon, or an `.ico`, `.png`, `.svg`, `.exe` or `.dll`
+file you choose under **Icon**.
 
 ### 📋 Requirements
 
@@ -196,8 +203,9 @@ programs get a window of their own. Apps have no own commands.
 
 Click the icon at the right of the bar for the **All / Apps / Files / Folders**
 filters, refresh, an expanded view, settings, About and restart. Right-click a
-result → **Exclude this or a parent folder…** to drop a noisy folder tree; the
-picker shows how many catalog entries each choice removes. **Custom rule…** turns
+result → **Exclude this or a parent folder…** to drop just that entry or a noisy
+folder tree; the picker shows how many catalog entries each choice removes. For a
+Windows setting or Store app it offers only the entry itself. **Custom rule…** turns
 the chosen folder into an exclusion pattern you edit first, for example
 `**\patches\src` for every `src` folder directly inside a `patches` folder.
 

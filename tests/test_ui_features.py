@@ -45,6 +45,40 @@ class FolderFeaturesTest(unittest.TestCase):
         paths.add_folders(dropped_folders(mime))
         self.assertEqual(paths.paths(), (str(first).upper(), str(second)))
 
+    def test_pickers_block_only_their_window_so_quick_switch_can_type(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QFileDialog, QWidget
+
+        from winlauncher.ui.widgets import pick_path
+
+        seen = []
+
+        def run(dialog: QFileDialog) -> int:
+            seen.append((dialog.windowModality(), dialog.fileMode(), dialog.nameFilters()))
+            dialog.selectFile(str(self.base / "icon.ico"))
+            return QDialog.DialogCode.Accepted
+
+        owner = QWidget()
+        with (
+            patch.object(QFileDialog, "exec", run),
+            patch.object(QFileDialog, "selectedFiles", return_value=[str(self.base / "x.ico")]),
+        ):
+            chosen = pick_path(owner, "Choose icon", "Icons (*.ico);;All files (*)")
+            folder = pick_path(owner, "Choose folder")
+        self.assertEqual(chosen, self.base / "x.ico")
+        self.assertEqual(folder, self.base / "x.ico")
+        modal = Qt.WindowModality.WindowModal
+        self.assertEqual(
+            seen,
+            [
+                (modal, QFileDialog.FileMode.ExistingFile, ["Icons (*.ico)", "All files (*)"]),
+                (modal, QFileDialog.FileMode.Directory, ["All Files (*)"]),
+            ],
+        )
+        with patch.object(QFileDialog, "exec", return_value=QDialog.DialogCode.Rejected):
+            self.assertIsNone(pick_path(owner, "Choose folder"))
+        owner.deleteLater()
+
     def test_exclusion_candidates_stop_at_the_owning_root(self):
         root = self.base / "Work"
         folder = root / "a" / "b"
@@ -52,6 +86,12 @@ class FolderFeaturesTest(unittest.TestCase):
         outside = exclusion_candidates(folder, [])
         self.assertEqual(outside[0], folder)
         self.assertNotIn(Path(folder.anchor), outside)
+        # A file comes first itself; in a generated folder it is the only choice.
+        file = folder / "notes.txt"
+        self.assertEqual(exclusion_candidates(file, [root])[:2], [file, folder])
+        generated = self.base / "Windows settings"
+        setting = generated / "Settings" / "Bluetooth.lnk"
+        self.assertEqual(exclusion_candidates(setting, [generated], (generated,)), [setting])
 
     def test_exclude_dialog_returns_the_selected_parent(self):
         choices = [FolderChoice(self.base / "a" / "b", 3), FolderChoice(self.base / "a", 900)]

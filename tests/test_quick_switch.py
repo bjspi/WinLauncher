@@ -361,47 +361,20 @@ class QuickSwitchSettingTest(TemporaryFolderTest):
 
 @unittest.skipUnless(WINDOWS, "Windows file dialogs")
 class OpenFileNameBoxTest(unittest.TestCase):
-    """Open dialogs start with the focus in their file-name box; typing there counts."""
+    """Only the file list opens the bar; the file-name box keeps its keys."""
 
-    DIALOG, COMBO, EDIT, VIEW = 1, 5, 7, 20
-
-    def typing_view(self, *, combo: int, text_length: int | Exception) -> tuple | None:
+    def test_only_the_focused_file_list_opens_the_bar(self):
         from winlauncher.platform import file_dialog
-        from winlauncher.platform.windows import user32
 
-        classes = {self.DIALOG: "#32770", self.EDIT: "Edit", self.VIEW: "SHELLDLL_DefView"}
-        answer = {"side_effect": text_length} if isinstance(text_length, Exception) else {}
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(file_dialog, "dialog_file_view", return_value=None))
-            stack.enter_context(patch.object(user32, "GetForegroundWindow", return_value=1))
-            stack.enter_context(patch.object(user32, "GetDlgItem", return_value=combo))
-            stack.enter_context(patch.object(user32, "IsChild", return_value=True))
-            stack.enter_context(
-                patch.object(file_dialog, "idle_focus_window", return_value=self.EDIT)
-            )
-            stack.enter_context(
-                patch.object(file_dialog, "class_name", side_effect=lambda h: classes.get(h, "x"))
-            )
-            stack.enter_context(
-                patch.object(file_dialog, "descendants", return_value=[3, self.VIEW])
-            )
-            send = stack.enter_context(
-                patch.object(file_dialog, "send_message", return_value=text_length, **answer)
-            )
-            view = file_dialog.dialog_typing_view()
-        if combo:
-            self.assertEqual(
-                send.call_args.kwargs["timeout_ms"], file_dialog.TYPING_CHECK_TIMEOUT_MS
-            )
-        return view
-
-    def test_empty_open_file_name_box_opens_the_bar(self):
-        self.assertEqual(self.typing_view(combo=self.COMBO, text_length=0), (1, self.VIEW))
-
-    def test_typed_names_save_dialogs_and_hung_dialogs_keep_their_keys(self):
-        self.assertIsNone(self.typing_view(combo=self.COMBO, text_length=4))
-        self.assertIsNone(self.typing_view(combo=0, text_length=0))  # Save dialog.
-        self.assertIsNone(self.typing_view(combo=self.COMBO, text_length=OSError("hung")))
+        with patch.object(file_dialog, "dialog_file_view", return_value=(1, 20)):
+            self.assertEqual(file_dialog.dialog_typing_view(), (1, 20))
+        # Focus in the file-name box, even an empty one in an Open dialog.
+        with (
+            patch.object(file_dialog, "dialog_file_view", return_value=None),
+            patch.object(file_dialog, "send_message") as send,
+        ):
+            self.assertIsNone(file_dialog.dialog_typing_view())
+        send.assert_not_called()  # Nothing asks the dialog while keys are typed.
 
     def test_escape_hands_the_typed_text_back_with_the_caret_at_the_end(self):
         from winlauncher.platform import file_dialog

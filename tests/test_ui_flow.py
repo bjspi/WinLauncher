@@ -268,6 +268,7 @@ class UiFlowTest(unittest.TestCase):
                     shown[kind] = actions.keys()
                     menu.close()
                     if kind == ItemKind.FOLDER:
+                        shown["icon"] = actions[terminal.title].icon()
                         actions[terminal.title].trigger()
 
         for hit in (file_hit, app_hit, folder_hit):
@@ -284,6 +285,8 @@ class UiFlowTest(unittest.TestCase):
         with patch("winlauncher.actions.shell.run_command") as run:
             self.tasks.finish(TaskCategory.ACTION)
         run.assert_called_once_with("cmd.exe", folder)
+        if os.name == "nt":  # The icon of cmd.exe, the program the command runs.
+            self.assertFalse(shown["icon"].isNull())
 
     @unittest.skipUnless(os.name == "nt", "Windows shell context menus")
     def test_windows_context_menu_is_built_by_the_shell(self):
@@ -1298,6 +1301,34 @@ class UiFlowTest(unittest.TestCase):
         self.assertIn("--show", arguments)  # The launcher was open, so it reopens.
         application.return_value.quit.assert_called_once()
 
+    def test_settings_is_a_window_of_its_own_that_keeps_outside_exclusions(self):
+        c = self.controller
+        c.startup = Mock()  # Never read the real Startup folder.
+        c.startup.is_enabled.return_value = False
+        self.assertTrue(self.window.isVisible())
+        c.edit_settings()
+        self.assertFalse(self.window.isVisible())  # Settings opened last, so it is in front.
+        dialog = c.settings_dialog
+        self.assertIsNotNone(dialog)
+        self.assertFalse(dialog.isModal())
+        self.assertIsNone(dialog.parent())  # The search bar can come in front of it.
+        c.edit_settings()
+        self.assertIs(c.settings_dialog, dialog)  # Brought forward, not opened twice.
+        folder = self.root / "noise"
+        folder.mkdir()
+        with patch("winlauncher.ui.controller.ExcludeFolderDialog") as picker:
+            picker.return_value.exec.return_value = True
+            picker.return_value.chosen_folder.return_value = folder
+            picker.return_value.pattern = None
+            c.exclude_folder(folder)
+            picker.return_value.pattern = "**\\noise\\deep"
+            c.exclude_folder(folder)
+        dialog.save()  # Saving the window afterwards keeps both rules.
+        self.assertIn(str(folder), c.settings.excluded_paths)
+        self.assertIn("**\\noise\\deep", c.settings.excluded_patterns)
+        dialog.reject()
+        self.assertIsNone(c.settings_dialog)
+
     def test_exclude_picker_adds_the_chosen_parent(self):
         c = self.controller
         folder = self.root / "project" / "node_stuff" / "deep"
@@ -1320,6 +1351,17 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(c.settings.excluded_paths, excluded_paths)
         self.assertEqual(c.settings.excluded_patterns[-1], "**\\node_stuff\\deep")
         self.assertFalse(c.settings.exclusions().allows(folder / "file.txt"))
+        # A single entry, such as one Windows setting, is excluded by itself.
+        entry = self.root / "project" / "Bluetooth.lnk"
+        with patch("winlauncher.ui.controller.ExcludeFolderDialog") as dialog:
+            dialog.return_value.exec.return_value = True
+            dialog.return_value.chosen_folder.return_value = entry
+            dialog.return_value.pattern = None
+            c.exclude_folder(entry)
+        self.assertEqual(dialog.call_args.args[0][0].folder, entry)
+        exclusions = c.settings.exclusions()
+        self.assertFalse(exclusions.allows(entry, application=True))
+        self.assertTrue(exclusions.allows(entry.with_name("Bluetooth.lnk2"), application=True))
 
     def test_autostart_tray_and_settings_share_state_and_restore_on_error(self):
         c = self.controller

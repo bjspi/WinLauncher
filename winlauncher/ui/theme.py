@@ -305,6 +305,8 @@ QMenu::item:disabled { color: $hint; }
 QMenu::indicator { width: 16px; height: 16px; left: 10px; }
 QMenu::indicator:checked { image: url($menu_check); }
 QMenu::separator { height: 1px; background: $divider; margin: 4px 10px; }
+QMenu::icon { padding-left: 8px; }
+QMenu#withIcons::item { padding-left: 6px; }  /* Qt adds the icon column itself. */
 QDialog#settings { background: $page; }
 QFrame#sidebar { background: $sidebar; border: 0; border-right: 1px solid $sidebar_border; }
 QLabel#brandName { font-size: 12pt; font-weight: 600; color: $title; }

@@ -1,6 +1,6 @@
-"""Choose which folder to exclude: a result's folder or one of its parents.
+"""Choose what to exclude: a result itself, or its folder or one of their parents.
 
-Custom rule… instead turns the chosen folder into an exclusion pattern to edit first.
+Custom rule… instead turns the chosen path into an exclusion pattern to edit first.
 """
 
 from __future__ import annotations
@@ -32,20 +32,26 @@ PATTERN_HELP = (
 
 @dataclass(frozen=True, slots=True)
 class FolderChoice:
-    folder: Path
-    entries: int  # Catalog entries inside the folder, shown to guide the choice.
+    folder: Path  # A folder, or the result itself.
+    entries: int  # Catalog entries it covers, shown to guide the choice.
 
 
-def exclusion_candidates(folder: Path, roots: list[Path]) -> list[Path]:
-    """`folder` and its parents, nearest first.
+def exclusion_candidates(
+    path: Path, roots: list[Path], generated: tuple[Path, ...] = ()
+) -> list[Path]:
+    """`path` itself and its parents, nearest first.
 
     Inside a configured root, the list ends at that root. Elsewhere it ends below
     the drive, because excluding a whole drive is never a sensible single click.
+    In a `generated` folder, such as WinLauncher's Windows settings shortcuts, only
+    `path` itself: those folders are switched off in Settings instead.
     """
-    owners = [root for root in roots if is_within(folder, root)]
+    if any(is_within(path, folder) for folder in generated):
+        return [path]
+    owners = [root for root in roots if is_within(path, root)]
     stop = max(owners, key=lambda root: len(str(root)), default=None)
     candidates = []
-    current = folder
+    current = path
     while current.parent != current:
         candidates.append(current)
         if stop is not None and current == stop:
@@ -57,22 +63,23 @@ def exclusion_candidates(folder: Path, roots: list[Path]) -> list[Path]:
 class ExcludeFolderDialog(QDialog):
     def __init__(self, choices: list[FolderChoice], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Exclude a folder")
+        self.setWindowTitle("Exclude from search")
         self.resize(560, 360)
         self.pattern: str | None = None  # Set when a custom rule was accepted instead.
         layout = QVBoxLayout(self)
         layout.addWidget(
             QLabel(
-                "Choose the folder to exclude. It and everything below it will no "
-                "longer be indexed or searched.\nCustom rule… lets you edit it into a "
-                "pattern first. Undo this in Settings → Exclusions."
+                "Choose what to exclude: this entry, or a folder with everything below "
+                "it.\nCustom rule… lets you edit it into a pattern first. Undo this in "
+                "Settings → Exclusions."
             )
         )
         self.folders = QListWidget()
         self.folders.setObjectName("itemList")
-        self.folders.setAccessibleName("Folders that can be excluded")
+        self.folders.setAccessibleName("Entries and folders that can be excluded")
         for choice in choices:
-            item = QListWidgetItem(f"{choice.folder}\n{choice.entries:,} catalog entries")
+            entries = f"{choice.entries:,} catalog entr{'y' if choice.entries == 1 else 'ies'}"
+            item = QListWidgetItem(f"{choice.folder}\n{entries}")
             item.setData(Qt.ItemDataRole.UserRole, choice.folder)
             self.folders.addItem(item)
         self.folders.setCurrentRow(0)
