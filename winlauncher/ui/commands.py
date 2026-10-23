@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -29,8 +30,8 @@ from winlauncher.ui.widgets import pick_path
 LIST_WIDTH = 200
 ROW_SIZE = QSize(LIST_WIDTH, 42)  # Two text lines: title and command line.
 LIST_ICON_SIZE = QSize(24, 24)
-ICON_FILES = "Icons (*.ico *.png *.svg);;Programs and libraries (*.exe *.dll);;All files (*)"
-IMAGE_SUFFIXES = (".ico", ".png", ".svg")
+ICON_FILES = "Icons (*.ico *.png *.svg *.webp);;Programs and libraries (*.exe *.dll);;All files (*)"
+IMAGE_SUFFIXES = (".ico", ".png", ".svg", ".webp")
 FORM_SPACING = 20
 # "Show for" choices: label, (folders, files).
 SHOW_FOR = (
@@ -100,7 +101,7 @@ class CommandList(QWidget):
         self.command.setPlaceholderText('wt.exe -d "{folder}"')
         self.icon.setPlaceholderText("Automatic: the program's icon")
         self.icon.setToolTip(
-            "An .ico, .png, .svg, .exe or .dll file; leave empty for the program's icon."
+            "An .ico, .png, .svg, .webp, .exe or .dll file; leave empty for the program's icon."
         )
         self.show_for = QComboBox()
         for label, _flags in SHOW_FOR:
@@ -198,7 +199,13 @@ class CommandList(QWidget):
 
     def remove_selected(self) -> None:
         row = self.list.currentRow()
-        if row >= 0:
+        if row < 0:
+            return
+        title = _draft(self.list.item(row)).title.strip() or "New command"
+        answer = QMessageBox.question(
+            self, "Remove command", f"Remove the context menu command “{title}”?"
+        )
+        if answer == QMessageBox.StandardButton.Yes:
             self.list.takeItem(row)
         self._selected()
 

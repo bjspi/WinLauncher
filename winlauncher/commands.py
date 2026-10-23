@@ -26,7 +26,7 @@ class MenuCommand:
     command: str
     folders: bool = True
     files: bool = False
-    # An .ico, .png, .svg, .exe or .dll file; empty means the icon of the program it runs.
+    # An .ico, .png, .svg, .webp, .exe or .dll file; empty means the icon of the program it runs.
     icon: str = ""
 
     def __post_init__(self) -> None:

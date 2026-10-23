@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from winlauncher.actions import ItemActions
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
@@ -194,7 +194,13 @@ class MenuCommandUiTest(unittest.TestCase):
         self.assertEqual(saved[0].menu_commands, (MenuCommand("Terminal", "cmd.exe"),))
         dialog.deleteLater()
         dialog = SettingsDialog(original, website_icons=self.icons)
-        dialog.menu_commands.remove_selected()
+        question = "winlauncher.ui.commands.QMessageBox.question"
+        with patch(question, return_value=QMessageBox.StandardButton.No) as asked:
+            dialog.menu_commands.remove_selected()
+        self.assertIn("Terminal", asked.call_args.args[2])
+        self.assertEqual(dialog.read_settings().menu_commands, (TERMINAL,))
+        with patch(question, return_value=QMessageBox.StandardButton.Yes):
+            dialog.menu_commands.remove_selected()
         self.assertEqual(dialog.read_settings().menu_commands, ())
         self.assertFalse(dialog.menu_commands.remove.isEnabled())
         dialog.menu_commands.add_command()
@@ -241,6 +247,9 @@ class MenuCommandUiTest(unittest.TestCase):
             self.assertEqual(dialog.read_settings().menu_commands[0].icon, str(chosen))
             self.assertFalse(command_icon(dialog.read_settings().menu_commands[0]).isNull())
             dialog.deleteLater()
+            webp = chosen.with_suffix(".webp")
+            self.assertTrue(image.save(str(webp)))
+            self.assertFalse(command_icon(MenuCommand("WebP", "x", icon=str(webp))).isNull())
         self.assertTrue(command_icon(MenuCommand("Gone", "x", icon=str(chosen))).isNull())
         missing = MenuCommand("Missing", "no-such-program-wl.exe")
         self.assertTrue(command_icon(missing).isNull())

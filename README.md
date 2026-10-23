@@ -171,7 +171,7 @@ programs get a window of their own. Apps have no own commands.
 Windows Terminal runs what follows its options in the new tab, so no `&&` is
 needed; `cmd /k` keeps the prompt open after Claude Code ends. Replace `claude`
 with `codex` or `copilot` for those tools; **Duplicate** copies an entry to start
-from. Each entry shows its program's icon, or an `.ico`, `.png`, `.svg`, `.exe` or `.dll`
+from. Each entry shows its program's icon, or an `.ico`, `.png`, `.svg`, `.webp`, `.exe` or `.dll`
 file you choose under **Icon**.
 
 ### 📋 Requirements

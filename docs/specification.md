@@ -487,7 +487,7 @@ reported. Defaults: **Open in Windows Terminal** (`wt.exe -d "{folder}"`) and
 **Open Command Prompt here** (`cmd.exe /k pushd "{folder}"`, like Explorer's own
 entry; `pushd` also maps network folders), both for folders.
 
-Each command shows an icon: its chosen `.ico`, `.png`, `.svg`, `.exe` or `.dll` file
+Each command shows an icon: its chosen `.ico`, `.png`, `.svg`, `.webp`, `.exe` or `.dll` file
 (`%VARIABLES%` expand), or else the first icon of the program its command line
 starts, the quoted or first word found on the PATH. An app execution alias such as
 `WindowsApps\wt.exe` is an empty file, so its icon is read from the packaged
@@ -495,6 +495,7 @@ program its reparse data names. Icons load when the menu first shows them and ar
 kept until the commands change; a command without one shows none. In a menu with
 icons, every title starts in the same column. **Duplicate** in the settings copies
 the selected command below it, for variants such as Claude Code and Codex.
+**Remove selected** asks for confirmation first.
 
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
 the result itself and its parents up to the configured root (or up to, but not
