@@ -29,6 +29,7 @@ class UpdateDialog(InfoDialog):
         subtitle: str,
         details: Callable[[], str],
         details_label: str,
+        hide_label: str,
         parent=None,
     ):
         super().__init__(
@@ -48,12 +49,16 @@ class UpdateDialog(InfoDialog):
         self.details.setFixedHeight(DETAILS_HEIGHT)
         self.details.hide()
         self.add_widget(self.details)
-        self.add_button(details_label, self.toggle_details)
+        # The toggle names what a click does: show the details, or hide them again.
+        self._labels = (details_label, hide_label)
+        self.details_button = self.add_button(details_label, self.toggle_details)
 
     def toggle_details(self) -> None:
         if not self.details.toPlainText():
             self.details.setPlainText(self._load_details())
-        self.details.setVisible(not self.details.isVisible())
+        shown = not self.details.isVisible()
+        self.details.setVisible(shown)
+        self.details_button.setText(self._labels[shown])
         self.adjustSize()
 
 

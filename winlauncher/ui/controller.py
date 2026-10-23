@@ -749,6 +749,7 @@ class LauncherController(QObject):
             f"You are running {__version__}. A restart finishes the update.",
             lambda: release_changes(root, release.tag) or "No changes to show.",
             "Show changes",
+            "Hide changes",
             self.window,
         )
         dialog.add_button("Cancel", dialog.reject)
@@ -809,6 +810,7 @@ class LauncherController(QObject):
             "WinLauncher folder were changed locally.",
             lambda: output,
             "Details",
+            "Hide details",
             self.window,
         )
         dialog.add_button("Close", dialog.reject, primary=True)

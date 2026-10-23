@@ -20,6 +20,7 @@ from winlauncher.platform.git import release_changes
 from winlauncher.releases import Release
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.settings import PathList, dropped_folders
+from winlauncher.ui.update_dialog import UpdateDialog
 from winlauncher.ui.updater import ReleaseUpdater
 
 
@@ -307,6 +308,28 @@ class ReleaseUpdaterTest(unittest.TestCase):
         self.wait_for(lambda: results)
         self.assertEqual(results[0][:2], (True, False))
         self.assertEqual((self.checkout / "file.txt").read_text(), "local work")
+
+
+class UpdateDialogTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_details_toggle_names_what_a_click_does(self):
+        loads = []
+        dialog = UpdateDialog(
+            "Update", "Subtitle", lambda: loads.append(1) or "diff", "Show changes", "Hide changes"
+        )
+        dialog.finish()
+        dialog.show()
+        dialog.toggle_details()
+        self.assertTrue(dialog.details.isVisible())
+        self.assertEqual(dialog.details_button.text(), "Hide changes")
+        dialog.toggle_details()
+        self.assertFalse(dialog.details.isVisible())
+        self.assertEqual(dialog.details_button.text(), "Show changes")
+        self.assertEqual(loads, [1])  # The details load once.
+        dialog.deleteLater()
 
 
 if __name__ == "__main__":
