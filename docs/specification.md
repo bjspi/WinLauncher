@@ -524,12 +524,24 @@ starts the workflow that tests and only then publishes the release, so a newer t
 is announced only once its Rust engine wheel exists: a HEAD request for the wheel,
 without following GitHub's redirect to the download host, answers with a redirect
 for a published release and 404 before. A 404 is asked again after 5 minutes;
-an unreachable GitHub waits for the next regular check.
+an unreachable GitHub waits for the next regular check. A checkout then fetches
+just that tag before announcing it; a failed fetch is retried with the next check.
+A known release turns the tray entry into **Update to X.Y.Z…** and shows a
+notification naming the version.
 
-**Check for updates** (or **Install update**) in a checkout fetches the tags and
-runs `git merge --ff-only` to the release, which refuses diverged or modified
-checkouts instead of merging and leaves a checkout already past the release where
-it is. After a real update it marks a reinstall as pending and offers a restart;
+In a checkout, **Check for updates** (or **Update to X.Y.Z…**) asks "Update to
+WinLauncher X.Y.Z?" with the running version; **Show changes** expands the
+release's commits, changed files and diff (cut off after 200,000 characters),
+read from the fetched tag. **Update** fetches the tag again and runs
+`git merge --ff-only` to it, which refuses diverged or modified checkouts instead
+of merging and leaves a checkout already past the release where it is. A refused
+update says it is usually caused by locally changed files, keeps git's output
+behind **Details** and offers **Force update…**: after a confirmation it runs
+`git stash push --include-untracked` and `git reset --hard` to the tag, so local
+changes stay in the stash, ignored files and the settings in the data directory
+are untouched, and the output starts with the previous HEAD so replaced commits
+can be found. After a real update, forced or not, it marks a reinstall as pending
+and offers a restart;
 the next start runs `pip install -e ".[rust]"` before anything loads the old
 engine, whose `.pyd` Windows locks while it runs. A failed reinstall, for example
 offline, stays pending: the next starts try again, three in all, and the message

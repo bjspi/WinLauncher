@@ -11,6 +11,8 @@ from pathlib import Path
 from winlauncher.platform.startup import PACKAGE_PARENT
 
 GIT_QUERY_TIMEOUT_SECONDS = 10
+# A release's changes stay readable in a text box; a huge diff is cut off.
+RELEASE_CHANGES_MAX_CHARS = 200_000
 NO_CONSOLE = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # pythonw must not flash a console.
 
 
@@ -38,6 +40,23 @@ def remote_url(root: Path) -> str | None:
     return _git_output(root, "remote", "get-url", "origin")
 
 
+def release_changes(root: Path, tag: str) -> str | None:
+    """What updating to the already fetched `tag` brings: commits, changed files, the diff."""
+    reference = f"refs/tags/{tag}"
+    sections = [
+        ("Commits", _git_output(root, "log", "--oneline", "--no-decorate", f"HEAD..{reference}")),
+        ("Changed files", _git_output(root, "diff", "--stat", "HEAD", reference)),
+        ("Changes", _git_output(root, "diff", "HEAD", reference)),
+    ]
+    text = "\n\n".join(f"{title}\n{body}" for title, body in sections if body)
+    if not text:
+        return None
+    if len(text) > RELEASE_CHANGES_MAX_CHARS:
+        cut = len(text) - RELEASE_CHANGES_MAX_CHARS
+        text = f"{text[:RELEASE_CHANGES_MAX_CHARS]}\n\n… {cut:,} more characters not shown."
+    return text
+
+
 def git_environment() -> dict[str, str]:
     """Git must never wait for a password on a hidden console."""
     return {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"}
@@ -49,12 +68,13 @@ def _git_output(root: Path, *arguments: str) -> str | None:
             ["git", *arguments],
             cwd=root,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",  # Diffs may contain any bytes.
             timeout=GIT_QUERY_TIMEOUT_SECONDS,
             env=git_environment(),
             creationflags=NO_CONSOLE,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    output = result.stdout.strip()
+    output = result.stdout.rstrip()
     return output if result.returncode == 0 and output else None

@@ -3,7 +3,8 @@
 Updates follow release tags, never untested commits, because only a release
 ships the matching prebuilt Rust engine. Every installation can check for a
 release through `git ls-remote`; only a source checkout applies it itself, by
-fast-forwarding to the tag. Its packages are reinstalled at the next start
+fast-forwarding to the tag, or on request by setting it to the tag after
+stashing local changes. Its packages are reinstalled at the next start
 (see `winlauncher.install`), when the old native engine is no longer loaded.
 
 Git runs through QProcess, so neither the periodic check nor the update blocks
@@ -38,6 +39,7 @@ GIT_TIMEOUT_MS = 120_000  # A stalled network or credential helper is killed.
 UNPUBLISHED_RETRY_MS = 5 * 60 * 1000
 WHEEL_CHECK_TIMEOUT_MS = 20_000
 NOT_FOUND = 404
+FORCE_UPDATE_STASH_MESSAGE = "WinLauncher: local changes before a forced update"
 
 # Answers whether a release's engine wheel can be downloaded; None if unknown.
 PublishedCheck = Callable[[Release, Callable[[bool | None], None]], None]
@@ -56,6 +58,9 @@ class ReleaseUpdater(QObject):
         self._check: QProcess | None = None
         self._update: QProcess | None = None
         self._head_before_update: str | None = None
+        self._update_steps: list[list[str]] = []
+        self._update_output: list[str] = []
+        self.forced = False  # Whether the running or last update was a forced one.
         self._confirming = False  # Asking whether a new tag's release is published.
         self.ask_published: PublishedCheck = self._ask_published
         self._network: QNetworkAccessManager | None = None
@@ -107,22 +112,48 @@ class ReleaseUpdater(QObject):
         `--ff-only` refuses diverged or dirty checkouts instead of opening a merge,
         and a checkout already past the release simply stays where it is.
         """
-        if not self.can_apply or self.updating or self.latest is None:
-            return
-        self._head_before_update = current_head(self.root)
-        tag = self.latest.tag
-        self._update = self._start_git(
-            ["fetch", "--quiet", "--tags", "origin"],
-            lambda code, output: self._fetched(code, output, tag),
-        )
+        if self._can_start_update():
+            tag = self.latest.tag
+            self._run_update(False, [_fetch_tag(tag), ["merge", "--ff-only", f"refs/tags/{tag}"]])
 
-    def _fetched(self, exit_code: int, output: str, tag: str) -> None:
-        if exit_code != 0:
-            self._update_done(exit_code, output)
+    def force_apply(self) -> None:
+        """Set the checkout to the newest release even with local changes or commits.
+
+        Local changes, untracked files included, go to a stash first; ignored files
+        stay untouched. Replaced commits stay in the reflog, and the output starts
+        with the previous HEAD so they can be found.
+        """
+        if self._can_start_update():
+            tag = self.latest.tag
+            stash = ["stash", "push", "--include-untracked", "-m", FORCE_UPDATE_STASH_MESSAGE]
+            self._run_update(
+                True, [_fetch_tag(tag), stash, ["reset", "--hard", f"refs/tags/{tag}"]]
+            )
+
+    def _can_start_update(self) -> bool:
+        return self.can_apply and not self.updating and self.latest is not None
+
+    def _run_update(self, forced: bool, steps: list[list[str]]) -> None:
+        """Run the git steps in order; the first failing one ends the update."""
+        self.forced = forced
+        self._head_before_update = current_head(self.root)
+        self._update_steps = steps
+        self._update_output = []
+        if forced and self._head_before_update:
+            self._update_output.append(f"HEAD {self._head_before_update}")
+        self._next_update_step()
+
+    def _next_update_step(self) -> None:
+        self._update = self._start_git(self._update_steps.pop(0), self._update_step_done)
+
+    def _update_step_done(self, exit_code: int, output: str) -> None:
+        if output:
+            self._update_output.append(output)
+        if exit_code == 0 and self._update_steps:
+            self._next_update_step()
             return
-        self._update = self._start_git(
-            ["merge", "--ff-only", f"refs/tags/{tag}"], self._update_done
-        )
+        self._update_steps = []
+        self._update_done(exit_code, "\n".join(self._update_output))
 
     def _update_done(self, exit_code: int, output: str) -> None:
         self._update = None
@@ -167,12 +198,27 @@ class ReleaseUpdater(QObject):
     def _confirmed(self, release: Release, published: bool | None) -> None:
         """Offer `release` only once installing it can download its engine wheel."""
         self._confirming = False
+        if published and self.root is not None:
+            # The checkout fetches the release now, so its changes can be shown offline.
+            self._check = self._start_git(
+                _fetch_tag(release.tag), lambda code, output: self._fetched(release, code, output)
+            )
+            return
         if published:
             self._set_latest(release)
         elif published is False:
             logger.info("Release %s is tagged but not published yet", release.tag)
             self._unpublished_retry.start()
         self.checked.emit(published is not None)
+
+    def _fetched(self, release: Release, exit_code: int, output: str) -> None:
+        """A release that could not be fetched is offered after the next check."""
+        self._check = None
+        if exit_code == 0:
+            self._set_latest(release)
+        else:
+            logger.debug("Fetching release %s failed and will be retried: %s", release.tag, output)
+        self.checked.emit(exit_code == 0)
 
     def _ask_published(self, release: Release, answer: Callable[[bool | None], None]) -> None:
         """Ask GitHub for the wheel without following its redirect to the download host.
@@ -224,6 +270,11 @@ def _published(reply: QNetworkReply) -> bool | None:
     if status == NOT_FOUND:
         return False
     return 200 <= status < 400 or None
+
+
+def _fetch_tag(tag: str) -> list[str]:
+    """Fetch only this release tag; `+` replaces a local tag of the same name."""
+    return ["fetch", "--quiet", "--no-tags", "origin", f"+refs/tags/{tag}:refs/tags/{tag}"]
 
 
 def _read_output(process: QProcess) -> str:

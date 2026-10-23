@@ -19,7 +19,7 @@ from typing import TypeVar
 
 from PySide6.QtCore import QObject, QProcess, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QApplication, QMessageBox, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPlainTextEdit
 
 from winlauncher import __version__
 from winlauncher.actions import ExplorerTarget, ItemActions
@@ -38,6 +38,7 @@ from winlauncher.platform.gesture import (
     ShowRequested,
     ViewKind,
 )
+from winlauncher.platform.git import release_changes
 from winlauncher.platform.shell import folder_shortcuts, indexed_application_roots
 from winlauncher.platform.startup import PACKAGE_PARENT, StartupShortcut
 from winlauncher.platform.store_apps import store_app_folder
@@ -57,7 +58,7 @@ from winlauncher.ui.status import ProblemTopic, StatusBoard
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.theme import colors, theme
 from winlauncher.ui.tray import TrayMenu
-from winlauncher.ui.update_dialog import UpdateCommandDialog
+from winlauncher.ui.update_dialog import UpdateCommandDialog, UpdateDialog
 from winlauncher.ui.updater import ReleaseUpdater
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.widgets import InfoDialog, line_icon
@@ -134,6 +135,7 @@ class LauncherController(QObject):
         )
         self.updater = ReleaseUpdater(self)
         self.update_check_requested = False  # The user asked; report the answer.
+        self.update_release: Release | None = None  # The release the running update installs.
         self.updater.checked.connect(self._update_checked)
         self.updater.availability_changed.connect(self._update_available)
         self.updater.update_finished.connect(self._update_finished)
@@ -741,42 +743,92 @@ class LauncherController(QObject):
                 release, install_command(self.updater.installation, release), self.window
             ).exec()
             return
-        answer = QMessageBox.question(
+        root = self.updater.root
+        dialog = UpdateDialog(
+            f"Update to WinLauncher {release.version}?",
+            f"You are running {__version__}. A restart finishes the update.",
+            lambda: release_changes(root, release.tag) or "No changes to show.",
+            "Show changes",
             self.window,
-            "Update WinLauncher",
-            f"Update to WinLauncher {release.tag}?\n\nThe checkout in {self.updater.root} moves "
-            "to the release. Local changes are never overwritten; git refuses instead.",
         )
-        if answer == QMessageBox.StandardButton.Yes:
-            self.status.set_activity("Updating WinLauncher…")
+        dialog.add_button("Cancel", dialog.reject)
+        dialog.add_button("Update", dialog.accept, primary=True)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._start_update(release, forced=False)
+        dialog.deleteLater()
+
+    def _start_update(self, release: Release, *, forced: bool) -> None:
+        self.update_release = release
+        self.status.set_activity("Updating WinLauncher…")
+        if forced:
+            self.updater.force_apply()
+        else:
             self.updater.apply()
 
-    def _update_available(self, available: bool) -> None:
-        self.tray.set_update_available(available)
-        if available and not self.update_check_requested:
+    def _update_available(self, _available: bool) -> None:
+        latest = self.updater.latest
+        self.tray.set_update_version(latest.version if latest else None)
+        if latest is not None and not self.update_check_requested:
             self.tray.icon.showMessage(
                 "WinLauncher",
-                f"WinLauncher {self.updater.latest.tag} is available. Install it from the tray menu.",
+                f"WinLauncher {latest.version} is available. "
+                f"Choose “Update to {latest.version}” in the tray menu to install it.",
             )
 
     def _update_finished(self, succeeded: bool, changed: bool, output: str) -> None:
         self.status.set_activity("")
-        details = output or "No output from git."
+        release, forced = self.update_release, self.updater.forced
+        version = release.version if release else "the new release"
         if not succeeded:
-            QMessageBox.warning(self.window, "Update failed", details)
+            self._update_failed(release, version, output or "No output from git.", forced=forced)
             return
+        set_aside = "Local changes were set aside (git stash). " if forced else ""
         if not changed:
-            QMessageBox.information(self.window, "Updates", "WinLauncher is up to date.")
+            QMessageBox.information(
+                self.window, "Updates", f"WinLauncher is up to date. {set_aside}".strip()
+            )
             return
         # The new release's packages, including its Rust engine, install at the next start.
         mark_reinstall_pending(self.data_dir)
         answer = QMessageBox.question(
             self.window,
             "Update downloaded",
-            "WinLauncher finishes the update when it starts again. Restart now?",
+            f"WinLauncher was updated to {version}. {set_aside}"
+            "It finishes the update when it starts again. Restart now?",
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.restart()
+
+    def _update_failed(
+        self, release: Release | None, version: str, output: str, *, forced: bool
+    ) -> None:
+        """Explain the failure; git's output stays behind Details. Offer a forced update once."""
+        dialog = UpdateDialog(
+            "Update failed",
+            f"The update to {version} could not be installed, usually because files in the "
+            "WinLauncher folder were changed locally.",
+            lambda: output,
+            "Details",
+            self.window,
+        )
+        dialog.add_button("Close", dialog.reject, primary=True)
+        if not forced and release is not None:
+            dialog.add_button("Force update…", dialog.accept)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        dialog.deleteLater()
+        if not accepted:
+            return
+        answer = QMessageBox.warning(
+            self.window,
+            "Force update",
+            f"Set the WinLauncher folder to release {version}?\n\nLocal changes to WinLauncher's "
+            "files are kept aside (git stash) and can be restored from there; your settings "
+            "are not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._start_update(release, forced=True)
 
     def restart(self) -> None:
         """Start a replacement that waits for this process's lock, then quit."""

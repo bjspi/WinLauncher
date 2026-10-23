@@ -16,6 +16,7 @@ from PySide6.QtCore import QMimeData, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog
 
+from winlauncher.platform.git import release_changes
 from winlauncher.releases import Release
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.settings import PathList, dropped_folders
@@ -214,6 +215,48 @@ class ReleaseUpdaterTest(unittest.TestCase):
         self.assertFalse(updater.available)
         # The release, not the newer unreleased commit.
         self.assertEqual((self.checkout / "file.txt").read_text(), "second")
+
+    def test_a_found_release_is_fetched_so_its_changes_show_offline(self):
+        self.release("second", "v1.1.0")
+        updater = self.updater()
+        updater.check_now()
+        self.wait_for(lambda: updater.available)
+        changes = release_changes(self.checkout, "v1.1.0")
+        self.assertIn("second", changes.partition("\n\n")[0])  # The commit list comes first.
+        self.assertIn("file.txt", changes)
+        self.assertIn("+second", changes)
+        with patch("winlauncher.platform.git.RELEASE_CHANGES_MAX_CHARS", 20):
+            self.assertIn("more characters not shown", release_changes(self.checkout, "v1.1.0"))
+        self.assertIsNone(release_changes(self.checkout, "v9.9.9"))
+
+    def test_a_forced_update_stashes_local_changes_that_block_the_normal_one(self):
+        self.release("second", "v1.1.0")
+        (self.checkout / "file.txt").write_text("local edit")
+        (self.checkout / "new.txt").write_text("untracked")
+        before = self.git(self.checkout, "rev-parse", "HEAD").strip()
+        updater = self.updater()
+        updater.latest = Release(1, 1, 0)
+        results = []
+        updater.update_finished.connect(lambda *result: results.append(result))
+        updater.apply()
+        self.wait_for(lambda: results)
+        self.assertEqual(results[0][:2], (False, False))
+        self.assertFalse(updater.forced)
+        identity = {
+            f"GIT_{role}_{field}": value
+            for role in ("AUTHOR", "COMMITTER")
+            for field, value in (("NAME", "WinLauncher Test"), ("EMAIL", "test@example.invalid"))
+        }
+        with patch.dict(os.environ, identity):  # A stash is a commit and needs an identity.
+            updater.force_apply()
+            self.wait_for(lambda: len(results) == 2)
+        succeeded, moved, output = results[1]
+        self.assertTrue(succeeded and moved and updater.forced)
+        self.assertTrue(output.startswith(f"HEAD {before}"))
+        self.assertEqual((self.checkout / "file.txt").read_text(), "second")
+        self.assertFalse((self.checkout / "new.txt").exists())
+        self.assertIn("forced update", self.git(self.checkout, "stash", "list"))
+        self.assertFalse(updater.available)
 
     def test_unreleased_commits_and_older_tags_are_no_update(self):
         self.release("old", "v0.9.0")

@@ -42,7 +42,7 @@ class TrayMenu(QObject):
         self.menu = Menu()
         self.menu.setObjectName("tray")
         self.icon_names: dict[QAction, str] = {}  # Tinted again when the theme changes.
-        self.update_available = False
+        self.update_version: str | None = None  # The release an update installs, once known.
         self.status = QLabel("Ready to search")
         self.status.setObjectName("trayStatus")
         self.menu.addAction(self._header())
@@ -113,7 +113,7 @@ class TrayMenu(QObject):
         for action, icon in self.icon_names.items():
             action.setIcon(line_icon(icon, colors().muted))
         self._show_check(self.autostart.isChecked())
-        self.set_update_available(self.update_available)
+        self.set_update_version(self.update_version)
 
     def _show_check(self, checked: bool) -> None:
         # A null icon keeps the column free, so the text stays aligned.
@@ -122,10 +122,10 @@ class TrayMenu(QObject):
     def set_catalog_count(self, count: int) -> None:
         self.status.setText(f"{count:,} items indexed" if count else "Ready to search")
 
-    def set_update_available(self, available: bool) -> None:
-        self.update_available = available
-        self.update.setText("Install update…" if available else "Check for updates…")
-        self.update.setIcon(line_icon("download", colors().accent if available else colors().muted))
+    def set_update_version(self, version: str | None) -> None:
+        self.update_version = version
+        self.update.setText(f"Update to {version}…" if version else "Check for updates…")
+        self.update.setIcon(line_icon("download", colors().accent if version else colors().muted))
 
     def show(self) -> None:
         if QSystemTrayIcon.isSystemTrayAvailable():
