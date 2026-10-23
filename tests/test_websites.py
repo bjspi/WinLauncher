@@ -114,7 +114,7 @@ class WebsiteUiTest(unittest.TestCase):
         self.assertEqual(dialog.read_settings().websites, ())
         self.assertFalse(dialog.websites.remove.isEnabled())
         dialog.websites.add_website()
-        with patch("winlauncher.ui.settings.QMessageBox.warning") as warning:
+        with patch("winlauncher.ui.settings.message") as warning:
             dialog.save()
         warning.assert_called_once()
         self.assertEqual(dialog.result_settings, original)

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -48,9 +49,7 @@ CARD_PADDING = 16
 INFO_ICON_SIZE = 40
 INFO_DIALOG_WIDTH = 480
 INFO_DIALOG_MARGIN = 24
-FACT_LABEL_WIDTH = 150
-# A wrapping label claims the height it would need at its minimum width; keep it sane.
-SUBTITLE_MIN_WIDTH = 320
+INFO_HEADER_SPACING = 16  # Between the icon and the texts.
 ROW_SPACING = 16  # Between a row's text and its control.
 
 
@@ -236,20 +235,6 @@ class Card(QFrame):
         self._append(block)
         return block
 
-    def add_fact(self, label: str, value: QWidget) -> QWidget:
-        """A label beside a value that takes the remaining width, such as a path."""
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 10, 0, 10)
-        layout.setSpacing(ROW_SPACING)
-        name = QLabel(label)
-        name.setObjectName("rowTitle")
-        name.setFixedWidth(FACT_LABEL_WIDTH)
-        layout.addWidget(name, 0, Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(value, 1)
-        self._append(row)
-        return row
-
     def _append(self, widget: QWidget) -> None:
         if self._layout.count():
             divider = QFrame()
@@ -282,10 +267,12 @@ def _texts(title: str, description: str) -> QVBoxLayout:
 
 
 class InfoDialog(QDialog):
-    """A small dialog with WinLauncher's look: header, cards of facts, buttons.
+    """A small dialog with WinLauncher's look: header, cards of facts, a button bar.
 
-    For status and information windows that a stock message box would render as
-    a big system icon above a block of text.
+    For status, information and message windows that a stock message box would
+    render as a big system icon above a block of text. The body holds a 40 px
+    icon, a heading and a text above any cards; the bar below carries the
+    buttons, with link-style or plain helper buttons at its left.
     """
 
     def __init__(
@@ -298,67 +285,127 @@ class InfoDialog(QDialog):
         width: int = INFO_DIALOG_WIDTH,
     ):
         super().__init__(parent)
-        self.content_width = width - 2 * INFO_DIALOG_MARGIN
         self.setObjectName("infoDialog")
         self.setWindowTitle(title)
-        self._layout = QVBoxLayout(self)
-        # Fixed to the content: wrapped text gets exactly the height it needs.
-        self._layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
-        self._layout.setContentsMargins(INFO_DIALOG_MARGIN, 22, INFO_DIALOG_MARGIN, 18)
-        self._layout.setSpacing(14)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        body = QWidget()
+        body.setObjectName("infoBody")
+        self._layout = QVBoxLayout(body)
+        self._layout.setContentsMargins(INFO_DIALOG_MARGIN, 22, INFO_DIALOG_MARGIN, 20)
+        self._layout.setSpacing(16)
         header = QHBoxLayout()
-        header.setSpacing(14)
+        header.setSpacing(INFO_HEADER_SPACING)
         logo = QLabel()
+        logo.setFixedSize(INFO_ICON_SIZE, INFO_ICON_SIZE)
         logo.setPixmap(icon.pixmap(INFO_ICON_SIZE, INFO_ICON_SIZE))
-        logo.setAlignment(Qt.AlignmentFlag.AlignTop)
+        header.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
         texts = QVBoxLayout()
-        texts.setSpacing(2)
+        texts.setSpacing(6)
         heading = QLabel(title)
         heading.setObjectName("infoTitle")
+        heading.setWordWrap(True)
         self.subtitle = QLabel(subtitle)
-        self.subtitle.setObjectName("pageSubtitle")
+        self.subtitle.setObjectName("infoText")
         self.subtitle.setWordWrap(True)
-        self.subtitle.setMinimumWidth(SUBTITLE_MIN_WIDTH)
+        self.subtitle.setOpenExternalLinks(True)
+        self.subtitle.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         texts.addWidget(heading)
         texts.addWidget(self.subtitle)
-        header.addWidget(logo)
+        texts.addStretch(1)
         header.addLayout(texts, 1)
         self._layout.addLayout(header)
-        self._buttons = QHBoxLayout()
+        # Wrapping labels get an explicit width: nested layouts misjudge their height otherwise.
+        self._wrapped = [heading, self.subtitle]
+        self._content: list[QWidget] = []
+        root.addWidget(body)
+        footer = QWidget()
+        footer.setObjectName("infoFooter")
+        self._buttons = QHBoxLayout(footer)
+        self._buttons.setContentsMargins(INFO_DIALOG_MARGIN, 12, INFO_DIALOG_MARGIN, 12)
+        self._buttons.setSpacing(8)
         self._buttons.addStretch(1)
+        self._left = 0  # Helper buttons before the stretch.
+        root.addWidget(footer)
+        self.set_width(width)
 
-    def add_facts(self, facts: list[tuple[str, str]]) -> Card:
+    def set_width(self, width: int) -> None:
+        """Fix the dialog, its texts and its content to `width`; the height follows."""
+        self.content_width = width - 2 * INFO_DIALOG_MARGIN
+        for label in self._wrapped:
+            if label is not None:
+                label.setFixedWidth(self.content_width - INFO_ICON_SIZE - INFO_HEADER_SPACING)
+        for widget in self._content:
+            widget.setFixedWidth(self.content_width)
+        self.setFixedWidth(width)
+        self.adjustSize()
+
+    def add_facts(self, facts: list[tuple[str, str]]) -> QFrame:
         """A card of label/value rows; values are selectable rich text (links open)."""
-        card = Card()
-        for label, value in facts:
-            text = QLabel(value)
+        card = QFrame()
+        card.setObjectName("factCard")
+        grid = QGridLayout(card)
+        grid.setContentsMargins(16, 12, 16, 12)
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(8)
+        for row, (label, value) in enumerate(facts):
+            name = QLabel(label)
+            name.setObjectName("factLabel")
+            grid.addWidget(name, row, 0, Qt.AlignmentFlag.AlignTop)
+            text = QLabel(tint_links(value))
             text.setObjectName("factValue")
             text.setTextFormat(Qt.TextFormat.RichText)
             text.setOpenExternalLinks(True)
             text.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
             text.setWordWrap(True)
-            card.add_fact(label, text)
+            grid.addWidget(text, row, 1)
+        grid.setColumnStretch(1, 1)
         self.add_widget(card)
         return card
 
     def add_widget(self, widget: QWidget) -> None:
         widget.setFixedWidth(self.content_width)  # The dialog is as wide as its content.
+        self._content.append(widget)
         self._layout.addWidget(widget)
 
     def add_button(self, text: str, slot, *, primary: bool = False) -> QPushButton:
-        button = QPushButton(text)
-        button.clicked.connect(slot)
+        """A button at the right of the bar; the primary one is filled and answers Enter."""
+        button = self._button(text, slot)
         if primary:
+            button.setObjectName("primary")
             button.setDefault(True)
         self._buttons.addWidget(button)
         return button
 
+    def add_helper(self, text: str, slot, *, link: bool = False) -> QPushButton:
+        """A button at the left of the bar, such as "Open data folder" or a details toggle."""
+        button = self._button(text, slot)
+        if link:
+            button.setObjectName("linkButton")
+        self._buttons.insertWidget(self._left, button)
+        self._left += 1
+        return button
+
+    @staticmethod
+    def _button(text: str, slot) -> QPushButton:
+        button = QPushButton(text)
+        button.clicked.connect(slot)
+        # Only the primary button is the default, however the focus moves.
+        button.setAutoDefault(False)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        return button
+
     def finish(self) -> None:
-        """Add the buttons below everything else and fit the height to the wrapped text."""
-        if self._buttons.parent() is None:
-            self._layout.addLayout(self._buttons)
+        """Fit the height to the wrapped text."""
         self.adjustSize()
 
     def exec(self) -> int:
         self.finish()
         return super().exec()
+
+
+def tint_links(text: str) -> str:
+    """Links in the accent color; Qt's default link blue is unreadable on the dark theme."""
+    return text.replace("<a ", f'<a style="color: {colors().accent}; text-decoration: none;" ')

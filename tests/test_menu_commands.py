@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from winlauncher.actions import ItemActions
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
@@ -194,18 +194,18 @@ class MenuCommandUiTest(unittest.TestCase):
         self.assertEqual(saved[0].menu_commands, (MenuCommand("Terminal", "cmd.exe"),))
         dialog.deleteLater()
         dialog = SettingsDialog(original, website_icons=self.icons)
-        question = "winlauncher.ui.commands.QMessageBox.question"
-        with patch(question, return_value=QMessageBox.StandardButton.No) as asked:
+        question = "winlauncher.ui.commands.ask"
+        with patch(question, return_value=False) as asked:
             dialog.menu_commands.remove_selected()
-        self.assertIn("Terminal", asked.call_args.args[2])
+        self.assertIn("Terminal", asked.call_args.args[1])
         self.assertEqual(dialog.read_settings().menu_commands, (TERMINAL,))
-        with patch(question, return_value=QMessageBox.StandardButton.Yes):
+        with patch(question, return_value=True):
             dialog.menu_commands.remove_selected()
         self.assertEqual(dialog.read_settings().menu_commands, ())
         self.assertFalse(dialog.menu_commands.remove.isEnabled())
         dialog.menu_commands.add_command()
         self.assertTrue(dialog.menu_commands.list.item(0).icon().isNull())  # Not valid yet.
-        with patch("winlauncher.ui.settings.QMessageBox.warning") as warning:
+        with patch("winlauncher.ui.settings.message") as warning:
             dialog.save()
         warning.assert_called_once()
         self.assertIn("Command 1", warning.call_args.args[2])

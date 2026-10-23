@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -55,6 +54,7 @@ from winlauncher.settings import (
     priority_rules,
 )
 from winlauncher.ui.commands import CommandList
+from winlauncher.ui.messages import ERROR, WARNING, message
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
@@ -809,7 +809,7 @@ class SettingsDialog(QDialog):
         try:
             self.set_startup(enabled)
         except OSError as exc:
-            QMessageBox.warning(self, "Cannot change autostart", str(exc))
+            message(self, "Autostart not changed", str(exc), ERROR)
         # Show what the Startup folder actually contains, after success or failure.
         actual = self.startup_state() if self.startup_state else not enabled
         self.autostart.setChecked(actual)
@@ -864,13 +864,13 @@ class SettingsDialog(QDialog):
         try:
             settings = self.read_settings()
         except ValueError as exc:
-            QMessageBox.warning(self, "Check settings", str(exc))
+            message(self, "Check your settings", str(exc), WARNING)
             return
         try:
             if self.persist:
                 self.persist(settings)
         except OSError as exc:
-            QMessageBox.warning(self, "Cannot save settings", str(exc))
+            message(self, "Settings not saved", str(exc), ERROR)
             return
         self.result_settings = settings
         self.original = settings

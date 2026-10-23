@@ -18,7 +18,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QLockFile, QProcess, QTimer
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QSslSocket
-from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QProgressDialog, QSystemTrayIcon
 
 from winlauncher import __version__
 from winlauncher.catalog.model import path_key
@@ -32,6 +32,7 @@ from winlauncher.install import (
 from winlauncher.platform.git import checkout_root
 from winlauncher.settings import Appearance
 from winlauncher.ui.controller import LauncherController
+from winlauncher.ui.messages import ERROR, PRIMARY, WARNING, message, show_message
 from winlauncher.ui.theme import app_icon, theme
 
 SHOW_REQUEST = b"show"
@@ -164,13 +165,15 @@ def _finish_update(root: Path, data_dir: Path) -> None:
     if succeeded:
         finish_reinstall(data_dir)
         return
-    QMessageBox.warning(
+    show_message(
         None,
-        "WinLauncher update incomplete",
-        "The new version runs, but its packages could not be reinstalled, so the "
-        f"Rust search engine may be unavailable.\n\n{output}\n\n"
-        "WinLauncher tries again at its next start. To finish it now, run:\n"
-        f"{reinstall_command(root)}",
+        "Update incomplete",
+        "The new version runs, but its packages could not be reinstalled, so the Rust "
+        "search engine may be unavailable. WinLauncher tries again at its next start. "
+        f"To finish it now, run:\n{reinstall_command(root)}",
+        [("OK", PRIMARY)],
+        WARNING,
+        details=output or "No output from pip.",
     )
 
 
@@ -225,24 +228,28 @@ def main() -> int:
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        QMessageBox.critical(None, "WinLauncher cannot start", str(exc))
+        message(None, "WinLauncher cannot start", str(exc), ERROR)
         return 1
     instance = _instance_name(data_dir)
     ownership = QLockFile(str(data_dir / "instance.lock"))
     ownership.setStaleLockTime(0)  # Only a dead owner process releases the lock.
     if not ownership.tryLock(REPLACE_WAIT_MS if args.replace else 0):
         if args.replace:
-            QMessageBox.critical(
-                None, "WinLauncher cannot restart", "The previous instance did not exit in time."
+            message(
+                None,
+                "WinLauncher cannot restart",
+                "The previous instance did not exit in time.",
+                ERROR,
             )
             return 1
         request = PING_REQUEST if args.background else SHOW_REQUEST
         if _hand_over_to_owner(instance, request):
             return 0
-        QMessageBox.critical(
+        message(
             None,
             "WinLauncher is already starting",
             f"The primary instance did not respond within {HANDOVER_TIMEOUT_SECONDS} seconds.",
+            ERROR,
         )
         return 1
 
@@ -274,9 +281,7 @@ def main() -> int:
     except Exception as exc:
         logging.exception("Startup failed")
         settings_path = data_dir / "settings.json"
-        QMessageBox.critical(
-            None, "WinLauncher cannot start", f"{exc}\n\nSettings: {settings_path}"
-        )
+        message(None, "WinLauncher cannot start", f"{exc}\n\nSettings: {settings_path}", ERROR)
         return 1
     finally:
         server.close()

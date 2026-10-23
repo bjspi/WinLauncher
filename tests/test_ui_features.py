@@ -12,15 +12,16 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QMimeData, QUrl
+from PySide6.QtCore import QMimeData, QTimer, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog
 
 from winlauncher.platform.git import release_changes
 from winlauncher.releases import Release
+from winlauncher.ui import messages
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
+from winlauncher.ui.messages import MessageDialog
 from winlauncher.ui.settings import PathList, dropped_folders
-from winlauncher.ui.update_dialog import UpdateDialog
 from winlauncher.ui.updater import ReleaseUpdater
 
 
@@ -310,15 +311,19 @@ class ReleaseUpdaterTest(unittest.TestCase):
         self.assertEqual((self.checkout / "file.txt").read_text(), "local work")
 
 
-class UpdateDialogTest(unittest.TestCase):
+class MessageDialogTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_details_toggle_names_what_a_click_does(self):
+    def test_details_toggle_names_what_a_click_does_and_loads_once(self):
         loads = []
-        dialog = UpdateDialog(
-            "Update", "Subtitle", lambda: loads.append(1) or "diff", "Show changes", "Hide changes"
+        dialog = MessageDialog(
+            "Update",
+            "Text",
+            [("Close", messages.SECONDARY)],
+            details=lambda: loads.append(1) or "diff",
+            details_labels=("Show changes", "Hide changes"),
         )
         dialog.finish()
         dialog.show()
@@ -328,8 +333,37 @@ class UpdateDialogTest(unittest.TestCase):
         dialog.toggle_details()
         self.assertFalse(dialog.details.isVisible())
         self.assertEqual(dialog.details_button.text(), "Show changes")
-        self.assertEqual(loads, [1])  # The details load once.
+        self.assertEqual(loads, [1])
         dialog.deleteLater()
+
+    def test_enter_runs_the_main_action_or_cancels_a_destructive_question(self):
+        def defaults(buttons):
+            dialog = MessageDialog("Title", "Text", buttons)
+            names = [button.text() for button in dialog.buttons if button.isDefault()]
+            dialog.deleteLater()
+            return names
+
+        plain = [("Cancel", messages.SECONDARY), ("Update", messages.PRIMARY)]
+        self.assertEqual(defaults(plain), ["Update"])
+        destructive = [("Cancel", messages.SECONDARY), ("Remove", messages.DANGER)]
+        self.assertEqual(defaults(destructive), ["Cancel"])
+
+    def test_ask_reports_the_clicked_button(self):
+        def click(text):
+            def run():
+                dialog = next(
+                    w
+                    for w in QApplication.topLevelWidgets()
+                    if isinstance(w, MessageDialog) and w.isVisible()
+                )
+                next(b for b in dialog.buttons if b.text() == text).click()
+
+            QTimer.singleShot(0, run)
+
+        click("Remove")
+        self.assertTrue(messages.ask(None, "Remove?", "", "Remove", kind=messages.WARNING))
+        click("Cancel")
+        self.assertFalse(messages.ask(None, "Remove?", "", "Remove", kind=messages.WARNING))
 
 
 if __name__ == "__main__":

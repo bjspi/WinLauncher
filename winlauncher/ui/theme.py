@@ -344,12 +344,32 @@ QWidget#trayHeader { background: transparent; }
 QLabel#trayTitle { font-size: 10pt; font-weight: 600; color: $title; }
 QLabel#trayStatus { font-size: 8pt; color: $faint; }
 QLabel#trayVersion { font-size: 8pt; color: $fainter; }
-QDialog#infoDialog { background: $page; }
-QLabel#infoTitle { font-size: 14pt; font-weight: 600; color: $title; }
-QLabel#factValue { color: $secondary; }
+QDialog#infoDialog { background: $field; }
+QWidget#infoBody { background: $field; }
+QWidget#infoFooter { background: $page; border-top: 1px solid $card_border; }
+QLabel#infoTitle { font-size: 15px; font-weight: 600; color: $title; }
+QLabel#infoText { font-size: 13px; color: $subtle; }
+QFrame#factCard { background: $hover; border: 1px solid $card_border; border-radius: 10px; }
+QLabel#factLabel { font-size: 12px; color: $subtle; }
+QLabel#factValue { font-size: 12px; color: $text; }
+QDialog#infoDialog QPlainTextEdit, QDialog#infoDialog QLineEdit#code {
+    background: $hover; border: 1px solid $card_border; border-radius: 8px; padding: 6px 8px;
+}
+QDialog#infoDialog QPushButton {
+    background: $field; color: $text; border: 1px solid $button_border; border-radius: 7px;
+    padding: 7px 18px; min-width: 64px; font-size: 13px;
+}
+QDialog#infoDialog QPushButton:hover { border-color: $accent; color: $accent; }
+QDialog#infoDialog QPushButton:default { font-weight: normal; }  /* Only #primary is bold. */
+QDialog#infoDialog QPushButton:pressed { background: $button_pressed; }
+QDialog#infoDialog QPushButton#primary { background: $accent; color: $on_accent; border-color: $accent; font-weight: 600; }
+QDialog#infoDialog QPushButton#primary:hover { background: $accent_hover; border-color: $accent_hover; color: $on_accent; }
+QDialog#infoDialog QPushButton#primary:pressed { background: $accent_pressed; }
+QDialog#infoDialog QPushButton#danger { color: $invalid; border-color: $invalid; }
+QDialog#infoDialog QPushButton#danger:hover { background: $invalid; color: $on_accent; }
+QDialog#infoDialog QPushButton#linkButton { background: transparent; border: none; color: $accent; padding: 7px 4px; min-width: 0; }
+QDialog#infoDialog QPushButton#linkButton:hover { color: $accent_hover; text-decoration: underline; }
 QLineEdit#code { font-family: 'Cascadia Mono', 'Consolas'; font-size: 9pt; }
-QMessageBox { background: $field; }
-QMessageBox QLabel { font-size: 10pt; }
 QLabel#kbd { background: $field; border: 1px solid $button_border; border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; font-size: 8pt; color: $secondary; }
 QToolTip { background: $field; color: $text; border: 1px solid $field_border; padding: 5px; }
 QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }

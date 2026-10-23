@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QEvent, QLocale, Qt, QTimer
 from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMenu
 
 from winlauncher.actions import ExplorerTarget
 from winlauncher.catalog import long_paths
@@ -195,7 +195,7 @@ class UiFlowTest(unittest.TestCase):
         hit = WebsiteTarget("Example", "ex", "https://example.org/")
         with (
             patch("winlauncher.ui.controller.QDesktopServices.openUrl", return_value=False),
-            patch("winlauncher.ui.controller.QMessageBox.warning") as warning,
+            patch("winlauncher.ui.controller.messages.message") as warning,
         ):
             self.controller.open_item(hit, "")
         warning.assert_called_once()
@@ -602,7 +602,7 @@ class UiFlowTest(unittest.TestCase):
     def test_unknown_advanced_rule_key_is_rejected(self):
         dialog = self.settings_dialog(self.controller.settings)
         dialog.rule_json.setPlainText('{"extension_priority": []}')
-        with patch.object(QMessageBox, "warning") as warning:
+        with patch("winlauncher.ui.settings.message") as warning:
             dialog.save()
         warning.assert_called_once()
         self.assertEqual(dialog.result(), 0)
@@ -1142,7 +1142,7 @@ class UiFlowTest(unittest.TestCase):
         dialog = self.settings_dialog(self.controller.settings, save=save)
         dialog.show()
         dialog.limit.setValue(25)
-        with patch.object(QMessageBox, "warning") as warning:
+        with patch("winlauncher.ui.settings.message") as warning:
             dialog.save()
         warning.assert_called_once()
         self.assertTrue(dialog.isVisible())
@@ -1377,7 +1377,7 @@ class UiFlowTest(unittest.TestCase):
             c.settings, startup_enabled=True, set_startup=c._set_autostart
         )
         startup.set_enabled.side_effect = OSError("Access denied")
-        with patch.object(QMessageBox, "warning") as warning:
+        with patch("winlauncher.ui.settings.message") as warning:
             dialog.autostart.click()
         warning.assert_called_once()
         self.assertTrue(dialog.autostart.isChecked())
@@ -1389,7 +1389,7 @@ class UiFlowTest(unittest.TestCase):
         startup = c.startup = Mock()
         startup.is_enabled.return_value = False
         startup.set_enabled.side_effect = OSError("Access denied")
-        with patch.object(QMessageBox, "warning") as warning:
+        with patch("winlauncher.ui.controller.messages.message") as warning:
             c.tray.autostart.trigger()
         warning.assert_called_once()
         self.assertFalse(c.tray.autostart.isChecked())

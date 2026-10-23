@@ -19,7 +19,7 @@ from typing import TypeVar
 
 from PySide6.QtCore import QObject, QProcess, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from winlauncher import __version__
 from winlauncher.actions import ExplorerTarget, ItemActions
@@ -48,6 +48,7 @@ from winlauncher.search.native_engine import native_availability, warm_search_in
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.service import SearchService
 from winlauncher.settings import Appearance, Settings, SettingsFile
+from winlauncher.ui import messages
 from winlauncher.ui.about import AboutDialog
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
@@ -58,7 +59,7 @@ from winlauncher.ui.status import ProblemTopic, StatusBoard
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.theme import colors, theme
 from winlauncher.ui.tray import TrayMenu
-from winlauncher.ui.update_dialog import UpdateCommandDialog, UpdateDialog
+from winlauncher.ui.update_dialog import UpdateCommandDialog
 from winlauncher.ui.updater import ReleaseUpdater
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.widgets import InfoDialog, line_icon
@@ -445,7 +446,7 @@ class LauncherController(QObject):
                 dialog.add_widget(_details("Problems", problems))
             if report.errors:
                 dialog.add_widget(_details("Scan errors", "\n".join(report.errors)))
-        dialog.add_button("Refresh now", lambda: (dialog.accept(), self.rescan()))
+        dialog.add_helper("Refresh now", lambda: (dialog.accept(), self.rescan()))
         dialog.add_button("Close", dialog.accept, primary=True)
         dialog.exec()
         dialog.deleteLater()
@@ -562,7 +563,7 @@ class LauncherController(QObject):
         self.tasks.submit(TaskCategory.ACTION, work, succeeded, self._action_failed)
 
     def _action_failed(self, message: str) -> None:
-        QMessageBox.warning(self.window, "WinLauncher", message)
+        messages.message(self.window, "That did not work", message, messages.WARNING)
 
     def exclude_folder(self, path: Path) -> None:
         """Let the user exclude a result itself, or its folder or one of their parents."""
@@ -586,7 +587,7 @@ class LauncherController(QObject):
         try:
             self.apply_settings(changed)
         except OSError as exc:
-            QMessageBox.warning(self.window, "Cannot save settings", str(exc))
+            messages.message(self.window, "Settings not saved", str(exc), messages.ERROR)
             return
         if self.settings_dialog is not None:  # Its next Save must keep the new rule.
             self.settings_dialog.add_exclusion(
@@ -643,10 +644,11 @@ class LauncherController(QObject):
             self._apply_changes(previous, settings)
         except Exception as exc:
             logger.exception("Saved settings could not be fully applied")
-            QMessageBox.warning(
+            messages.message(
                 self.window,
                 "Settings saved",
                 f"Some changes take effect only after restarting WinLauncher: {exc}",
+                messages.WARNING,
             )
         self.search.refresh()
 
@@ -694,7 +696,7 @@ class LauncherController(QObject):
         try:
             self._set_autostart(enabled)
         except OSError as exc:
-            QMessageBox.warning(self.window, "Cannot change autostart", str(exc))
+            messages.message(self.window, "Autostart not changed", str(exc), messages.ERROR)
 
     # About, updates and restart ----------------------------------------------
 
@@ -707,10 +709,11 @@ class LauncherController(QObject):
         if self.updater.updating:
             return
         if not self.updater.supported:
-            QMessageBox.information(
+            messages.message(
                 self.window,
-                "Updates",
+                "Git not found",
                 "WinLauncher looks for new releases with git. Install git to get update notices.",
+                messages.WARNING,
             )
             return
         if self.updater.latest is not None:
@@ -726,12 +729,18 @@ class LauncherController(QObject):
         self.update_check_requested = False
         self.status.set_activity("")
         if not reachable:
-            QMessageBox.warning(
-                self.window, "Updates", "The release list could not be loaded. Try again later."
+            messages.message(
+                self.window,
+                "Update check failed",
+                "The release list could not be loaded. Try again later.",
+                messages.WARNING,
             )
         elif self.updater.latest is None:
-            QMessageBox.information(
-                self.window, "Updates", f"WinLauncher {__version__} is the newest release."
+            messages.message(
+                self.window,
+                "WinLauncher is up to date",
+                f"You are running the newest release, {__version__}.",
+                messages.SUCCESS,
             )
         else:
             self._offer_update(self.updater.latest)
@@ -744,19 +753,18 @@ class LauncherController(QObject):
             ).exec()
             return
         root = self.updater.root
-        dialog = UpdateDialog(
-            f"Update to WinLauncher {release.version}?",
-            f"You are running {__version__}. A restart finishes the update.",
-            lambda: release_changes(root, release.tag) or "No changes to show.",
-            "Show changes",
-            "Hide changes",
+        answer = messages.show_message(
             self.window,
+            f"WinLauncher {release.version} is available",
+            f"You are running {__version__}. Update now? A restart finishes the update.",
+            [("Cancel", messages.SECONDARY), ("Update", messages.PRIMARY)],
+            messages.UPDATE,
+            details=lambda: release_changes(root, release.tag) or "No changes to show.",
+            details_labels=("Show changes", "Hide changes"),
+            window_title="Update WinLauncher",
         )
-        dialog.add_button("Cancel", dialog.reject)
-        dialog.add_button("Update", dialog.accept, primary=True)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        if answer == "Update":
             self._start_update(release, forced=False)
-        dialog.deleteLater()
 
     def _start_update(self, release: Release, *, forced: bool) -> None:
         self.update_release = release
@@ -785,51 +793,54 @@ class LauncherController(QObject):
             return
         set_aside = "Local changes were set aside (git stash). " if forced else ""
         if not changed:
-            QMessageBox.information(
-                self.window, "Updates", f"WinLauncher is up to date. {set_aside}".strip()
+            messages.message(
+                self.window,
+                "WinLauncher is up to date",
+                f"It already runs {version}. {set_aside}".strip(),
+                messages.SUCCESS,
             )
             return
         # The new release's packages, including its Rust engine, install at the next start.
         mark_reinstall_pending(self.data_dir)
-        answer = QMessageBox.question(
+        restart = messages.show_message(
             self.window,
-            "Update downloaded",
-            f"WinLauncher was updated to {version}. {set_aside}"
-            "It finishes the update when it starts again. Restart now?",
+            f"Updated to {version}",
+            f"{set_aside}WinLauncher finishes the update when it starts again. Restart now?",
+            [("Later", messages.SECONDARY), ("Restart now", messages.PRIMARY)],
+            messages.SUCCESS,
+            window_title="Update WinLauncher",
         )
-        if answer == QMessageBox.StandardButton.Yes:
+        if restart == "Restart now":
             self.restart()
 
     def _update_failed(
         self, release: Release | None, version: str, output: str, *, forced: bool
     ) -> None:
         """Explain the failure; git's output stays behind Details. Offer a forced update once."""
-        dialog = UpdateDialog(
+        offer_force = not forced and release is not None
+        buttons = [("Close", messages.SECONDARY)]
+        if offer_force:
+            buttons.append(("Force update…", messages.DANGER))
+        answer = messages.show_message(
+            self.window,
             "Update failed",
             f"The update to {version} could not be installed, usually because files in the "
             "WinLauncher folder were changed locally.",
-            lambda: output,
-            "Details",
-            "Hide details",
-            self.window,
+            buttons,
+            messages.ERROR,
+            details=output,
+            window_title="Update WinLauncher",
         )
-        dialog.add_button("Close", dialog.reject, primary=True)
-        if not forced and release is not None:
-            dialog.add_button("Force update…", dialog.accept)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        dialog.deleteLater()
-        if not accepted:
+        if answer != "Force update…" or release is None:
             return
-        answer = QMessageBox.warning(
+        if messages.ask(
             self.window,
+            f"Force the update to {version}?",
+            "Local changes to WinLauncher's files are kept aside (git stash) and can be "
+            "restored from there; your settings are not affected.",
             "Force update",
-            f"Set the WinLauncher folder to release {version}?\n\nLocal changes to WinLauncher's "
-            "files are kept aside (git stash) and can be restored from there; your settings "
-            "are not affected.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+            kind=messages.WARNING,
+        ):
             self._start_update(release, forced=True)
 
     def restart(self) -> None:
@@ -842,7 +853,12 @@ class LauncherController(QObject):
         self._stop_keyboard()  # Never run two global keyboard hooks at once.
         if not QProcess.startDetached(sys.executable, arguments, str(PACKAGE_PARENT)):
             self._start_keyboard()
-            QMessageBox.warning(self.window, "WinLauncher", "WinLauncher could not be restarted.")
+            messages.message(
+                self.window,
+                "Restart failed",
+                "WinLauncher could not be restarted. Quit it and start it again.",
+                messages.ERROR,
+            )
             return
         QApplication.instance().quit()
 

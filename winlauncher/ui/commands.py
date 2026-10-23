@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -25,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from winlauncher.commands import MenuCommand
 from winlauncher.platform.shell import alias_target
+from winlauncher.ui.messages import WARNING, ask
 from winlauncher.ui.widgets import pick_path
 
 LIST_WIDTH = 200
@@ -202,10 +202,13 @@ class CommandList(QWidget):
         if row < 0:
             return
         title = _draft(self.list.item(row)).title.strip() or "New command"
-        answer = QMessageBox.question(
-            self, "Remove command", f"Remove the context menu command “{title}”?"
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        if ask(
+            self,
+            f"Remove “{title}”?",
+            "The command disappears from the result context menu.",
+            "Remove",
+            kind=WARNING,
+        ):
             self.list.takeItem(row)
         self._selected()
 

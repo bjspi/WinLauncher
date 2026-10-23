@@ -529,8 +529,8 @@ just that tag before announcing it; a failed fetch is retried with the next chec
 A known release turns the tray entry into **Update to X.Y.Z…** and shows a
 notification naming the version.
 
-In a checkout, **Check for updates** (or **Update to X.Y.Z…**) asks "Update to
-WinLauncher X.Y.Z?" with the running version; **Show changes** expands the
+In a checkout, **Check for updates** (or **Update to X.Y.Z…**) announces
+"WinLauncher X.Y.Z is available" with the running version; **Show changes** expands the
 release's commits, changed files and diff (cut off after 200,000 characters),
 read from the fetched tag. **Update** fetches the tag again and runs
 `git merge --ff-only` to it, which refuses diverged or modified checkouts instead
@@ -586,7 +586,14 @@ from a result's menu meanwhile is saved at once and also joins the open window's
 fields, so its next Save keeps it.
 
 All other settings apply on Save. Validation or save errors keep the dialog open
-with the edits intact. Changing roots, exclusions, markers, priority rules or
+with the edits intact.
+
+Messages and questions use WinLauncher's own dialog instead of a stock message
+box: an icon badge tinted by kind (information, question, update, success,
+warning, error), a heading with the text below it, optional details behind a
+link that names what a click does, and buttons that name their action. Enter
+runs the filled main button; a destructive question (red button) has none, so
+Enter cancels. About, Index status and the update dialogs share this look. Changing roots, exclusions, markers, priority rules or
 application indexing restarts folder watching and rescans; changing only the result
 limit, interval or input settings does not rescan and keeps an Explorer scope.
 Input settings (double-Ctrl interval, Explorer typing, Quick Switch) restart the

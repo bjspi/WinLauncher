@@ -50,7 +50,7 @@ class AboutDialog(InfoDialog):
                 ("License", "MIT, open source"),
             ]
         )
-        self.add_button("Open data folder", self.open_data_folder)
+        self.add_helper("Open data folder", self.open_data_folder)
         self.add_button("Close", self.accept, primary=True)
 
     def open_data_folder(self) -> None:
