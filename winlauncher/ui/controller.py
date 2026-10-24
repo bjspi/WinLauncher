@@ -43,6 +43,9 @@ from winlauncher.platform.shell import folder_shortcuts, indexed_application_roo
 from winlauncher.platform.startup import PACKAGE_PARENT, StartupShortcut
 from winlauncher.platform.store_apps import store_app_folder
 from winlauncher.platform.windows_tools import windows_tools_folder
+from winlauncher.plugins.host import PluginHost
+from winlauncher.plugins.registry import discover_plugins
+from winlauncher.plugins.search import PluginHit
 from winlauncher.releases import Release, install_command
 from winlauncher.search.native_engine import native_availability, warm_search_index
 from winlauncher.search.ranking import SearchHit
@@ -52,6 +55,7 @@ from winlauncher.ui import messages
 from winlauncher.ui.about import AboutDialog
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
+from winlauncher.ui.plugins import PluginIcons, PluginScheduler
 from winlauncher.ui.result_rows import LauncherHit
 from winlauncher.ui.search_session import SearchSession
 from winlauncher.ui.settings import SettingsDialog
@@ -115,7 +119,9 @@ class LauncherController(QObject):
 
         # Shared by the result list and the Websites settings.
         self.website_icons = WebsiteIcons(self)
-        self.window = LauncherWindow(self.website_icons)
+        found = discover_plugins(data_dir / "plugins")
+        self.plugins = PluginHost(found.plugins, data_dir, found.problems)
+        self.window = LauncherWindow(self.website_icons, PluginIcons(self.plugins, self))
         self.tasks = BackgroundTasks(self)
         self.tray = TrayMenu(self, autostart_available=os.name == "nt")
         self.status = StatusBoard(self.window.set_activity, self.tray.icon)
@@ -125,7 +131,10 @@ class LauncherController(QObject):
             self.tasks,
             self.effective_settings,
             self,
+            self.plugins,
         )
+        self.plugin_refresh = PluginScheduler(self.plugins, self.tasks, lambda: self.settings, self)
+        self.plugin_refresh.items_changed.connect(self.search.refresh)
         self.indexing = IndexScheduler(
             self.tasks,
             CatalogIndexer(self.store),
@@ -165,6 +174,7 @@ class LauncherController(QObject):
         QTimer.singleShot(0, self.window.warm_up_text)  # Once the event loop is idle.
         self._warm_search_index()
         QTimer.singleShot(0, self.indexing.request_full)
+        self.plugin_refresh.start()
 
     # Wiring -------------------------------------------------------------------
 
@@ -403,8 +413,10 @@ class LauncherController(QObject):
         self.window.set_catalog_count(self.indexing.catalog_count)
 
     def rescan(self) -> None:
+        """Refresh catalog (tray and menu): the catalog and every enabled plugin."""
         self.window.set_scope(None)
         self.indexing.request_full()
+        self.plugin_refresh.refresh_all()
 
     def _after_hide(self) -> None:
         self.search.window_hidden()
@@ -454,6 +466,11 @@ class LauncherController(QObject):
     # Item actions -------------------------------------------------------------
 
     def open_item(self, hit: LauncherHit, history_key: str) -> None:
+        if isinstance(hit, PluginHit):
+            self.window.hide()
+            config = self.plugins.config(hit.plugin_id, self.settings.plugins)
+            self._run_action(partial(self.plugins.open, hit, config))
+            return
         if isinstance(hit, WebsiteTarget):
             self.window.hide()
             if not QDesktopServices.openUrl(QUrl(hit.url)):
@@ -629,6 +646,8 @@ class LauncherController(QObject):
             set_startup=self._set_autostart if os.name == "nt" else None,
             startup_state=self.tray.autostart.isChecked,
             website_icons=self.website_icons,
+            plugins=self.plugin_refresh,
+            plugin_folder=str(self.data_dir / "plugins"),
         )
         dialog.finished.connect(self._settings_closed)
         dialog.show()
@@ -673,6 +692,8 @@ class LauncherController(QObject):
             self._restart_indexing()
         elif previous.rescan_seconds != settings.rescan_seconds:
             self.indexing.restart_periodic_timer()
+        if previous.plugins != settings.plugins:
+            self.plugin_refresh.apply()
 
     def _apply_window_settings(self, settings: Settings) -> None:
         theme().use(Appearance(settings.appearance))
@@ -883,6 +904,7 @@ class LauncherController(QObject):
         self.ui_timer.stop()
         self.search.close()
         self.indexing.close()
+        self.plugin_refresh.close()
         self._stop_keyboard()
         self._stop_monitor()
         self.updater.stop()

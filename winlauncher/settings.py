@@ -20,6 +20,7 @@ from winlauncher.catalog.priority import (
     SearchPriority,
 )
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
+from winlauncher.plugins.config import PluginConfig
 from winlauncher.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
 DEFAULT_DOUBLE_CTRL_MS = 350
@@ -163,6 +164,8 @@ class Settings:
     # Own entries in the result context menu, in menu order.
     menu_commands: tuple[MenuCommand, ...] = DEFAULT_MENU_COMMANDS
     appearance: str = Appearance.SYSTEM.value  # An `Appearance`; a string in the JSON file.
+    # Search plugins the user configured; plugins without an entry stay off.
+    plugins: tuple[PluginConfig, ...] = ()
 
     def __post_init__(self) -> None:
         if self.appearance not in tuple(Appearance):
@@ -176,6 +179,7 @@ class Settings:
         self._validate_markers()
         self._validate_priority_rules()
         self._validate_websites()
+        self._validate_plugins()
 
     @property
     def indexing_key(self) -> tuple:
@@ -262,6 +266,25 @@ class Settings:
                 )
             keywords.add(keyword)
 
+    def _validate_plugins(self) -> None:
+        ids = set()
+        keywords = {normalize(site.keyword) for site in self.websites}
+        for plugin in self.plugins:
+            if plugin.id in ids:
+                raise ValueError(f"The plugin {plugin.id!r} is configured twice.")
+            ids.add(plugin.id)
+            _require_range(
+                plugin.boost, BOOST_RANGE, "Plugin boosts must be between {low} and {high}."
+            )
+            keyword = normalize(plugin.keyword)
+            if keyword and plugin.enabled:
+                if keyword in keywords:
+                    raise ValueError(
+                        f"The keyword {plugin.keyword!r} of plugin {plugin.id} is already "
+                        "used by a website or another plugin."
+                    )
+                keywords.add(keyword)
+
     def _validate_priority_rules(self) -> None:
         for rule in self._all_priority_rules():
             if type(rule.weight) is not int:
@@ -329,6 +352,7 @@ def settings_from_json(data: object) -> Settings:
 _RECORD_TYPES = {
     "websites": (WebsiteShortcut, "website"),
     "menu_commands": (MenuCommand, "command"),
+    "plugins": (PluginConfig, "plugin"),
 }
 
 

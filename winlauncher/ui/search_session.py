@@ -19,6 +19,8 @@ from typing import TypeAlias
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from winlauncher.catalog import long_paths
+from winlauncher.plugins.host import PluginHost
+from winlauncher.plugins.search import PluginQuery, merge_hits, plugin_query
 from winlauncher.search.native_engine import native_availability
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import parse_query
@@ -33,8 +35,9 @@ from winlauncher.websites import WebsiteQuery, website_query
 DEBOUNCE_MS = 40
 # Words only: no filters, exclusions, quotes, wildcards, paths or navigation.
 _PLAIN_WORDS = re.compile(r"[^:!*?\[\]\"\\/%~]+")
-# What the typed text asks for: a file search, or a website plus its file search.
-LauncherQuery: TypeAlias = SearchQuery | WebsiteQuery
+# What the typed text asks for: a file search, a website plus its file search, or
+# one plugin's items.
+LauncherQuery: TypeAlias = SearchQuery | WebsiteQuery | PluginQuery
 logger = logging.getLogger(__name__)
 
 
@@ -64,9 +67,11 @@ class SearchSession(QObject):
         tasks: BackgroundTasks,
         settings: Callable[[], Settings],
         parent: QObject | None = None,
+        plugins: PluginHost | None = None,
     ):
         super().__init__(parent)
         self.window, self.service, self.tasks, self.settings = window, service, tasks, settings
+        self.plugins = plugins
         self.running: threading.Event | None = None  # Cancel flag of the search in flight.
         self.displayed_query: LauncherQuery | None = None
         self.open_pending = False
@@ -82,7 +87,13 @@ class SearchSession(QObject):
     def current_query(self) -> LauncherQuery:
         """The query as typed, with the filter buttons applied unless `type:` was typed."""
         if self.window.scope is None and self.window.kind is None and not self.window.explorer_mode:
-            website = website_query(self.window.query.text(), self.settings().websites)
+            text = self.window.query.text()
+            if self.plugins is not None:
+                keywords = self.plugins.keywords(self.settings().plugins)
+                if (plugin := plugin_query(text, keywords)) is not None:
+                    self.window.show_kind(None)
+                    return plugin
+            website = website_query(text, self.settings().websites)
             if website is not None:
                 self.window.show_kind(None)
                 return website
@@ -214,15 +225,26 @@ class SearchSession(QObject):
     ) -> SearchResults:
         """Search the catalog; a website query lists its website above the files.
 
-        Runs on a worker, so it also checks which found files still exist.
+        Plugin items join the files of plain word searches by score; a plugin's
+        keyword lists only its items. Runs on a worker, so it also checks which
+        found files still exist.
         """
         started = time.perf_counter()
         hits: list[LauncherHit] = []
-        if isinstance(query, WebsiteQuery):
+        limit = settings.max_results
+        if isinstance(query, PluginQuery):
+            if self.plugins is not None:
+                hits.extend(self.plugins.search(query, settings.plugins, limit))
+        elif isinstance(query, WebsiteQuery):
             hits.append(query.target())
         if (files := _file_query(query)) is not None:
-            hits.extend(self.service.search(files, settings, cancel=cancel))
-        hits = [] if cancel.is_set() else hits[: settings.max_results]
+            found = self.service.search(files, settings, cancel=cancel)
+            if self.plugins is not None and not isinstance(query, WebsiteQuery):
+                found = merge_hits(
+                    found, self.plugins.search(files, settings.plugins, limit), limit
+                )
+            hits.extend(found)
+        hits = [] if cancel.is_set() else hits[:limit]
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
             "Search finished: elapsed_ms=%.1f hits=%d cancelled=%s",
@@ -255,6 +277,7 @@ class SearchSession(QObject):
         same_query = self.displayed_query == query
         self.displayed_query = query
         files = _file_query(query)
+        terms = query.search if isinstance(query, PluginQuery) else files
         offer = (
             content_search_text(self.window.query.text())
             if not result.hits and files is not None and files.content_text is None
@@ -264,7 +287,7 @@ class SearchSession(QObject):
             result.hits,
             result.elapsed_ms,
             preserve_selection=same_query,
-            query=files,
+            query=terms,
             missing=result.missing,
             content_search=offer,
         )
@@ -279,7 +302,9 @@ class SearchSession(QObject):
 
 
 def _file_query(query: LauncherQuery) -> SearchQuery | None:
-    """The catalog search behind `query`; a website query may have none."""
+    """The catalog search behind `query`; a website query may have none, a plugin's none."""
+    if isinstance(query, PluginQuery):
+        return None
     return query.files if isinstance(query, WebsiteQuery) else query
 
 

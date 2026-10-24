@@ -48,11 +48,16 @@ flowchart TD
 | `settings.py` | Validated settings value object and atomic JSON file |
 | `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
 | `commands.py` | The user's context-menu commands and their command lines |
+| `plugins/api.py` | The plugin interface: `Plugin`, `PluginItem`, `PluginContext`, options and commands |
+| `plugins/registry.py` | `winlauncher.plugins` entry points and `<data>/plugins/*.py` |
+| `plugins/host.py` | Each plugin's latest items and their cache, refresh, search, open and commands |
+| `plugins/search.py` | Plugin keywords, which queries plugins answer, item ranking, merging with file hits |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
 | `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |
 | `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
+| `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugins settings page |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
 | `ui/widgets.py` | The settings look: tinted line icons, animated switches, cards with setting rows, info dialogs |
 | `ui/theme.py` | Light and dark colors, the stylesheet built from them, following the Windows color scheme; painters read `colors()` and refresh kept icons on `Theme.changed` |
@@ -215,6 +220,26 @@ Scores are added left to right in both engines and the personalization uses one
 explicit log2 formula, because `sum()` and `math.log2` round differently across
 Python versions. Parity tests compare scores, bands, reasons, order and callback sequence
 against the Python loop and exercise every extension entry point.
+
+## Search plugins
+
+`plugins/` imports neither Qt nor Win32. `PluginHost` keeps one immutable tuple
+of items per plugin; a refresh replaces it whole, so a search on another thread
+never sees half a refresh. A per-plugin lock lets one refresh or command run at a
+time; a refresh that finds the plugin busy is skipped. Each successful refresh is
+written to `<data>/plugin-data/<id>/items.json` and read back at start. A
+`PluginError` keeps the previous items; `SetupRequired` drops them and the cache.
+
+`PluginScheduler` (`ui/plugins.py`) runs a `QTimer` per enabled plugin and submits
+refreshes to the plugin pool (`TaskCategory.PLUGIN`, two workers), never to the
+index or search pools. Commands such as Sign in run there too; their questions
+cross to the GUI thread through `Questions`, a queued signal plus a
+`threading.Event` the worker waits on (released at shutdown). `SearchSession`
+asks the host: a plugin keyword makes a `PluginQuery` that only that plugin
+answers; plain word searches merge plugin hits into the file hits by band and
+score (`merge_hits`), with the file engine's order preserved. `PluginIcons` loads
+item images on the GUI thread (small local files), cropping avatars to circles
+and painting initials when there is none.
 
 ## Threads, scheduling and cancellation
 

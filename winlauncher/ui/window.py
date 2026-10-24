@@ -65,6 +65,7 @@ from winlauncher.calculator import Calculation, calculate
 from winlauncher.catalog.model import ItemKind
 from winlauncher.commands import MenuCommand
 from winlauncher.platform.gesture import ViewKind
+from winlauncher.plugins.search import PluginHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
 from winlauncher.search.ranking import SearchHit
@@ -73,6 +74,7 @@ from winlauncher.ui.file_transfer import file_mime_data, url_mime_data
 from winlauncher.ui.highlight import matched_positions
 from winlauncher.ui.icons import ResultIcons
 from winlauncher.ui.menus import Menu
+from winlauncher.ui.plugins import PluginIcons
 from winlauncher.ui.query_syntax import QuerySyntax
 from winlauncher.ui.result_rows import LauncherHit, ResultRow, result_row
 from winlauncher.ui.theme import app_icon, colors, theme
@@ -184,11 +186,12 @@ def transfer_data(row: ResultRow, *, cut: bool = False) -> QMimeData:
 class ResultDelegate(QStyledItemDelegate):
     """Paints one `ResultRow`: icon, highlighted name, location, shortcut and favorite star."""
 
-    def __init__(self, parent: QListWidget, website_icons: WebsiteIcons):
+    def __init__(self, parent: QListWidget, website_icons: WebsiteIcons, plugin_icons: PluginIcons):
         super().__init__(parent)
         self.icons = ResultIcons(self)
         self.website_icons = website_icons
-        for icons in (self.icons, website_icons):
+        self.plugin_icons = plugin_icons
+        for icons in (self.icons, website_icons, plugin_icons):
             icons.changed.connect(parent.viewport().update)
         self.terms: tuple[str, ...] = ()
         self.rows = LAUNCHER_ROWS
@@ -246,6 +249,8 @@ class ResultDelegate(QStyledItemDelegate):
     def _icon(self, hit: LauncherHit) -> QIcon:
         if isinstance(hit, WebsiteTarget):
             return self.website_icons.icon_for(hit.url)
+        if isinstance(hit, PluginHit):
+            return self.plugin_icons.icon_for(hit)
         return self.icons.icon_for(hit.item)
 
     @staticmethod
@@ -322,7 +327,7 @@ def _shortcut_hint(
     if row is None:
         return ""
     if row.file_hit is None:
-        return "↵ open in browser · Ctrl+C copy URL"
+        return f"↵ open in {row.opens_in} · Ctrl+C copy {row.target_noun}"
     if dialog:
         if row.file_hit.item.kind == ItemKind.FOLDER:
             return "↵ open in the dialog"
@@ -478,7 +483,7 @@ class LauncherWindow(QWidget):
     hidden = Signal()
     shown = Signal()
 
-    def __init__(self, website_icons: WebsiteIcons):
+    def __init__(self, website_icons: WebsiteIcons, plugin_icons: PluginIcons | None = None):
         flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
         super().__init__(None, flags | Qt.WindowType.WindowStaysOnTopHint)
         self.scope: Path | None = None
@@ -490,6 +495,7 @@ class LauncherWindow(QWidget):
         # Whether `explorer_view` is an Explorer tab or an Open/Save dialog (Quick Switch).
         self.view_kind = ViewKind.EXPLORER
         self.website_icons = website_icons
+        self.plugin_icons = plugin_icons or PluginIcons(parent=self)
         # Result locations are relative to this folder in an Explorer search.
         self.result_scope: Path | None = None
         self.calculation: Calculation | None = None
@@ -628,7 +634,7 @@ class LauncherWindow(QWidget):
         self.results = ResultList()
         self.results.setObjectName("results")
         self.results.setAccessibleName("Search results")
-        self.delegate = ResultDelegate(self.results, self.website_icons)
+        self.delegate = ResultDelegate(self.results, self.website_icons, self.plugin_icons)
         self.results.setItemDelegate(self.delegate)
         self.results.setMouseTracking(True)
         self.results.setFrameShape(QFrame.Shape.NoFrame)
@@ -1358,7 +1364,7 @@ class LauncherWindow(QWidget):
             return False
         QApplication.clipboard().setMimeData(transfer_data(row, cut=cut))
         if row.file_hit is None:
-            self._show_status("URL copied to clipboard")
+            self._show_status(f"{row.target_noun} copied to clipboard")
         else:
             action = "Cut" if cut else "Copied"
             self._show_status(f"{action} {row.name}; paste it in Explorer")
@@ -1394,8 +1400,8 @@ class LauncherWindow(QWidget):
         menu.deleteLater()
 
     def _add_website_actions(self, menu: QMenu, row: ResultRow) -> None:
-        menu.addAction("Open in browser", lambda: self.open_requested.emit(row.hit))
-        menu.addAction("Copy URL", lambda: self.copy_target(row))
+        menu.addAction(f"Open in {row.opens_in}", lambda: self.open_requested.emit(row.hit))
+        menu.addAction(f"Copy {row.target_noun}", lambda: self.copy_target(row))
         menu.addSeparator()
         menu.addAction("Settings…", self.settings_requested.emit)
 
