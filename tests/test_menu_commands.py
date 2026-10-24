@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -15,7 +16,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from winlauncher.actions import ItemActions
-from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
+from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand, shortcut_clash
 from winlauncher.platform import shell
 from winlauncher.settings import Settings, SettingsFile, settings_from_json
 from winlauncher.ui.commands import command_icon
@@ -209,6 +210,33 @@ class MenuCommandUiTest(unittest.TestCase):
             dialog.save()
         warning.assert_called_once()
         self.assertIn("Command 1", warning.call_args.args[2])
+        dialog.deleteLater()
+
+    def test_shortcuts_are_chosen_from_the_free_modifiers_and_never_shared(self):
+        with self.assertRaises(ValueError):
+            MenuCommand("Claude", "claude", shortcut="Ctrl")
+        claude = MenuCommand("Claude", "claude", shortcut="Alt")
+        files = MenuCommand("Viewer", "viewer", folders=False, files=True, shortcut="Alt")
+        self.assertIsNone(shortcut_clash((claude, files)))
+        self.assertIn(
+            "'Claude' and 'Codex'", shortcut_clash((claude, replace(claude, title="Codex")))
+        )
+        loaded = settings_from_json({"menu_commands": [{"title": "C", "command": "c"}]})
+        self.assertEqual(loaded.menu_commands[0].shortcut, "")
+        dialog = SettingsDialog(
+            Settings(roots=(), menu_commands=(claude, TERMINAL)), website_icons=self.icons
+        )
+        editor = dialog.menu_commands
+        self.assertEqual(editor.shortcut.currentData(), "Alt")
+        editor.list.setCurrentRow(1)
+        self.assertEqual(editor.shortcut.currentData(), "")
+        editor.shortcut.setCurrentIndex(editor.shortcut.findData("Alt"))
+        with self.assertRaisesRegex(ValueError, "both use Alt for folders"):
+            dialog.read_settings()
+        editor.shortcut.setCurrentIndex(editor.shortcut.findData("Shift"))
+        self.assertEqual(
+            dialog.read_settings().menu_commands, (claude, replace(TERMINAL, shortcut="Shift"))
+        )
         dialog.deleteLater()
 
     def test_duplicate_copies_the_selected_entry_below_it(self):

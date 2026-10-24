@@ -231,6 +231,11 @@ SHORTCUTS = (
             ("Open the selected result", ("Enter",)),
             ("Open result 1 to 9", ("Ctrl", "1…9")),
             ("Show it in its folder", ("Ctrl", "Enter")),
+            (
+                "Run a menu command with its shortcut",
+                ("Alt", "Enter"),
+                ("Ctrl", "Alt", "1…9"),
+            ),
             ("Copy or cut the file for Explorer", ("Ctrl", "C"), ("Ctrl", "X")),
             ("Copy its path", ("Ctrl", "Shift", "C")),
             ("Add or remove a favorite", ("Ctrl", "D")),

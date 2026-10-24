@@ -11,6 +11,10 @@ from pathlib import Path
 # Replaced in one pass, so a path that contains `{name}` is never substituted again.
 _PLACEHOLDER = re.compile(r"\{(path|folder|name)\}")
 _ENVIRONMENT_VARIABLE = re.compile(r"%([^%\s]+)%")
+# Modifiers that run a command instead of opening: with Enter, a click or Ctrl+1–9.
+# Ctrl is taken (Ctrl+Enter shows the folder, Ctrl+1–9 open), Ctrl+Alt is AltGr
+# on many layouts and Windows keeps Win for itself, so these are the free ones.
+SHORTCUT_MODIFIERS = ("Alt", "Shift", "Alt+Shift")
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +32,8 @@ class MenuCommand:
     files: bool = False
     # An .ico, .png, .svg, .webp, .exe or .dll file; empty means the icon of the program it runs.
     icon: str = ""
+    # One of SHORTCUT_MODIFIERS, or empty for none.
+    shortcut: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -42,6 +48,10 @@ class MenuCommand:
             raise ValueError(f"Show the command {self.title!r} for folders, files or both.")
         if not isinstance(self.icon, str) or any(ord(c) < 32 for c in self.icon):
             raise ValueError(f"The icon of {self.title!r} must be a file path.")
+        if self.shortcut not in ("", *SHORTCUT_MODIFIERS):
+            raise ValueError(
+                f"The shortcut of {self.title!r} must be one of {', '.join(SHORTCUT_MODIFIERS)}."
+            )
 
     def command_line(self, path: Path, folder: Path) -> str:
         """The command line for `path`; `folder` is where it starts."""
@@ -57,6 +67,18 @@ class MenuCommand:
         program = line[1:].partition('"')[0] if line.startswith('"') else line.split(" ")[0]
         found = shutil.which(program) if program else None
         return Path(found) if found else None
+
+
+def shortcut_clash(commands: tuple[MenuCommand, ...]) -> str | None:
+    """Why two commands share a shortcut for the same kind of result, or None."""
+    owners: dict[tuple[str, str], str] = {}
+    for command in commands:
+        kinds = ("folders",) * command.folders + ("files",) * command.files
+        for kind in kinds:
+            if command.shortcut and (other := owners.get((command.shortcut, kind))):
+                return f"{other!r} and {command.title!r} both use {command.shortcut} for {kind}."
+            owners.setdefault((command.shortcut, kind), command.title)
+    return None
 
 
 def _expand(text: str) -> str:

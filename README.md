@@ -174,6 +174,13 @@ with `codex` or `copilot` for those tools; **Duplicate** copies an entry to star
 from. Each entry shows its program's icon, or an `.ico`, `.png`, `.svg`, `.webp`, `.exe` or `.dll`
 file you choose under **Icon**.
 
+Give an entry a **Shortcut** to run it without the menu: with **Alt**, for
+example, <kbd>Alt</kbd>+<kbd>Enter</kbd> runs it on the selected result,
+<kbd>Alt</kbd>+click on the clicked one and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>
+on the first. **Alt**, **Shift** and **Alt+Shift** are available, so Claude Code,
+Codex and Windows Terminal can each have one. Ctrl is already taken by the
+built-in keys and Ctrl+Alt is AltGr on many keyboards.
+
 ### 📋 Requirements
 
 - Windows 10 or 11
@@ -194,6 +201,7 @@ file you choose under **Icon**.
 | <kbd>Enter</kbd> | Open the selected result |
 | <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>Ctrl</kbd>+<kbd>9</kbd> | Open the numbered result |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Show the result in its folder |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> / <kbd>Alt</kbd>+click / <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> | Run your own command whose shortcut is Alt (also Shift or Alt+Shift) |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy the path |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> | Toggle favorite |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | Select the query |

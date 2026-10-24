@@ -497,6 +497,19 @@ icons, every title starts in the same column. **Duplicate** in the settings copi
 the selected command below it, for variants such as Claude Code and Codex.
 **Remove selected** asks for confirmation first.
 
+A command may have a shortcut modifier: Alt, Shift or Alt+Shift (stored as
+`"shortcut"`, empty for none). Modifier+Enter runs it on the selected result,
+modifier+click on the clicked result (the second click of a double-click does
+nothing more) and Ctrl+modifier+1…9 on that numbered result, instead of opening
+it. Only these modifiers are offered: Ctrl+Enter and Ctrl+1…9 are taken, Ctrl+Alt
+is AltGr on many layouts and Windows reserves Win. The digit is read from the
+virtual key, so Ctrl+Shift+1 (typed `!`) and Ctrl+Alt+2 (AltGr: `²`) still name
+results 1 and 2. A modifier no command uses keeps its old meaning. If commands use
+it but none for this result's kind (a file, an app, a website), the bar says so
+and nothing runs. Saving settings refuses two commands with the same shortcut for
+folders or for files; **Duplicate** leaves the copy without one. The menu shows a
+command's keys beside its title, such as `Alt+Enter`.
+
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
 the result itself and its parents up to the configured root (or up to, but not
 including, the drive for folders outside every root), each with its number of

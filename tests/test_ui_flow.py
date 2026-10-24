@@ -591,6 +591,56 @@ class UiFlowTest(unittest.TestCase):
         self.window.open_row(8)  # No ninth result: nothing happens.
         self.assertEqual(opened, [hits[2]])
 
+    def test_command_shortcuts_run_their_command_instead_of_opening(self):
+        claude = MenuCommand("Claude", "claude", shortcut="Alt")
+        codex = MenuCommand("Codex", "codex", shortcut="Alt+Shift")
+        self.window.set_menu_commands((claude, codex))
+        folders = [
+            SearchHit(CatalogItem(self.root / name, ItemKind.FOLDER), 100, "fixture")
+            for name in ("first", "second")
+        ]
+        file = SearchHit(CatalogItem(self.root / "notes.txt", ItemKind.FILE), 100, "fixture")
+        self.window.set_results([*folders, file], 1)
+        opened, ran = [], []
+        self.window.open_requested.disconnect()
+        self.window.open_requested.connect(opened.append)
+        self.window.command_requested.disconnect()
+        self.window.command_requested.connect(lambda hit, command: ran.append((hit, command)))
+        alt, shift = Qt.KeyboardModifier.AltModifier, Qt.KeyboardModifier.ShiftModifier
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        self.window.results.setCurrentRow(0)
+        QTest.keyClick(self.window.query, Qt.Key.Key_Return, alt)
+        # Shift+1 types "!" and AltGr+2 "²"; the virtual key still names the digit.
+        exclam = QKeyEvent(
+            QEvent.Type.KeyPress, Qt.Key.Key_Exclam, ctrl | alt | shift, 0, ord("1"), 0, "!"
+        )
+        QApplication.sendEvent(self.window.query, exclam)
+        QTest.keyClick(self.window.query, Qt.Key.Key_2, ctrl | alt)
+        item = self.window.results.item(1)
+        point = self.window.results.visualItemRect(item).center()
+        with patch("winlauncher.ui.window.QApplication.keyboardModifiers", return_value=alt):
+            QTest.mouseClick(self.window.results.viewport(), Qt.MouseButton.LeftButton, alt, point)
+            QTest.mouseDClick(self.window.results.viewport(), Qt.MouseButton.LeftButton, alt, point)
+        self.assertEqual(
+            ran,
+            [(folders[0], claude), (folders[0], codex), (folders[1], claude), (folders[1], claude)],
+        )
+        self.assertEqual(opened, [])
+        # Files have no Alt command; unused modifiers keep their old meaning.
+        QTest.keyClick(self.window.query, Qt.Key.Key_3, ctrl | alt)
+        self.assertEqual(len(ran), 4)
+        self.assertIn("No command uses Alt for notes.txt", self.window.status.text())
+        self.assertFalse(self.window.run_shortcut(self.window.selected_row(), "Shift"))
+        menu_titles = []
+        with patch(
+            "winlauncher.ui.window.Menu.exec",
+            lambda menu, _point: menu_titles.extend(action.text() for action in menu.actions()),
+        ):
+            self.window.context_menu(
+                self.window.results.visualItemRect(self.window.results.item(0)).center()
+            )
+        self.assertIn("Claude\tAlt+Enter", menu_titles)
+
     def test_matched_characters_are_highlighted(self):
         from winlauncher.ui.highlight import matched_positions
 

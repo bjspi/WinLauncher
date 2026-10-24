@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from winlauncher.commands import MenuCommand
+from winlauncher.commands import SHORTCUT_MODIFIERS, MenuCommand, shortcut_clash
 from winlauncher.platform.shell import alias_target
 from winlauncher.ui.messages import WARNING, ask
 from winlauncher.ui.widgets import pick_path
@@ -49,10 +49,16 @@ class CommandDraft(NamedTuple):
     folders: bool = True
     files: bool = False
     icon: str = ""
+    shortcut: str = ""
 
     def menu_command(self) -> MenuCommand:
         return MenuCommand(
-            self.title.strip(), self.command.strip(), self.folders, self.files, self.icon.strip()
+            self.title.strip(),
+            self.command.strip(),
+            self.folders,
+            self.files,
+            self.icon.strip(),
+            self.shortcut,
         )
 
 
@@ -115,6 +121,18 @@ class CommandList(QWidget):
             field.textChanged.connect(self._edited)
         self.show_for.setAccessibleName("Show the command for")
         self.show_for.currentIndexChanged.connect(self._edited)
+        self.shortcut = QComboBox()
+        self.shortcut.addItem("None", "")
+        for modifier in SHORTCUT_MODIFIERS:
+            self.shortcut.addItem(
+                f"{modifier}+Enter, {modifier}+click, Ctrl+{modifier}+1–9", modifier
+            )
+        self.shortcut.setAccessibleName("Shortcut")
+        self.shortcut.setToolTip(
+            "Runs the command instead of opening: on the selected result with Enter, "
+            "on a clicked result, or on result 1–9 with Ctrl and its number."
+        )
+        self.shortcut.currentIndexChanged.connect(self._edited)
         self.form = QWidget()
         form = QFormLayout(self.form)
         form.setContentsMargins(0, 0, 0, 0)
@@ -122,6 +140,7 @@ class CommandList(QWidget):
         form.addRow("Title", self.title)
         form.addRow("Command line", self.command)
         form.addRow("Show for", self.show_for)
+        form.addRow("Shortcut", self.shortcut)
         browse = QPushButton("Browse…")
         browse.clicked.connect(self.choose_icon)
         icon_row = QHBoxLayout()
@@ -165,7 +184,12 @@ class CommandList(QWidget):
         for command in commands:
             self._add_item(
                 CommandDraft(
-                    command.title, command.command, command.folders, command.files, command.icon
+                    command.title,
+                    command.command,
+                    command.folders,
+                    command.files,
+                    command.icon,
+                    command.shortcut,
                 )
             )
         self.list.setCurrentRow(0 if commands else -1)
@@ -188,7 +212,9 @@ class CommandList(QWidget):
         if row < 0:
             return
         draft = _draft(self.list.item(row))
-        self._add_item(draft._replace(title=f"{draft.title.strip()} (copy)"), row + 1)
+        # A shortcut runs one command only, so the copy starts without one.
+        copy = draft._replace(title=f"{draft.title.strip()} (copy)", shortcut="")
+        self._add_item(copy, row + 1)
         self.list.setCurrentRow(row + 1)
         self.title.setFocus()
         self.title.selectAll()
@@ -220,13 +246,14 @@ class CommandList(QWidget):
         self.duplicate.setEnabled(item is not None)
         flags = (draft.folders, draft.files)
         show_for = next((i for i, (_, choice) in enumerate(SHOW_FOR) if choice == flags), 0)
-        fields = (self.title, self.command, self.icon, self.show_for)
+        fields = (self.title, self.command, self.icon, self.show_for, self.shortcut)
         for field in fields:
             field.blockSignals(True)
         self.title.setText(draft.title)
         self.command.setText(draft.command)
         self.icon.setText(draft.icon)
         self.show_for.setCurrentIndex(show_for)
+        self.shortcut.setCurrentIndex(max(0, self.shortcut.findData(draft.shortcut)))
         for field in fields:
             field.blockSignals(False)
 
@@ -234,12 +261,17 @@ class CommandList(QWidget):
         if item := self.list.currentItem():
             folders, files = SHOW_FOR[self.show_for.currentIndex()][1]
             draft = CommandDraft(
-                self.title.text(), self.command.text(), folders, files, self.icon.text()
+                self.title.text(),
+                self.command.text(),
+                folders,
+                files,
+                self.icon.text(),
+                self.shortcut.currentData(),
             )
             _store(item, draft)
 
     def commands(self) -> tuple[MenuCommand, ...]:
-        """The validated list; on an invalid entry, select it and raise ValueError."""
+        """The validated list; on an invalid entry or a shared shortcut, raise ValueError."""
         commands = []
         for row in range(self.list.count()):
             try:
@@ -247,6 +279,8 @@ class CommandList(QWidget):
             except ValueError as exc:
                 self.list.setCurrentRow(row)
                 raise ValueError(f"Command {row + 1}: {exc}") from None
+        if clash := shortcut_clash(tuple(commands)):
+            raise ValueError(f"{clash} Give one of them another shortcut.")
         return tuple(commands)
 
 

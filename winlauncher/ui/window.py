@@ -354,6 +354,35 @@ def _menu_commands(commands: tuple[MenuCommand, ...], kind: ItemKind) -> list[Me
     return []
 
 
+def _shortcut_modifier(modifiers: Qt.KeyboardModifier, *, ctrl: bool = False) -> str | None:
+    """The command shortcut `modifiers` stand for, such as "Alt"; None for others.
+
+    `ctrl` says whether Ctrl must be held, as with Ctrl+Alt+1. Each bit is tested
+    on its own: in PySide6, `m & ~ControlModifier` also clears Alt.
+    """
+    keys = Qt.KeyboardModifier
+    if bool(modifiers & keys.ControlModifier) != ctrl or modifiers & keys.MetaModifier:
+        return None
+    alt, shift = bool(modifiers & keys.AltModifier), bool(modifiers & keys.ShiftModifier)
+    return {(True, False): "Alt", (False, True): "Shift", (True, True): "Alt+Shift"}.get(
+        (alt, shift)
+    )
+
+
+def _row_number(event: QKeyEvent) -> int | None:
+    """The digit 1–9 pressed, read from the virtual key where the platform gives one.
+
+    With Shift or AltGr (Ctrl+Alt) the layout turns digits into other characters,
+    such as `!` or `²`, but the virtual key stays VK_1 … VK_9.
+    """
+    virtual_key = event.nativeVirtualKey()
+    if ord("1") <= virtual_key <= ord("9"):
+        return virtual_key - ord("0")
+    if Qt.Key.Key_1.value <= event.key() <= Qt.Key.Key_9.value:
+        return event.key() - Qt.Key.Key_0.value
+    return None
+
+
 def _paint_soft_shadow(painter: QPainter, surface: QRectF) -> None:
     """Stack faint rounded rectangles that darken towards the surface.
 
@@ -607,12 +636,8 @@ class LauncherWindow(QWidget):
         self.results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.results.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results.customContextMenuRequested.connect(self.context_menu)
-        self.results.itemDoubleClicked.connect(
-            lambda _item: self.open_selected() if not self.explorer_mode else None
-        )
-        self.results.itemClicked.connect(
-            lambda _item: self.open_selected() if self.explorer_mode else None
-        )
+        self.results.itemDoubleClicked.connect(self._double_clicked)
+        self.results.itemClicked.connect(self._clicked)
         self.results.currentItemChanged.connect(self.update_detail)
         self.results.currentItemChanged.connect(self._update_hint)
         self.results.currentItemChanged.connect(self._selection_moved)
@@ -712,6 +737,8 @@ class LauncherWindow(QWidget):
 
     def _handle_key(self, watched: QObject, event: QKeyEvent) -> bool:
         modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if self._command_key(event):
+            return True
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not modifiers:
             if self.calculation_selected:
                 self.copy_calculation()
@@ -731,6 +758,56 @@ class LauncherWindow(QWidget):
             self._move_selection(1 if event.key() == Qt.Key.Key_Down else -1)
             return True
         return False
+
+    def _command_key(self, event: QKeyEvent) -> bool:
+        """Modifier+Enter or Ctrl+Modifier+1–9: run the command with that shortcut."""
+        if self.calculation_selected:
+            return False
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            modifier = _shortcut_modifier(event.modifiers())
+            return modifier is not None and self.run_shortcut(self.selected_row(), modifier)
+        number = _row_number(event)
+        modifier = _shortcut_modifier(event.modifiers(), ctrl=True)
+        if number is None or modifier is None or (item := self.results.item(number - 1)) is None:
+            return False
+        self.results.setCurrentItem(item)
+        return self.run_shortcut(item.data(Qt.ItemDataRole.UserRole), modifier)
+
+    def _clicked(self, item: QListWidgetItem) -> None:
+        """Modifier+click runs that command; the Explorer bar opens on a single click."""
+        modifier = _shortcut_modifier(QApplication.keyboardModifiers())
+        if modifier is not None and self.run_shortcut(
+            item.data(Qt.ItemDataRole.UserRole), modifier
+        ):
+            return
+        if self.explorer_mode:
+            self.open_selected()
+
+    def _double_clicked(self, _item: QListWidgetItem) -> None:
+        modifier = _shortcut_modifier(QApplication.keyboardModifiers())
+        if self.explorer_mode or (modifier is not None and self._command_uses(modifier)):
+            return  # The first click acted already.
+        self.open_selected()
+
+    def _command_uses(self, modifier: str) -> bool:
+        return any(command.shortcut == modifier for command in self.menu_commands)
+
+    def run_shortcut(self, row: ResultRow | None, modifier: str) -> bool:
+        """Run the command whose shortcut is `modifier` on `row`.
+
+        Returns False when no command uses `modifier`, so the keys act as before.
+        """
+        if not self._command_uses(modifier):
+            return False
+        hit = row.file_hit if row is not None else None
+        commands = _menu_commands(self.menu_commands, hit.item.kind) if hit else []
+        command = next((c for c in commands if c.shortcut == modifier), None)
+        if command is None:
+            if row is not None:
+                self._show_status(f"No command uses {modifier} for {row.name}")
+            return True
+        self.command_requested.emit(hit, command)
+        return True
 
     def _move_selection(self, step: int) -> None:
         """The calculation, when shown, sits above the first result."""
@@ -1330,9 +1407,10 @@ class LauncherWindow(QWidget):
         if commands := _menu_commands(self.menu_commands, hit.item.kind):
             menu.setObjectName("withIcons")
             for command in commands:
+                keys = f"	{command.shortcut}+Enter" if command.shortcut else ""
                 menu.addAction(
                     self._command_icon(command),
-                    command.title,
+                    command.title + keys,
                     partial(self.command_requested.emit, hit, command),
                 )
             menu.addSeparator()
