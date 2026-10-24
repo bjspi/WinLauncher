@@ -1,6 +1,6 @@
-"""What one launcher row shows: a catalog hit or a website to open.
+"""What one launcher row shows: a catalog hit, a website or a plugin's item to open.
 
-`result_row` is the only place that distinguishes the two for text. Icons and
+`result_row` is the only place that distinguishes them for text. Icons and
 actions that exist for one kind only dispatch on `ResultRow.hit`.
 """
 
@@ -14,11 +14,12 @@ from typing import TypeAlias
 from PySide6.QtCore import QLocale
 
 from winlauncher.catalog.model import CatalogItem
+from winlauncher.plugins.search import PluginHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.ranking import SearchHit
 from winlauncher.websites import WebsiteTarget
 
-LauncherHit: TypeAlias = SearchHit | WebsiteTarget
+LauncherHit: TypeAlias = SearchHit | WebsiteTarget | PluginHit
 WEBSITE_REASON = "Opens in your default browser"
 MISSING_LABEL = "Deleted"
 
@@ -29,7 +30,7 @@ class ResultRow:
     name: str
     location: str  # Muted text beside or below the name.
     target: str  # The path or URL; copied, and identifies the row across refreshes.
-    target_noun: str  # "Path" or "URL", for messages about `target`.
+    target_noun: str  # "Path", "URL" or "Link", for messages about `target`.
     detail: str
     tooltip: str
     accessible_text: str
@@ -40,6 +41,7 @@ class ResultRow:
     # The first subfolder match after the direct entries; a line separates them.
     starts_subfolders: bool = False
     missing: bool = False  # The file is gone; the catalog has not noticed yet.
+    opens_in: str = ""  # Where a website or plugin item opens: "browser", "Telegram".
 
     @property
     def file_hit(self) -> SearchHit | None:
@@ -53,6 +55,8 @@ def result_row(
     """Describe `hit`; locations are relative to `scope` in an Explorer search."""
     if isinstance(hit, WebsiteTarget):
         return _website_row(hit)
+    if isinstance(hit, PluginHit):
+        return _plugin_row(hit)
     row = _file_row(hit, query, scope)
     return _as_missing(row) if missing else row
 
@@ -67,6 +71,23 @@ def _website_row(website: WebsiteTarget) -> ResultRow:
         detail=f"{website.url}\n{WEBSITE_REASON}",
         tooltip=f"{website.url}\n{WEBSITE_REASON}",
         accessible_text=f"{website.name}, website, keyword {website.keyword}\n{website.url}",
+        opens_in="browser",
+    )
+
+
+def _plugin_row(hit: PluginHit) -> ResultRow:
+    item = hit.item
+    tooltip = "\n".join(part for part in (item.target, f"Opens in {hit.label}", hit.reason) if part)
+    return ResultRow(
+        hit=hit,
+        name=hit.title,
+        location=item.subtitle,
+        target=item.target or f"{hit.plugin_id}:{item.key}",
+        target_noun="Link",
+        detail=tooltip,
+        tooltip=tooltip,
+        accessible_text=f"{hit.title}, {hit.label}\n{item.subtitle}".rstrip(),
+        opens_in=hit.label,
     )
 
 

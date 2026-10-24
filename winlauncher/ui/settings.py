@@ -55,6 +55,7 @@ from winlauncher.settings import (
 )
 from winlauncher.ui.commands import CommandList
 from winlauncher.ui.messages import ERROR, WARNING, message
+from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
@@ -409,6 +410,8 @@ class SettingsDialog(QDialog):
         set_startup: Callable[[bool], None] | None = None,
         startup_state: Callable[[], bool] | None = None,
         website_icons: WebsiteIcons,
+        plugins: PluginScheduler | None = None,
+        plugin_folder: str = "",
     ):
         super().__init__(parent)
         self.original = settings
@@ -421,6 +424,13 @@ class SettingsDialog(QDialog):
         self.resize(DIALOG_SIZE)
         self.websites = WebsiteList(settings.websites, website_icons)
         self.menu_commands = CommandList(settings.menu_commands)
+        self.plugin_page = None
+        if plugins is not None:
+            from winlauncher.ui.plugin_settings import PluginPage  # It builds on this module.
+
+            self.plugin_page = PluginPage(
+                settings, plugins, self._settings_without_plugins, plugin_folder, self
+            )
         self.pages = QStackedWidget()
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
@@ -463,6 +473,18 @@ class SettingsDialog(QDialog):
                 "Context menu",
                 "Your own entries in a result's right-click menu, such as Open in Terminal.",
                 self._menu_commands_page(),
+            ),
+            *(
+                (
+                    (
+                        "plug",
+                        "Plugins",
+                        "Chats and contacts from other programs, such as Telegram, as results.",
+                        self.plugin_page.sections,
+                    ),
+                )
+                if self.plugin_page is not None
+                else ()
             ),
             (
                 "chart",
@@ -835,6 +857,12 @@ class SettingsDialog(QDialog):
 
     def read_settings(self) -> Settings:
         """Raise ValueError with a user-facing message for invalid input."""
+        settings = self._settings_without_plugins()
+        if self.plugin_page is None:
+            return settings
+        return replace(settings, plugins=self.plugin_page.configs())
+
+    def _settings_without_plugins(self) -> Settings:
         advanced = parse_advanced_rules(self.rule_json.toPlainText())
         return replace(
             self.original,

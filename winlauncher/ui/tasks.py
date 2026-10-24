@@ -21,6 +21,7 @@ class TaskCategory(StrEnum):
     PREFETCH = "prefetch"  # Results computed ahead of time, such as the start list.
     INDEX = "index"
     ACTION = "action"
+    PLUGIN = "plugin"  # Plugin refreshes and commands, which may wait for the network.
 
 
 _POOL_SIZES = {
@@ -28,6 +29,7 @@ _POOL_SIZES = {
     TaskCategory.PREFETCH: 1,
     TaskCategory.INDEX: 1,
     TaskCategory.ACTION: 1,
+    TaskCategory.PLUGIN: 2,
 }
 
 

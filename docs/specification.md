@@ -521,6 +521,46 @@ offers only the entry itself, since its folders are switched off in Settings.
 into `**\patches\src`; the edited text, trimmed and unless empty, is added to the
 excluded patterns.
 
+## Search plugins
+
+Plugins are found at start: entry points of the group `winlauncher.plugins` and
+every `Plugin` subclass in `<data>/plugins/*.py`. WinLauncher ships none. A
+plugin whose file fails to load, whose id is not `[a-z0-9][a-z0-9_-]*` or whose id
+is taken is skipped and named on the Plugins settings page. Plugins without a
+settings entry are off.
+
+Settings store per plugin `id`, `enabled`, `keyword`, `in_search`,
+`refresh_minutes` (1–1440), `boost` (-100–100) and `options` (names to booleans,
+integers or strings; an invalid or missing value uses the plugin's default).
+Keywords of enabled plugins must differ from website keywords and from each other,
+ignoring case and accents.
+
+An enabled plugin refreshes 4 s after start (or after it is enabled) if its cached
+list is older than its interval or the last refresh failed, then at its interval.
+Its last list stays searchable during a refresh and after a failed one. A plugin
+that needs setup loses its list. **Refresh catalog** in the tray or the bar's menu also refreshes every enabled
+plugin; each plugin's settings card has **Refresh now**. A plugin lists at most 5,000 items; later items
+and repeated keys are dropped.
+
+Typed text that starts with an enabled plugin's keyword lists only that
+plugin's items. Without further words they come in the plugin's order; otherwise
+they are ranked. Plain word searches without filters, sorting or scope add the
+items of every enabled plugin with **In every search** on; website keywords and
+file filters do not. An item scores the catalog's text match of each term
+against its name, or against a keyword 10 points lower. It adds
+`12 / (1 + position / 10)` for its position in the plugin's list and the plugin's
+boost. Every term must match, and an excluded term in the name or keywords drops
+the item. Plugin hits join the file hits by score and the result limit applies to
+both.
+
+A row shows "Label: name" (or the item's own title), the subtitle as its
+location and the item's image. A plugin with `round_icons` crops images to
+circles and paints colored initials for items without one. Enter, a click or
+Ctrl+1…9 hides the bar and runs the plugin's `open` on the action worker. The
+default opens the item's target with `os.startfile`, and a failure is shown
+like other failed actions. The context menu offers Open in <label> and Copy
+Link; file actions and own menu commands do not apply.
+
 ## Tray, settings and autostart
 
 The tray menu offers Search, Refresh catalog, Settings, Start with Windows, Index
