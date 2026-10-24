@@ -553,6 +553,18 @@ class LauncherController(QObject):
         self._action_failed(message)
 
     def clear_history(self) -> None:
+        """Forget all launches after the user confirmed it; favorites stay."""
+        if not messages.ask(
+            self.window,
+            "Clear the search history?",
+            "WinLauncher forgets which results you opened and for which searches, so they "
+            "no longer appear first or when the bar opens. Favorites are kept. This cannot "
+            "be undone.",
+            "Clear history",
+            kind=messages.WARNING,
+        ):
+            return
+        logger.info("Search history cleared at the user's request")
         self._run_action(self.store.clear_history, on_success=self.search.refresh)
 
     def _run_action(self, work, *, on_success=None) -> None:

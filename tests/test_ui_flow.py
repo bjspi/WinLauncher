@@ -1272,10 +1272,22 @@ class UiFlowTest(unittest.TestCase):
         self.indexing.request_full()
         before = self.tasks.count(TaskCategory.SEARCH)
         self.tasks.finish(TaskCategory.INDEX)
-        self.controller.clear_history()
+        with patch("winlauncher.ui.controller.messages.ask", return_value=True):
+            self.controller.clear_history()
         self.tasks.finish(TaskCategory.ACTION)
         self.assertEqual(self.tasks.count(TaskCategory.SEARCH), before)
         self.assertIsNone(self.controller.search.displayed_query)
+
+    def test_clearing_history_asks_first(self):
+        before = self.tasks.count(TaskCategory.ACTION)
+        with patch("winlauncher.ui.controller.messages.ask", return_value=False) as asked:
+            self.controller.clear_history()
+        asked.assert_called_once()
+        self.assertEqual(self.tasks.count(TaskCategory.ACTION), before)
+        with patch("winlauncher.ui.controller.messages.ask", return_value=True):
+            self.controller.clear_history()
+        self.assertEqual(self.tasks.count(TaskCategory.ACTION), before + 1)
+        self.tasks.finish(TaskCategory.ACTION)
 
     def test_favorite_repeats_wait_for_pending_operation(self):
         c = self.controller

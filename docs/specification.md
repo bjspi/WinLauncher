@@ -513,7 +513,8 @@ excluded patterns.
 The tray menu offers Search, Refresh catalog, Settings, Start with Windows, Index
 status, Clear search history, Check for updates, About, Restart and Quit. A single
 click opens the launcher. Restart starts a replacement process that waits for the
-running one to release its instance lock, so two keyboard hooks never run at once.
+running one to release its instance lock, so two keyboard hooks never run at once. Clear search
+history asks for confirmation first and keeps favorites.
 
 Updates follow release tags (`vX.Y.Z`), never unreleased commits, because only a
 release ships the matching prebuilt Rust engine. When git is installed, WinLauncher
