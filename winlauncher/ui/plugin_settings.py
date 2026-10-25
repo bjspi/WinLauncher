@@ -23,11 +23,12 @@ from PySide6.QtWidgets import (
 
 from winlauncher.plugins.api import Plugin, PluginCommand, PluginOption
 from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig
+from winlauncher.plugins.registry import PluginSource
 from winlauncher.settings import BOOST_RANGE, Settings
 from winlauncher.ui.messages import ERROR, INFO, message
 from winlauncher.ui.plugins import PluginScheduler
-from winlauncher.ui.settings import NumberField, _note, _sized, _with_unit
-from winlauncher.ui.widgets import Card, ToggleSwitch, line_icon
+from winlauncher.ui.settings import NumberField, PathList, _note, _sized, _with_unit
+from winlauncher.ui.widgets import Card, ToggleSwitch, line_icon, section_title
 
 KEYWORD_FIELD_WIDTH = 88
 TEXT_OPTION_WIDTH = 220
@@ -53,6 +54,10 @@ class PluginCard(Card):
         self.enabled = ToggleSwitch(f"Use the {plugin.label} plugin")
         self.enabled.setChecked(config.enabled)
         self.add_row(plugin.label, plugin.description, self.enabled)
+        source = scheduler.host.source(plugin.id)
+        version = QLabel(f"Version {source.version}" if source.version else "No version")
+        version.setObjectName("unit")
+        self.add_row("Installed from", _source_location(source), version)
         self.keyword = QLineEdit(config.keyword)
         self.keyword.setFixedWidth(KEYWORD_FIELD_WIDTH)
         self.keyword.setAccessibleName(f"{plugin.label} keyword")
@@ -241,10 +246,34 @@ class PluginPage(QObject):
         if host.problems:
             self.sections.append(_note("Not loaded: " + " ".join(host.problems)))
         self.sections.extend(self.cards)
+        self.sections.append(section_title("Where plugins come from"))
+        self.sections.append(self._folders_card(settings))
+        self.sections.append(
+            _note(
+                "Plugins are loaded once at start: save, then restart WinLauncher from the "
+                "tray to pick up a new folder. Writing your own is documented in docs/plugins.md."
+            )
+        )
         scheduler.status_changed.connect(self.show_status)
         self.show_status()
         if self.cards:
             self.list.setCurrentRow(0)
+
+    def _folders_card(self, settings: Settings) -> Card:
+        """The folders searched beside the data directory's own, such as a cloned repo."""
+        self.folders = PathList(settings.plugin_paths, "Plugin folders")
+        card = Card()
+        card.add_block(
+            "Plugin folders",
+            "Searched after the folder above, each holding one subfolder per plugin "
+            "(plugin.py beside an optional plugin.toml). Point one at a cloned plugin "
+            "repository; keep private plugins in a folder you never push.",
+            self.folders,
+        )
+        return card
+
+    def plugin_paths(self) -> tuple[str, ...]:
+        return self.folders.paths()
 
     def select(self, row: int) -> None:
         """Show the settings of the plugin in `row` only."""
@@ -267,7 +296,16 @@ class PluginPage(QObject):
         return (*(card.config() for card in self.cards), *kept)
 
     def edited_settings(self) -> Settings:
-        return replace(self.current(), plugins=self.configs())
+        return replace(self.current(), plugins=self.configs(), plugin_paths=self.plugin_paths())
+
+
+def _source_location(source: PluginSource) -> str:
+    """Where the plugin's code sits, for its settings card."""
+    if source.folder is not None:
+        return str(source.folder)
+    if source.path is not None:
+        return str(source.path)
+    return f"Installed package {source.origin}"
 
 
 def _plugin_icon(plugin: Plugin) -> QIcon:

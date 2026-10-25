@@ -37,28 +37,41 @@ Telegram: Team Annahme        Group  ·  3 unread
 
 ## Where plugins come from
 
-WinLauncher ships no plugin itself. A plugin is either
+WinLauncher ships no plugin itself. A plugin is a folder holding its `plugin.py`
+and, next to it, a `plugin.toml` naming its version:
 
-- a Python file in `%USERPROFILE%\.WinLauncher\plugins\`, or
-- an installed package that declares an entry point of the group
-  `winlauncher.plugins`, such as
-  [winlauncher-plugin-telegram](https://github.com/bjspi/WinLauncher-Plugins):
-  your recent Telegram chats, opened in Telegram Desktop.
+```text
+telegram\
+    plugin.toml      version = "1.0.0"
+    plugin.py        one or more Plugin subclasses
+    assets\          icons and whatever else it needs
+```
 
-Both are loaded at start and then appear in **Settings → Plugins**, off until you
-turn them on.
+Such folders are searched in
 
-## Writing a plugin
+1. `%USERPROFILE%\.WinLauncher\plugins\`, always — the place for private plugins
+   and for single plugins you copied in, and
+2. every folder listed under **Settings → Plugins → Plugin folders**, in order —
+   point one at a clone of a plugin repository, such as
+   [WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins) with the
+   Telegram plugin.
 
-Put a Python file in `%USERPROFILE%\.WinLauncher\plugins\`. At start, WinLauncher
-loads every `Plugin` subclass defined in it; Settings → Plugins lists files that
-failed to load. A package can declare plugins instead as entry points of the
-group `winlauncher.plugins`:
+A loose `<name>.py` file in those folders is a plugin too, for a quick one of your
+own without any folder. Installed packages may declare plugins as entry points of
+the group `winlauncher.plugins` instead:
 
 ```toml
 [project.entry-points."winlauncher.plugins"]
 crm = "my_package.crm:CrmPlugin"
 ```
+
+The first plugin claiming an id wins, so a private plugin in the first folder
+takes precedence over one of the same name in a cloned repository; the others are
+listed as problems on the Plugins page, together with folders that failed to load.
+Everything is loaded once at start: after adding a folder, save and restart
+WinLauncher from the tray. Plugins stay off until you turn them on.
+
+## Writing a plugin
 
 The interface lives in `winlauncher/plugins/api.py`:
 
@@ -109,9 +122,19 @@ class Notes(Plugin):
   should stop when `context.cancel` is set. `context.log` writes to
   WinLauncher's log.
 
+Files that belong to the plugin itself, such as its icon, are addressed relative to
+its module: `Path(__file__).with_name("assets") / "telegram.svg"`. Everything the
+plugin writes belongs under `context.data_dir`, never next to its code, so the
+plugin folder stays a clean checkout.
+
 Refresh, commands and `open` run on different worker threads. A plugin that
 uses COM calls `pythoncom.CoInitialize()` at the start of each of them and
 `pythoncom.CoUninitialize()` when done.
+
+A plugin may import only the standard library, WinLauncher's own API and packages
+that are installed in the environment running WinLauncher; folder plugins pull in
+no dependencies of their own. When a package is missing, raise `SetupRequired`
+with the command that installs it, as the Telegram plugin does for Telethon.
 
 ### Example: Outlook contacts through COM
 

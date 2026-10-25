@@ -860,7 +860,11 @@ class SettingsDialog(QDialog):
         settings = self._settings_without_plugins()
         if self.plugin_page is None:
             return settings
-        return replace(settings, plugins=self.plugin_page.configs())
+        return replace(
+            settings,
+            plugins=self.plugin_page.configs(),
+            plugin_paths=self.plugin_page.plugin_paths(),
+        )
 
     def _settings_without_plugins(self) -> Settings:
         advanced = parse_advanced_rules(self.rule_json.toPlainText())

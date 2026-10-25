@@ -115,7 +115,7 @@ class PluginHostTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.data = Path(self.temporary.name)
         self.plugin = FakePlugin()
-        self.host = PluginHost([self.plugin], self.data)
+        self.host = PluginHost(Discovery([self.plugin]), self.data)
         self.config = PluginConfig("fake", enabled=True, keyword="fk", options={"count": 99})
 
     def test_refresh_keeps_items_in_a_cache_that_the_next_start_reads(self):
@@ -124,7 +124,7 @@ class PluginHostTest(unittest.TestCase):
         context = self.plugin.contexts[0]
         self.assertEqual(context.options, {"count": 3})  # Out of bounds: the default.
         self.assertEqual(context.data_dir, self.data / "plugin-data" / "fake")
-        restarted = PluginHost([FakePlugin()], self.data)
+        restarted = PluginHost(Discovery([FakePlugin()]), self.data)
         restarted.load_cached()
         self.assertEqual(restarted.state("fake").items, (ANNA, BERND, TEAM))
         hits = restarted.search(query("bernd"), (self.config,), 10)
@@ -188,7 +188,8 @@ class PluginDiscoveryTest(unittest.TestCase):
             )
             (folder / "broken.py").write_text("raise ValueError('oops')\n", encoding="utf-8")
             (folder / "empty.py").write_text("X = 1\n", encoding="utf-8")
-            (folder / "clash.py").write_text(
+            # Sorts after notes.py, so it is the one that finds the id taken.
+            (folder / "takeover.py").write_text(
                 "from winlauncher.plugins.api import Plugin\n"
                 "class Again(Plugin):\n    id = 'notes'\n"
                 "class Bad(Plugin):\n    id = 'Bad Id'\n",
@@ -198,30 +199,75 @@ class PluginDiscoveryTest(unittest.TestCase):
                 patch("winlauncher.plugins.registry.entry_points", return_value=()),
                 self.assertLogs("winlauncher.plugins.registry", "ERROR"),
             ):
-                found = discover_plugins(folder)
+                found = discover_plugins([folder])
         self.assertEqual([plugin.id for plugin in found.plugins], ["notes"])
+        self.assertEqual(found.sources["notes"].path, folder / "notes.py")
         problems = " ".join(found.problems)
-        for text in ("broken.py: ValueError: oops", "empty.py", "already uses the id notes", "Bad"):
+        for text in (
+            "broken.py: ValueError: oops",
+            "empty.py: defines no Plugin subclass",
+            "takeover.py Again: the id notes is already used by notes.py",
+            "takeover.py Bad: the id must use",
+        ):
             self.assertIn(text, problems)
         with (
             patch("winlauncher.plugins.registry.entry_points", return_value=()),
             self.assertLogs("winlauncher.plugins.registry", "ERROR"),
         ):
-            missing = discover_plugins(None, built_in=("nowhere:Nothing",))
+            missing = discover_plugins(built_in=("nowhere:Nothing",))
         self.assertEqual((missing.plugins, len(missing.problems)), ([], 1))
+
+    def test_plugin_folders_of_several_paths_load_in_order_with_their_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, private = Path(directory) / "repo", Path(directory) / "private"
+            write_plugin_folder(repository / "chats", "chats", version="2.1.0")
+            write_plugin_folder(repository / "records", "records")
+            (repository / ".git").mkdir()  # Not a plugin folder; no problem to report.
+            (repository / "half" / "plugin.toml").parent.mkdir()
+            (repository / "half" / "plugin.toml").write_text('version = "1"', encoding="utf-8")
+            write_plugin_folder(private / "chats", "chats")  # The repository already has it.
+            write_plugin_folder(private / "mine", "mine", version=["1.0"])
+            with patch("winlauncher.plugins.registry.entry_points", return_value=()):
+                found = discover_plugins([repository, private, Path(directory) / "gone"])
+            self.assertEqual([plugin.id for plugin in found.plugins], ["chats", "records", "mine"])
+            chats = found.sources["chats"]
+            self.assertEqual((chats.version, chats.folder), ("2.1.0", repository / "chats"))
+            self.assertEqual(found.sources["records"].version, "")  # No manifest.
+            problems = " ".join(found.problems)
+            self.assertIn("the id chats is already used by chats", problems)
+            self.assertIn("half: has no plugin.py", problems)
+            self.assertIn("mine: the version must be text", problems)
+            self.assertNotIn(".git", problems)
+
+
+def write_plugin_folder(folder: Path, plugin_id: str, *, version: object = None) -> None:
+    """A plugin folder as the plugin repository has it: plugin.py and a manifest."""
+    (folder / "assets").mkdir(parents=True)
+    (folder / "plugin.py").write_text(
+        "from winlauncher.plugins.api import Plugin, PluginItem\n"
+        f"class Listed(Plugin):\n    id = {plugin_id!r}\n    label = {plugin_id.title()!r}\n"
+        "    def refresh(self, context):\n        return [PluginItem('1', 'Only item')]\n",
+        encoding="utf-8",
+    )
+    if version is not None:
+        (folder / "plugin.toml").write_text(f"version = {json.dumps(version)}", encoding="utf-8")
 
 
 class PluginSettingsTest(unittest.TestCase):
     def test_plugin_configs_roundtrip_and_validate(self):
         config = PluginConfig("chats", enabled=True, keyword="tg", options={"bots": False})
-        settings = Settings(roots=(), plugins=(config,))
+        settings = Settings(roots=(), plugins=(config,), plugin_paths=(r"D:\Plugins",))
         with tempfile.TemporaryDirectory() as directory:
             file = SettingsFile(Path(directory) / "settings.json")
             file.save(settings)
             self.assertEqual(file.load(), settings)
             stored = json.loads(file.path.read_text(encoding="utf-8"))
         self.assertEqual(stored["plugins"][0]["options"], {"bots": False})
+        self.assertEqual(stored["plugin_paths"], [r"D:\Plugins"])
         self.assertEqual(settings_from_json({"roots": []}).plugins, ())
+        self.assertEqual(settings_from_json({"roots": []}).plugin_paths, ())
+        with self.assertRaisesRegex(ValueError, "Plugin folders must be absolute"):
+            Settings(roots=(), plugin_paths=("plugins",))
         hash(settings)
         invalid = (
             {"id": "x", "refresh_minutes": 0},
@@ -339,8 +385,13 @@ class PluginUiTest(unittest.TestCase):
         self.assertFalse(card.isHidden())
         card.keyword.setText("ff")
         card.boost.setValue(20)
-        config = dialog.read_settings().plugins[0]
+        dialog.plugin_page.folders.add_folders([Path("D:/Projects/Python/WinLauncher-Plugins")])
+        edited = dialog.read_settings()
+        config = edited.plugins[0]
         self.assertEqual((config.keyword, config.boost, config.options), ("ff", 20, {"count": 3}))
+        self.assertEqual(
+            edited.plugin_paths, (str(Path("D:/Projects/Python/WinLauncher-Plugins")),)
+        )
 
 
 if __name__ == "__main__":

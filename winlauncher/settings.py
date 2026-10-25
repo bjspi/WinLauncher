@@ -166,6 +166,9 @@ class Settings:
     appearance: str = Appearance.SYSTEM.value  # An `Appearance`; a string in the JSON file.
     # Search plugins the user configured; plugins without an entry stay off.
     plugins: tuple[PluginConfig, ...] = ()
+    # Folders searched for plugins besides the data directory's own `plugins` folder,
+    # such as a cloned plugin repository. Read once at start.
+    plugin_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.appearance not in tuple(Appearance):
@@ -249,6 +252,8 @@ class Settings:
             raise ValueError("Search roots and excluded paths must be absolute.")
         if not all(Path(rule.path).is_absolute() for rule in self.folder_priorities):
             raise ValueError("Priority folders must be absolute paths.")
+        if not all(Path(folder).is_absolute() for folder in self.plugin_paths):
+            raise ValueError("Plugin folders must be absolute paths.")
 
     def _validate_markers(self) -> None:
         for marker in self.marker_files:

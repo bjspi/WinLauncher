@@ -29,6 +29,7 @@ from winlauncher.plugins.api import (
     no_questions,
 )
 from winlauncher.plugins.config import PluginConfig
+from winlauncher.plugins.registry import Discovery, PluginSource
 from winlauncher.plugins.search import PluginHit, PluginQuery, plugins_answer, rank_items
 from winlauncher.search.query import SearchQuery
 
@@ -54,11 +55,12 @@ class _Entry:
 
 
 class PluginHost:
-    def __init__(self, plugins: Sequence[Plugin], data_dir: Path, problems: Sequence[str] = ()):
+    def __init__(self, found: Discovery, data_dir: Path):
         """`data_dir` is WinLauncher's data directory; plugins get folders below it."""
         self.data_dir = data_dir / "plugin-data"
-        self.problems = tuple(problems)  # Plugins that failed to load.
-        self._entries = {plugin.id: _Entry(plugin) for plugin in plugins}
+        self.problems = tuple(found.problems)  # Plugins that failed to load.
+        self._sources = dict(found.sources)
+        self._entries = {plugin.id: _Entry(plugin) for plugin in found.plugins}
         self._guard = threading.Lock()  # Guards state replacement.
 
     @property
@@ -71,6 +73,10 @@ class PluginHost:
 
     def state(self, plugin_id: str) -> PluginState:
         return self._entries[plugin_id].state
+
+    def source(self, plugin_id: str) -> PluginSource:
+        """Where the plugin was loaded from, for the settings page."""
+        return self._sources.get(plugin_id, PluginSource(plugin_id))
 
     # Configuration ----------------------------------------------------------
 

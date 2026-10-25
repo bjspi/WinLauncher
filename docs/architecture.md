@@ -49,7 +49,7 @@ flowchart TD
 | `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
 | `commands.py` | The user's context-menu commands and their command lines |
 | `plugins/api.py` | The plugin interface: `Plugin`, `PluginItem`, `PluginContext`, options and commands |
-| `plugins/registry.py` | `winlauncher.plugins` entry points and `<data>/plugins/*.py` |
+| `plugins/registry.py` | The plugin folders of every configured path, their manifests, entry points; `PluginSource` |
 | `plugins/host.py` | Each plugin's latest items and their cache, refresh, search, open and commands |
 | `plugins/search.py` | Plugin keywords, which queries plugins answer, item ranking, merging with file hits |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
@@ -223,7 +223,15 @@ against the Python loop and exercise every extension entry point.
 
 ## Search plugins
 
-`plugins/` imports neither Qt nor Win32. `PluginHost` keeps one immutable tuple
+`plugins/` imports neither Qt nor Win32. `discover_plugins` searches the plugin
+paths in order and loads each `plugin.py` as a module of its own, named after its
+folder; `Discovery` collects the usable plugins, the problems to show and a
+`PluginSource` per id (origin, module path, manifest version), which is all the
+settings page needs to say where a plugin comes from. Only `version` lives in
+`plugin.toml`, because it must be readable without executing the plugin; id,
+label, keyword and options stay class attributes, so there is one source of truth.
+
+`PluginHost` keeps one immutable tuple
 of items per plugin; a refresh replaces it whole, so a search on another thread
 never sees half a refresh. A per-plugin lock lets one refresh or command run at a
 time; a refresh that finds the plugin busy is skipped. Each successful refresh is

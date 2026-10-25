@@ -523,11 +523,18 @@ excluded patterns.
 
 ## Search plugins
 
-Plugins are found at start: entry points of the group `winlauncher.plugins` and
-every `Plugin` subclass in `<data>/plugins/*.py`. WinLauncher ships none. A
-plugin whose file fails to load, whose id is not `[a-z0-9][a-z0-9_-]*` or whose id
-is taken is skipped and named on the Plugins settings page. Plugins without a
-settings entry are off.
+Plugins are found once at start, and WinLauncher ships none. A plugin is a folder
+`<name>/plugin.py` with an optional `<name>/plugin.toml` whose `version` is shown
+in its settings card; a loose `<name>.py` file is a plugin too. Such folders are
+searched in `<data>/plugins` first, then in each configured plugin path in order,
+and finally packages declaring entry points of the group `winlauncher.plugins` are
+loaded. Every `Plugin` subclass a module defines itself is one plugin. The first
+plugin claiming an id wins. A module that fails to import, an id that is not
+`[a-z0-9][a-z0-9_-]*`, an id already taken, an unreadable folder or manifest, and a
+folder with a manifest but no `plugin.py` are skipped and named on the Plugins
+settings page; a folder that is neither is ignored silently, and a configured path
+that does not exist is no error. Changed plugin paths take effect after a restart.
+Plugins without a settings entry are off.
 
 Settings store per plugin `id`, `enabled`, `keyword`, `in_search`,
 `refresh_minutes` (1–1440), `boost` (-100–100) and `options` (names to booleans,

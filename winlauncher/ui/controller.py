@@ -119,8 +119,7 @@ class LauncherController(QObject):
 
         # Shared by the result list and the Websites settings.
         self.website_icons = WebsiteIcons(self)
-        found = discover_plugins(data_dir / "plugins")
-        self.plugins = PluginHost(found.plugins, data_dir, found.problems)
+        self.plugins = PluginHost(discover_plugins(self.plugin_folders()), data_dir)
         self.window = LauncherWindow(self.website_icons, PluginIcons(self.plugins, self))
         self.tasks = BackgroundTasks(self)
         self.tray = TrayMenu(self, autostart_available=os.name == "nt")
@@ -221,6 +220,16 @@ class LauncherController(QObject):
         timer.timeout.connect(callback)
         timer.start(interval_ms)
         return timer
+
+    @property
+    def own_plugin_folder(self) -> Path:
+        """Where WinLauncher looks for plugins without any configuration."""
+        return self.data_dir / "plugins"
+
+    def plugin_folders(self) -> tuple[Path, ...]:
+        """Own folder first, then the configured ones; the first id found wins."""
+        configured = (Path(folder) for folder in self.settings.plugin_paths)
+        return (self.own_plugin_folder, *configured)
 
     def effective_settings(self) -> Settings:
         """The user's settings, with WinLauncher's own data directory always excluded."""
@@ -647,7 +656,7 @@ class LauncherController(QObject):
             startup_state=self.tray.autostart.isChecked,
             website_icons=self.website_icons,
             plugins=self.plugin_refresh,
-            plugin_folder=str(self.data_dir / "plugins"),
+            plugin_folder=str(self.own_plugin_folder),
         )
         dialog.finished.connect(self._settings_closed)
         dialog.show()
