@@ -36,7 +36,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
 | 🌐 **Website keywords** | Define a title, keyword and URL in Settings → Websites. `az headphones` searches Amazon; `yt Python tutorial` searches YouTube. |
-| 💬 **Search plugins** | Chats, contacts and records of other programs as results, opened by a deep link into their app. `tg anna` puts your Telegram chats on top without hiding files, `@tg anna` answers from Telegram alone. Point WinLauncher at a clone of the [plugin repository](https://github.com/bjspi/WinLauncher-Plugins), or write your own ([guide](docs/plugins.md)). |
+| 💬 **Search plugins** | Chats, contacts and records of other programs as results, opened by a deep link into their app. `tg anna` puts your Telegram chats on top without hiding files, `@tg anna` answers from Telegram alone. The plugins live in their own repository, [WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins) ([more](#-search-plugins)). |
 | 🖱️ **Your own menu commands** | Right-click a folder → **Open in Windows Terminal** or **Open Command Prompt here**, or add any command line of your own in Settings → Context menu. |
 | 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more, colored as you type; invalid values are underlined. |
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
@@ -78,7 +78,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.11.1"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.12.0"
 winlauncher --show
 ```
 
@@ -385,6 +385,23 @@ what you typed appear: `%user` shows `%USERPROFILE%`, not `%TEMP%`. A trailing `
 `~/Doc` completes names below your user directory. These shortcuts work without
 indexing that folder, run in the background and honor exclusions and markers.
 `in:%USERPROFILE%` also expands variables when filtering the existing catalog.
+
+## 💬 Search plugins
+
+WinLauncher itself ships no plugin, only the host that loads, schedules and searches
+them. The plugins live in their own repository,
+**[WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins)** — currently
+Telegram, plus a template for your own:
+
+```powershell
+git clone https://github.com/bjspi/WinLauncher-Plugins.git
+```
+
+Settings → Plugins → **Plugin folders**: add the clone's `plugins` folder, save and
+restart from the tray, then turn on the plugins you want. Private plugins go into
+`%USERPROFILE%\.WinLauncher\plugins\`, which is always searched. A plugin that fails
+to load or throws is listed as a problem and never takes WinLauncher down.
+[docs/plugins.md](docs/plugins.md) specifies how plugins run and are ranked.
 
 ## 🎛️ Exclusions and priorities
 
