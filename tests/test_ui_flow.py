@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import struct
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -21,6 +23,7 @@ from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMenu
 
+import winlauncher
 from winlauncher.actions import ExplorerTarget
 from winlauncher.catalog import long_paths
 from winlauncher.catalog.model import CatalogItem, ItemKind
@@ -830,6 +833,33 @@ class UiFlowTest(unittest.TestCase):
                 break
             QTest.qWait(20)
         self.assertEqual(events, ["submitted", "done"])
+
+    def test_work_that_never_returns_neither_blocks_the_pool_nor_quitting(self):
+        """A plugin hanging on the network must not keep WinLauncher's process alive.
+
+        Otherwise the window would be gone while the next start waits for the
+        instance lock. Checked in a process of its own, since only interpreter
+        shutdown shows it.
+        """
+        from winlauncher.ui.tasks import WorkerPool
+
+        pool = WorkerPool(2, "test")
+        self.addCleanup(pool.close)
+        hanging = threading.Event()
+        pool.submit(hanging.wait)
+        self.addCleanup(hanging.set)
+        self.assertEqual(pool.submit(lambda: 21 * 2).result(timeout=5), 42)
+        checkout = Path(winlauncher.__file__).resolve().parent.parent
+        script = (
+            f"import sys, threading; sys.path.insert(0, {str(checkout)!r});"
+            "from winlauncher.ui.tasks import WorkerPool;"
+            "pool = WorkerPool(1, 'test'); pool.submit(threading.Event().wait);"
+            "threading.Event().wait(0.3); pool.close()"
+        )
+        finished = subprocess.run(  # noqa: S603 - this interpreter, a literal script.
+            [sys.executable, "-I", "-c", script], timeout=60, capture_output=True
+        )
+        self.assertEqual((finished.returncode, finished.stderr), (0, b""))
 
     def test_unrepresentable_modified_date_does_not_break_details(self):
         hit = SearchHit(

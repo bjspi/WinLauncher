@@ -532,9 +532,20 @@ loaded. Every `Plugin` subclass a module defines itself is one plugin. The first
 plugin claiming an id wins. A module that fails to import, an id that is not
 `[a-z0-9][a-z0-9_-]*`, an id already taken, an unreadable folder or manifest, and a
 folder with a manifest but no `plugin.py` are skipped and named on the Plugins
-settings page; a folder that is neither is ignored silently, and a configured path
-that does not exist is no error. Changed plugin paths take effect after a restart.
-Plugins without a settings entry are off.
+settings page; a folder that is neither is ignored silently, an entry whose name
+starts with `_` is never loaded, and a configured path that does not exist is no
+error. Changed plugin paths take effect after a restart. Plugins without a settings
+entry are off.
+
+The loader also rejects, with a message naming the mistake, a plugin that does not
+implement `refresh`, has no label, or declares a description, icon, keyword,
+`round_icons`, `refresh_minutes` or `options` that WinLauncher could not use — the
+settings page and every result row read these, so they are checked once instead of
+failing later. A `PluginItem` whose key or name is missing or whose other fields
+are not text fails its refresh. Settings buttons a plugin declares that are not
+usable `PluginCommand` values are dropped. No plugin call runs on the GUI thread,
+and the worker threads are daemons, so a plugin stuck in a call delays only other
+plugin work and never prevents WinLauncher from quitting.
 
 Settings store per plugin `id`, `enabled`, `keyword`, `in_search`,
 `refresh_minutes` (1–1440), `boost` (-100–100) and `options` (names to booleans,

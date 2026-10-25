@@ -26,7 +26,8 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from types import ModuleType
 
-from winlauncher.plugins.api import PLUGIN_ID, Plugin
+from winlauncher.plugins.api import PLUGIN_ID, Plugin, PluginOption
+from winlauncher.plugins.config import KEYWORD, REFRESH_RANGE_MINUTES
 
 ENTRY_POINT_GROUP = "winlauncher.plugins"
 BUILT_IN: tuple[str, ...] = ()  # `module:Class` references WinLauncher loads itself.
@@ -73,6 +74,9 @@ class Discovery:
             taken = self.sources[plugin_id].origin
             self.problems.append(f"{source.origin}: the id {plugin_id} is already used by {taken}.")
             return
+        if (problem := _declaration_problem(plugin_class)) is not None:
+            self.problems.append(f"{source.origin}: {problem}")
+            return
         try:
             plugin = plugin_class()
         except Exception as exc:
@@ -81,6 +85,62 @@ class Discovery:
             return
         self.plugins.append(plugin)
         self.sources[plugin_id] = source
+
+
+def _declaration_problem(plugin_class: type[Plugin]) -> str | None:
+    """What a plugin declares wrongly, checked once so the rest may trust it.
+
+    Everything below is read while painting results or building the settings page,
+    where an exception would take the window down. A plugin that declares nonsense
+    is therefore rejected here, with the message its author needs.
+    """
+    if plugin_class.refresh is Plugin.refresh:
+        return "it does not implement refresh()."
+    if not isinstance(plugin_class.label, str) or not plugin_class.label.strip():
+        return "it needs a label, shown before each item's name."
+    for name in ("description", "icon"):
+        if not isinstance(getattr(plugin_class, name), str):
+            return f"its {name} must be text."
+    if not isinstance(plugin_class.keyword, str) or not KEYWORD.fullmatch(plugin_class.keyword):
+        return "its keyword may contain letters, numbers, _ and -."
+    if type(plugin_class.round_icons) is not bool:
+        return "round_icons must be True or False."
+    minutes, (low, high) = plugin_class.refresh_minutes, REFRESH_RANGE_MINUTES
+    if type(minutes) is not int or not low <= minutes <= high:
+        return f"refresh_minutes must be a whole number from {low} to {high}."
+    return _options_problem(plugin_class.options)
+
+
+def _options_problem(options: object) -> str | None:
+    if not isinstance(options, tuple) or not all(
+        isinstance(option, PluginOption) for option in options
+    ):
+        return "options must be a tuple of PluginOption values."
+    keys: set[str] = set()
+    for option in options:
+        if not isinstance(option.key, str) or not option.key:
+            return "every option needs a key."
+        if option.key in keys:
+            return f"the option {option.key} is declared twice."
+        keys.add(option.key)
+        if not isinstance(option.label, str) or not option.label.strip():
+            return f"the option {option.key} needs a label."
+        if type(option.default) not in (bool, int, str):
+            return f"the option {option.key} needs a True/False, whole number or text default."
+        if option.bounds is not None and not _usable_bounds(option):
+            return f"the option {option.key} has bounds that its default misses."
+    return None
+
+
+def _usable_bounds(option: PluginOption) -> bool:
+    bounds = option.bounds
+    if not (isinstance(bounds, tuple) and len(bounds) == 2):
+        return False
+    low, high = bounds
+    if type(low) is not int or type(high) is not int or low > high:
+        return False
+    # Bounds only apply to numbers, and the default must be one the user can return to.
+    return type(option.default) is int and low <= option.default <= high
 
 
 def discover_plugins(
@@ -124,9 +184,11 @@ def _add_plugin_folder(found: Discovery, folder: Path) -> None:
         found.problems.append(f"{folder}: {exc.strerror or exc}")
         return
     for entry in entries:
+        if entry.name.startswith("_"):
+            continue  # Templates, caches and other folders a plugin author keeps around.
         if entry.is_dir():
             _add_plugin_subfolder(found, entry)
-        elif entry.suffix == ".py" and not entry.name.startswith("_"):
+        elif entry.suffix == ".py":
             _add_module_file(found, entry, PluginSource(entry.name, entry))
 
 

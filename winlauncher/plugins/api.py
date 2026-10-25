@@ -55,11 +55,20 @@ class PluginItem:
     data: Mapping[str, object] = field(default_factory=dict, compare=False)
 
     def __post_init__(self) -> None:
+        """Reject an item the launcher could not show, so a refresh fails, not a search."""
         if not isinstance(self.key, str) or not self.key:
             raise ValueError("Plugin items need a key.")
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("Plugin items need a name.")
-        object.__setattr__(self, "keywords", tuple(self.keywords))
+        for field_name in ("target", "subtitle", "icon", "title"):
+            if not isinstance(getattr(self, field_name), str):
+                raise ValueError(f"A plugin item's {field_name} must be text.")
+        keywords = tuple(self.keywords)
+        if not all(isinstance(keyword, str) for keyword in keywords):
+            raise ValueError("A plugin item's keywords must be text.")
+        if not isinstance(self.data, Mapping) or not all(isinstance(key, str) for key in self.data):
+            raise ValueError("A plugin item's data must map names to JSON values.")
+        object.__setattr__(self, "keywords", keywords)
 
 
 @dataclass(frozen=True, slots=True)
