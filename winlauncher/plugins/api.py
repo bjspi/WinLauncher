@@ -133,6 +133,11 @@ class Plugin:
     refresh_minutes: ClassVar[int] = 15
     icon: ClassVar[str] = ""  # Image file for items without an icon of their own.
     round_icons: ClassVar[bool] = False  # Avatars: crop icons to circles, initials without one.
+    # Regular expressions for typed terms that name one of this plugin's items, such
+    # as (r"HCP-\w*",) for ticket keys. A term a pattern describes entirely is
+    # matched in one piece instead of loosely; terms with a digit in them already
+    # are. Case is ignored, and the other terms of the same query stay loose.
+    literal_terms: ClassVar[tuple[str, ...]] = ()
     options: ClassVar[tuple[PluginOption, ...]] = ()
 
     def refresh(self, context: PluginContext) -> Iterable[PluginItem]:

@@ -31,6 +31,7 @@ from winlauncher.plugins.registry import Discovery, PluginSource, discover_plugi
 from winlauncher.plugins.search import (
     PluginHit,
     PluginQuery,
+    literal_patterns,
     merge_hits,
     plugin_query,
     plugins_answer,
@@ -197,6 +198,44 @@ class CandidatePrePassTest(unittest.TestCase):
                         [(h.item.key, round(h.score, 6), h.reason) for h in fast],
                         [(h.item.key, round(h.score, 6), h.reason) for h in every],
                     )
+
+    def test_a_plugin_declares_which_terms_name_its_items(self):
+        """`HCP` has no digit, so only the plugin knows it is a ticket prefix."""
+        tickets = [
+            PluginItem("1", "HCP-1234 Sensor calibration drifts"),
+            PluginItem("2", "Hardware Check Procedure for the gateway"),
+        ]
+        prepared = searchable_items(tickets)
+        loosely = rank_items("p", "P", prepared, query("hcp"), limit=10)
+        self.assertEqual([hit.item.key for hit in loosely], ["1", "2"])  # Also the initials.
+        literally = rank_items(
+            "p", "P", prepared, query("hcp"), limit=10, literal=literal_patterns((r"HCP-?\w*",))
+        )
+        self.assertEqual([hit.item.key for hit in literally], ["1"])
+        # Only terms the pattern describes entirely; the others stay loose.
+        both = rank_items(
+            "p",
+            "P",
+            prepared,
+            query("hcp gatewy"),
+            limit=10,
+            literal=literal_patterns((r"HCP-?\w*",)),
+        )
+        self.assertEqual([hit.item.key for hit in both], [])
+        self.assertEqual(
+            [
+                hit.item.key
+                for hit in rank_items(
+                    "p",
+                    "P",
+                    prepared,
+                    query("hcp calibratio"),
+                    limit=10,
+                    literal=literal_patterns((r"HCP-?\w*",)),
+                )
+            ],
+            ["1"],
+        )
 
     def test_numbers_are_matched_in_one_piece_while_words_stay_loose(self):
         tickets = [
@@ -373,6 +412,8 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             ({"options": (option,)}, "bounds that its default misses"),
             ({"options": (PluginOption("a", "A", 1.5),)}, "whole number or text default"),
             ({"options": (PluginOption("a", "A", 1), PluginOption("a", "B", 2))}, "twice"),
+            ({"literal_terms": [r"HCP-\w*"]}, "tuple of regular expressions"),
+            ({"literal_terms": (r"HCP-[",)}, "unterminated character set"),
         ):
             declaration = dict(attributes)
             if declaration.get("refresh") is None and "refresh" in declaration:
