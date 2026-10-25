@@ -252,8 +252,15 @@ and painting initials when there is none.
 ## Threads, scheduling and cancellation
 
 Qt widgets live on the GUI thread. `BackgroundTasks` runs work on separate search
-(2), index (1) and action (1) pools and always delivers results through a queued
-signal to callbacks on the GUI thread. Callbacks never run inside `submit`.
+(2), prefetch (1), index (1), action (1) and plugin (2) pools and always delivers
+results through a queued signal to callbacks on the GUI thread. Callbacks never
+run inside `submit`. Its `WorkerPool` takes callables from a queue on daemon
+threads instead of using a `ThreadPoolExecutor`, whose workers Python joins at
+interpreter shutdown: one task that never returns — third-party plugin code on the
+network, a hanging shell extension — would otherwise keep the process alive after
+the window is gone, and the next start could not take over the instance lock.
+Exceptions, including `BaseException`, belong to the future and reach the
+category's failure callback.
 
 `SearchSession` debounces typing, cancels the previous search, discards results of
 abandoned searches by identity, and implements the Enter contract: Enter opens a

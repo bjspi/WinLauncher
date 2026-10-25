@@ -71,9 +71,38 @@ listed as problems on the Plugins page, together with folders that failed to loa
 Everything is loaded once at start: after adding a folder, save and restart
 WinLauncher from the tray. Plugins stay off until you turn them on.
 
+## A plugin cannot break WinLauncher
+
+The loader is the one place that decides whether a plugin is usable, so the rest
+of the program may trust what it declares:
+
+- A module that fails to import — a syntax error, a missing package, an exception
+  at import time — is listed as a problem; everything else starts normally.
+- What a plugin declares (`label`, `description`, `keyword`, `refresh_minutes`,
+  `icon`, `round_icons`, `options`) is checked once at load. A plugin that declares
+  something the launcher could not paint is rejected with a message naming the
+  mistake, instead of failing later inside a result row or the settings page. A
+  plugin that does not implement `refresh` is rejected too.
+- Every call into a plugin is wrapped. `refresh` failures are shown on its settings
+  card and keep the items listed before; `open` and command failures are reported
+  like any other failed action; `commands()` entries that are not usable buttons
+  are dropped with a warning in the log.
+- `PluginItem` refuses a field the launcher could not show, so a bad item fails the
+  refresh instead of a later search.
+- No plugin runs on the GUI thread, and worker threads are daemons: a plugin stuck
+  in a network call delays only other plugin work and never keeps WinLauncher from
+  quitting.
+
+What WinLauncher cannot do is interrupt a running plugin, because Python cannot
+kill a thread. Two plugins stuck in `refresh` occupy both plugin workers, and no
+plugin refreshes again until they return. Network calls and subprocesses therefore
+need explicit timeouts, and a long refresh must honor `context.cancel`.
+
 ## Writing a plugin
 
-The interface lives in `winlauncher/plugins/api.py`:
+The interface lives in `winlauncher/plugins/api.py`; the plugin repository has a
+[step-by-step guide](https://github.com/bjspi/WinLauncher-Plugins/blob/main/docs/writing-a-plugin.md)
+and a template folder to copy.
 
 ```python
 from winlauncher.plugins.api import Plugin, PluginItem, PluginOption, PluginError

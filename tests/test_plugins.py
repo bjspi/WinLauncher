@@ -15,10 +15,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from winlauncher.catalog.model import CatalogItem, ItemKind
-from winlauncher.plugins.api import Plugin, PluginError, PluginItem, PluginOption, SetupRequired
+from winlauncher.plugins.api import (
+    Plugin,
+    PluginCommand,
+    PluginError,
+    PluginItem,
+    PluginOption,
+    SetupRequired,
+)
 from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.host import CACHE_FILE, PluginHost
-from winlauncher.plugins.registry import Discovery, discover_plugins
+from winlauncher.plugins.registry import Discovery, PluginSource, discover_plugins
 from winlauncher.plugins.search import (
     PluginHit,
     PluginQuery,
@@ -44,13 +51,14 @@ class FakePlugin(Plugin):
     options = (PluginOption("count", "Count", 3, bounds=(1, 10)),)
 
     def __init__(self):
-        self.items: list[PluginItem] | Exception = [ANNA, BERND, TEAM]
+        # A BaseException too, so SystemExit from a plugin can be exercised.
+        self.items: list[PluginItem] | BaseException = [ANNA, BERND, TEAM]
         self.opened: list[PluginItem] = []
         self.contexts = []
 
     def refresh(self, context):
         self.contexts.append(context)
-        if isinstance(self.items, Exception):
+        if isinstance(self.items, BaseException):
             raise self.items
         return self.items
 
@@ -223,6 +231,7 @@ class PluginDiscoveryTest(unittest.TestCase):
             write_plugin_folder(repository / "chats", "chats", version="2.1.0")
             write_plugin_folder(repository / "records", "records")
             (repository / ".git").mkdir()  # Not a plugin folder; no problem to report.
+            write_plugin_folder(repository / "_template", "template")  # Never loaded.
             (repository / "half" / "plugin.toml").parent.mkdir()
             (repository / "half" / "plugin.toml").write_text('version = "1"', encoding="utf-8")
             write_plugin_folder(private / "chats", "chats")  # The repository already has it.
@@ -238,6 +247,89 @@ class PluginDiscoveryTest(unittest.TestCase):
             self.assertIn("half: has no plugin.py", problems)
             self.assertIn("mine: the version must be text", problems)
             self.assertNotIn(".git", problems)
+            self.assertNotIn("template", problems)
+
+
+class PluginLoaderRobustnessTest(unittest.TestCase):
+    """A plugin author who breaks the contract must never break WinLauncher.
+
+    Everything a plugin declares is painted into result rows and the settings page,
+    where an exception would take the window down, so the loader checks it once.
+    """
+
+    @staticmethod
+    def declared(**attributes) -> type[Plugin]:
+        return type("Declared", (Plugin,), {"id": "p", "label": "P", **attributes})
+
+    def test_unusable_declarations_are_rejected_with_a_message_for_their_author(self):
+        option = PluginOption("a", "A", 5, bounds=(10, 20))
+        for attributes, expected in (
+            ({"refresh": None}, "not implement refresh"),
+            ({"label": "  "}, "needs a label"),
+            ({"description": 7}, "description must be text"),
+            ({"icon": Path("x.svg")}, "icon must be text"),
+            ({"keyword": "two words"}, "keyword may contain"),
+            ({"round_icons": 1}, "True or False"),
+            ({"refresh_minutes": 0}, "whole number from 1 to 1440"),
+            ({"refresh_minutes": True}, "whole number from 1 to 1440"),
+            ({"options": [option]}, "tuple of PluginOption"),
+            ({"options": (option,)}, "bounds that its default misses"),
+            ({"options": (PluginOption("a", "A", 1.5),)}, "whole number or text default"),
+            ({"options": (PluginOption("a", "A", 1), PluginOption("a", "B", 2))}, "twice"),
+        ):
+            declaration = dict(attributes)
+            if declaration.get("refresh") is None and "refresh" in declaration:
+                declaration.pop("refresh")  # Leaves Plugin.refresh unimplemented.
+            else:
+                declaration["refresh"] = lambda self, context: []
+            with self.subTest(expected=expected):
+                found = Discovery()
+                found.add(self.declared(**declaration), PluginSource("mine.py"))
+                self.assertEqual(found.plugins, [])
+                self.assertIn(expected, " ".join(found.problems))
+
+    def test_a_correct_declaration_is_accepted(self):
+        found = Discovery()
+        found.add(
+            self.declared(refresh=lambda self, context: [], keyword="k-1", refresh_minutes=1440),
+            PluginSource("mine.py"),
+        )
+        self.assertEqual((found.problems, [p.id for p in found.plugins]), ([], ["p"]))
+
+    def test_items_the_launcher_could_not_show_are_refused(self):
+        for fields, expected in (
+            ({"key": ""}, "need a key"),
+            ({"name": " "}, "need a name"),
+            ({"target": 5}, "target must be text"),
+            ({"subtitle": None}, "subtitle must be text"),
+            ({"icon": Path("a.jpg")}, "icon must be text"),
+            ({"keywords": (1,)}, "keywords must be text"),
+            ({"data": [("a", 1)]}, "data must map names"),
+        ):
+            with self.subTest(expected=expected), self.assertRaises(ValueError) as caught:
+                PluginItem(**{"key": "1", "name": "Anna", **fields})
+            self.assertIn(expected, str(caught.exception))
+
+    def test_unusable_settings_buttons_are_ignored(self):
+        class Buttons(FakePlugin):
+            def commands(self):
+                return (PluginCommand("Sign in", lambda context: None), ("Sign out", None), None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(Discovery([Buttons()]), Path(directory))
+            with self.assertLogs("winlauncher.plugins.host", "WARNING"):
+                commands = host.commands("fake")
+        self.assertEqual([command.label for command in commands], ["Sign in"])
+
+    def test_a_plugin_that_exits_the_interpreter_leaves_nothing_marked_busy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = FakePlugin()
+            plugin.items = SystemExit("plugin called sys.exit")
+            host = PluginHost(Discovery([plugin]), Path(directory))
+            # The worker pool turns it into a failed task; the host must not stay busy.
+            with self.assertRaises(SystemExit):
+                host.refresh("fake", PluginConfig("fake", enabled=True))
+            self.assertFalse(host.state("fake").refreshing)
 
 
 def write_plugin_folder(folder: Path, plugin_id: str, *, version: object = None) -> None:

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 REFRESH_RANGE_MINUTES = (1, 1440)
-_KEYWORD = re.compile(r"[\w-]*")
+KEYWORD = re.compile(r"[\w-]*")  # Also checked for a plugin's own default keyword.
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +26,7 @@ class PluginConfig:
             raise ValueError("Each plugin entry needs an id.")
         if type(self.enabled) is not bool or type(self.in_search) is not bool:
             raise ValueError(f"Plugin {self.id}: enabled and in_search must be JSON booleans.")
-        if not isinstance(self.keyword, str) or not _KEYWORD.fullmatch(self.keyword):
+        if not isinstance(self.keyword, str) or not KEYWORD.fullmatch(self.keyword):
             raise ValueError(f"Plugin {self.id}: keywords may contain letters, numbers, _ and -.")
         for name in ("refresh_minutes", "boost"):
             if type(getattr(self, name)) is not int:

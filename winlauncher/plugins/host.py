@@ -180,6 +180,9 @@ class PluginHost:
             )
             return self._set(entry, PluginState(items, refreshed))
         finally:
+            if entry.state.refreshing:
+                # Even a plugin that raised SystemExit leaves no plugin marked busy.
+                self._set(entry, replace(entry.state, refreshing=False))
             entry.lock.release()
 
     def forget(self, plugin_id: str) -> None:
@@ -233,11 +236,26 @@ class PluginHost:
         plugin.open(hit.item, self.context(hit.plugin_id, config))
 
     def commands(self, plugin_id: str) -> tuple[PluginCommand, ...]:
+        """The plugin's settings buttons; anything else it returns is ignored.
+
+        The settings page paints these, so a plugin must not be able to break it.
+        """
         try:
-            return tuple(self._entries[plugin_id].plugin.commands())
+            declared = tuple(self._entries[plugin_id].plugin.commands())
         except Exception:
             logger.exception("Plugin %s commands unavailable", plugin_id)
             return ()
+        usable = tuple(
+            command
+            for command in declared
+            if isinstance(command, PluginCommand)
+            and isinstance(command.label, str)
+            and command.label.strip()
+            and callable(command.run)
+        )
+        if len(usable) != len(declared):
+            logger.warning("Plugin %s declared unusable settings buttons", plugin_id)
+        return usable
 
     def run_command(
         self, plugin_id: str, command: PluginCommand, config: PluginConfig, ask: Ask
