@@ -26,9 +26,18 @@ Telegram: Team Annahme        Group  ·  3 unread
   items get a small bonus (12 points, halving every 10 items). The scores share
   the scale of file results, so plugin items join them by score. The plugin's
   **Boost** setting lifts or lowers them, between -100 and 100.
+- **Numbers are taken literally.** A term with a digit in it names something — a
+  ticket, a version, a phone number — and is matched in one piece: `12345` finds
+  the ticket 12345, never 52314. Words in the same query still match loosely, so
+  `12345 login` and `uC halted` both work.
 - **Only plain words.** A search with a filter such as `type:`, `ext:`, `in:` or a
   date asks for files, so plugins stay out of it. **In every search** off keeps a
   plugin out of ordinary searches altogether.
+- **How many items.** Searching happens in Python over the plugin's list. A few
+  thousand items stay inside a keystroke (measured: 5,000 tickets answer a typical
+  query in 13–45 ms, a number in 2 ms); tens of thousands do not, so a plugin
+  should list the part of its world you actually search and offer the rest through
+  a direct lookup, such as opening a ticket by its key.
 - **Keyword.** Typed first, the plugin's keyword searches only that plugin:
   `tg anna`. The keyword alone lists its items in the plugin's order, such as
   your most recent chats.

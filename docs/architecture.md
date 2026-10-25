@@ -231,6 +231,19 @@ settings page needs to say where a plugin comes from. Only `version` lives in
 `plugin.toml`, because it must be readable without executing the plugin; id,
 label, keyword and options stay class attributes, so there is one source of truth.
 
+Matching a plugin's items is the same text matching the catalog uses, so a chat
+named Anna ranks like a file named Anna and the scores can be merged. Its two
+costs are kept off the keystroke exactly as the catalog keeps them off: the
+normalized spellings of an item are prepared once per refresh (`SearchableItem`,
+built in `_set` only when the items are new ones), and a candidate pre-pass
+mirroring the candidate SQL — a substring test for a literal term, a compiled
+subsequence pattern for a fuzzy one, both running in C — decides which items reach
+the Python matcher at all. Each test is a superset of `match_term`, checked by a
+randomized parity test against ranking every item. This holds a few thousand items
+per plugin inside a keystroke; far beyond that a plugin would need its own Rust
+entry point, which is why plugin items are not in the catalog table: they have no
+path, and every refresh would invalidate the memory index.
+
 `PluginHost` keeps one immutable tuple
 of items per plugin; a refresh replaces it whole, so a search on another thread
 never sees half a refresh. A per-plugin lock lets one refresh or command run at a

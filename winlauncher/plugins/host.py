@@ -30,7 +30,14 @@ from winlauncher.plugins.api import (
 )
 from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.registry import Discovery, PluginSource
-from winlauncher.plugins.search import PluginHit, PluginQuery, plugins_answer, rank_items
+from winlauncher.plugins.search import (
+    PluginHit,
+    PluginQuery,
+    SearchableItem,
+    plugins_answer,
+    rank_items,
+    searchable_items,
+)
 from winlauncher.search.query import SearchQuery
 
 MAX_ITEMS = 5000  # Per plugin; more would slow down every keystroke.
@@ -51,6 +58,8 @@ class PluginState:
 class _Entry:
     plugin: Plugin
     state: PluginState = field(default_factory=PluginState)
+    # `state.items` prepared for matching; rebuilt only when the items themselves change.
+    searchable: tuple[SearchableItem, ...] = ()
     lock: threading.Lock = field(default_factory=threading.Lock)  # One call at a time.
 
 
@@ -192,8 +201,12 @@ class PluginHost:
         self._set(entry, PluginState())
 
     def _set(self, entry: _Entry, state: PluginState) -> PluginState:
+        """Publish a plugin's new state, preparing its items when they are new ones."""
+        searchable = entry.searchable
+        if state.items is not entry.state.items:
+            searchable = searchable_items(state.items)
         with self._guard:
-            entry.state = state
+            entry.state, entry.searchable = state, searchable
         return state
 
     def _write_cache(self, plugin_id: str, items: tuple[PluginItem, ...], refreshed: float) -> None:
@@ -225,9 +238,13 @@ class PluginHost:
 
     def _rank(self, config: PluginConfig, query: SearchQuery, limit: int) -> list[PluginHit]:
         entry = self._entries[config.id]
-        items = entry.state.items
         return rank_items(
-            config.id, entry.plugin.label, items, query, boost=config.boost, limit=limit
+            config.id,
+            entry.plugin.label,
+            entry.searchable,
+            query,
+            boost=config.boost,
+            limit=limit,
         )
 
     def open(self, hit: PluginHit, config: PluginConfig) -> None:
