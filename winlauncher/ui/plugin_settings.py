@@ -234,8 +234,8 @@ class PluginPage(QObject):
         overview = Card()
         overview.add_block(
             "Installed plugins",
-            "Choose a plugin to set it up. Your own plugins are Python files in the plugin "
-            "folder, loaded at start; see docs/plugins.md.",
+            "Choose a plugin to set it up. Copy a plugin folder into the folder below to "
+            "add one just for this computer.",
             self.list,
         )
         if self.data_folder is not None:
