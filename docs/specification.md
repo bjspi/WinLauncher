@@ -574,8 +574,10 @@ both.
 A term that contains a digit names something — a ticket, a version, a phone
 number — and is matched in one piece even in fuzzy mode: `12345` finds the ticket
 12345 but not 52314, while the words of the same query keep matching loosely, so
-`12345 login` and `uC halted` both work as expected. Quoted terms are literal as
-always.
+`12345 login` and `uC halted` both work as expected. A plugin's `literal_terms`
+are case-insensitive patterns naming further whole terms to match that way, such
+as a ticket prefix without digits; the loader rejects a plugin whose patterns do
+not compile. Quoted terms and `match:keyword` are literal as always.
 
 A row shows "Label: name" (or the item's own title), the subtitle as its
 location and the item's image. A plugin with `round_icons` crops images to

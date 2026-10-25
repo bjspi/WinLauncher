@@ -18,6 +18,7 @@ import importlib
 import importlib.util
 import inspect
 import logging
+import re
 import sys
 import tomllib
 from collections.abc import Iterable, Sequence
@@ -28,6 +29,7 @@ from types import ModuleType
 
 from winlauncher.plugins.api import PLUGIN_ID, Plugin, PluginOption
 from winlauncher.plugins.config import KEYWORD, REFRESH_RANGE_MINUTES
+from winlauncher.plugins.search import literal_patterns
 
 ENTRY_POINT_GROUP = "winlauncher.plugins"
 BUILT_IN: tuple[str, ...] = ()  # `module:Class` references WinLauncher loads itself.
@@ -105,10 +107,23 @@ def _declaration_problem(plugin_class: type[Plugin]) -> str | None:
         return "its keyword may contain letters, numbers, _ and -."
     if type(plugin_class.round_icons) is not bool:
         return "round_icons must be True or False."
+    if (problem := _literal_terms_problem(plugin_class.literal_terms)) is not None:
+        return problem
     minutes, (low, high) = plugin_class.refresh_minutes, REFRESH_RANGE_MINUTES
     if type(minutes) is not int or not low <= minutes <= high:
         return f"refresh_minutes must be a whole number from {low} to {high}."
     return _options_problem(plugin_class.options)
+
+
+def _literal_terms_problem(patterns: object) -> str | None:
+    """Patterns are compiled here, so a broken one never raises during a search."""
+    if not isinstance(patterns, tuple) or not all(isinstance(pattern, str) for pattern in patterns):
+        return "literal_terms must be a tuple of regular expressions."
+    try:
+        literal_patterns(patterns)
+    except re.error as exc:
+        return f"the literal_terms pattern {exc.pattern!r} is invalid: {exc.msg}."
+    return None
 
 
 def _options_problem(options: object) -> str | None:

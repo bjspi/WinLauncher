@@ -26,10 +26,12 @@ Telegram: Team Annahme        Group  ·  3 unread
   items get a small bonus (12 points, halving every 10 items). The scores share
   the scale of file results, so plugin items join them by score. The plugin's
   **Boost** setting lifts or lowers them, between -100 and 100.
-- **Numbers are taken literally.** A term with a digit in it names something — a
+- **Identifiers are taken literally.** A term with a digit in it names something — a
   ticket, a version, a phone number — and is matched in one piece: `12345` finds
-  the ticket 12345, never 52314. Words in the same query still match loosely, so
-  `12345 login` and `uC halted` both work.
+  the ticket 12345, never 52314. A plugin adds its own shapes with
+  `literal_terms = (r"HCP-?\w*",)`, for identifiers that have no digit of their
+  own. Words in the same query still match loosely, so `12345 login` and
+  `uC halted` both work.
 - **Only plain words.** A search with a filter such as `type:`, `ext:`, `in:` or a
   date asks for files, so plugins stay out of it. **In every search** off keeps a
   plugin out of ordinary searches altogether.

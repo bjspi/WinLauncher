@@ -115,6 +115,15 @@ def searchable_items(items: Iterable[PluginItem]) -> tuple[SearchableItem, ...]:
     return tuple(prepared)
 
 
+def literal_patterns(patterns: Iterable[str]) -> tuple[re.Pattern[str], ...]:
+    r"""Compile a plugin's `literal_terms`; raises `re.error` for an unusable one.
+
+    Terms reach matching normalized, so the patterns ignore case to let a plugin
+    write them the way its identifiers look, such as `HCP-\w*`.
+    """
+    return tuple(re.compile(pattern, re.IGNORECASE) for pattern in patterns)
+
+
 def rank_items(
     plugin_id: str,
     label: str,
@@ -123,8 +132,13 @@ def rank_items(
     *,
     boost: int = 0,
     limit: int,
+    literal: Sequence[re.Pattern[str]] = (),
 ) -> list[PluginHit]:
-    """The best `limit` items for `query`; no terms keeps the plugin's order."""
+    """The best `limit` items for `query`; no terms keeps the plugin's order.
+
+    `literal` are the plugin's patterns for terms that name one of its items, such
+    as a ticket key, and must therefore be matched in one piece.
+    """
     if not query.terms:
         return [
             PluginHit(
@@ -136,10 +150,10 @@ def rank_items(
             )
             for entry in items[:limit]
         ]
-    fuzzy = query.match_mode == MatchMode.FUZZY
+    loose = _loose_terms(query, literal)
     hits = []
-    for entry in _candidates(items, query, fuzzy):
-        text = _text_relevance(entry, query, fuzzy)
+    for entry in _candidates(items, query, loose):
+        text = _text_relevance(entry, query, loose)
         if text is None:
             continue
         points, reason = text
@@ -152,13 +166,26 @@ def position_bonus(position: int) -> float:
     return POSITION_BONUS / (1 + position / POSITION_HALF_VALUE)
 
 
-def fuzzy_term(term: str, query: SearchQuery, fuzzy: bool) -> bool:
-    """Whether `term` may match loosely: not quoted, not an identifier, mode allows it."""
-    return fuzzy and term not in query.exact_terms and not _HAS_DIGIT.search(term)
+def _loose_terms(query: SearchQuery, literal: Sequence[re.Pattern[str]]) -> frozenset[str]:
+    """The terms that may match loosely; decided once per search, not per item.
+
+    A term is matched in one piece when the user asked for it (quoted or
+    `match:keyword`), when it contains a digit, or when the plugin declared a
+    pattern that describes the whole term.
+    """
+    if query.match_mode != MatchMode.FUZZY:
+        return frozenset()
+    return frozenset(
+        term
+        for term in query.terms
+        if term not in query.exact_terms
+        and not _HAS_DIGIT.search(term)
+        and not any(pattern.fullmatch(term) for pattern in literal)
+    )
 
 
 def _candidates(
-    items: Sequence[SearchableItem], query: SearchQuery, fuzzy: bool
+    items: Sequence[SearchableItem], query: SearchQuery, loose: frozenset[str]
 ) -> Sequence[SearchableItem]:
     """The items that can possibly match, decided by one cheap test per term.
 
@@ -171,7 +198,7 @@ def _candidates(
     """
     tests = []
     for term in query.terms:
-        test = _candidate_test(term, fuzzy_term(term, query, fuzzy))
+        test = _candidate_test(term, term in loose)
         if test is None:
             return items  # A wildcard rules nothing out; match every item as before.
         tests.append(test)
@@ -190,14 +217,14 @@ def _candidate_test(term: str, fuzzy: bool) -> Callable[[str], object] | None:
 
 
 def _text_relevance(
-    entry: SearchableItem, query: SearchQuery, fuzzy: bool
+    entry: SearchableItem, query: SearchQuery, loose: frozenset[str]
 ) -> tuple[float, str] | None:
     """Every term must match the name or a keyword; terms add up."""
     if any(excluded in entry.searchable for excluded in query.excluded_terms):
         return None
     points, reasons = 0.0, []
     for term in query.terms:
-        term_fuzzy = fuzzy_term(term, query, fuzzy)
+        term_fuzzy = term in loose
         best = None
         for index, form in enumerate(entry.forms):
             match = match_term(term, form, None, term_fuzzy)

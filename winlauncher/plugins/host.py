@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from collections.abc import Sequence
@@ -34,6 +35,7 @@ from winlauncher.plugins.search import (
     PluginHit,
     PluginQuery,
     SearchableItem,
+    literal_patterns,
     plugins_answer,
     rank_items,
     searchable_items,
@@ -57,6 +59,8 @@ class PluginState:
 @dataclass(slots=True)
 class _Entry:
     plugin: Plugin
+    # The plugin's compiled `literal_terms`; the loader checked that they compile.
+    literal: tuple[re.Pattern[str], ...] = ()
     state: PluginState = field(default_factory=PluginState)
     # `state.items` prepared for matching; rebuilt only when the items themselves change.
     searchable: tuple[SearchableItem, ...] = ()
@@ -69,7 +73,10 @@ class PluginHost:
         self.data_dir = data_dir / "plugin-data"
         self.problems = tuple(found.problems)  # Plugins that failed to load.
         self._sources = dict(found.sources)
-        self._entries = {plugin.id: _Entry(plugin) for plugin in found.plugins}
+        self._entries = {
+            plugin.id: _Entry(plugin, literal=literal_patterns(plugin.literal_terms))
+            for plugin in found.plugins
+        }
         self._guard = threading.Lock()  # Guards state replacement.
 
     @property
@@ -245,6 +252,7 @@ class PluginHost:
             query,
             boost=config.boost,
             limit=limit,
+            literal=entry.literal,
         )
 
     def open(self, hit: PluginHit, config: PluginConfig) -> None:
