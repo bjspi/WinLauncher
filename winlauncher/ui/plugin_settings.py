@@ -63,8 +63,9 @@ class PluginCard(Card):
         self.keyword.setAccessibleName(f"{plugin.label} keyword")
         self.add_row(
             "Keyword",
-            f"Type it first to search only {plugin.label}, such as “{config.keyword or 'kw'} "
-            "anna”. Alone it lists the most recent items.",
+            f"Typed first it puts {plugin.label} on top, such as “{config.keyword or 'kw'} anna”; "
+            f"your files are still searched. “@{config.keyword or 'kw'} anna” answers from "
+            f"{plugin.label} alone, and the keyword by itself lists the most recent items.",
             self.keyword,
         )
         self.in_search = ToggleSwitch(f"{plugin.label} items in every search")

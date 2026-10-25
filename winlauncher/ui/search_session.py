@@ -223,23 +223,25 @@ class SearchSession(QObject):
     def _work(
         self, query: LauncherQuery, settings: Settings, cancel: threading.Event
     ) -> SearchResults:
-        """Search the catalog; a website query lists its website above the files.
+        """Search the catalog; a website or a plugin's keyword answers above the files.
 
-        Plugin items join the files of plain word searches by score; a plugin's
-        keyword lists only its items. Runs on a worker, so it also checks which
-        found files still exist.
+        A plugin keyword puts that plugin's items first and still searches the
+        catalog for the same text, so the keyword takes no word away from it;
+        `@keyword` leaves the catalog out. Plain word searches merge the items of
+        every enabled plugin into the files by score. Runs on a worker, so it also
+        checks which found files still exist.
         """
         started = time.perf_counter()
         hits: list[LauncherHit] = []
         limit = settings.max_results
-        if isinstance(query, PluginQuery):
-            if self.plugins is not None:
-                hits.extend(self.plugins.search(query, settings.plugins, limit))
+        if isinstance(query, PluginQuery) and self.plugins is not None:
+            hits.extend(self.plugins.search(query, settings.plugins, limit))
         elif isinstance(query, WebsiteQuery):
             hits.append(query.target())
         if (files := _file_query(query)) is not None:
             found = self.service.search(files, settings, cancel=cancel)
-            if self.plugins is not None and not isinstance(query, WebsiteQuery):
+            # Only a plain search adds every plugin; a keyword already named one.
+            if isinstance(query, SearchQuery) and self.plugins is not None:
                 found = merge_hits(
                     found, self.plugins.search(files, settings.plugins, limit), limit
                 )
@@ -277,7 +279,7 @@ class SearchSession(QObject):
         same_query = self.displayed_query == query
         self.displayed_query = query
         files = _file_query(query)
-        terms = query.search if isinstance(query, PluginQuery) else files
+        terms = files or (query.search if isinstance(query, PluginQuery) else None)
         offer = (
             content_search_text(self.window.query.text())
             if not result.hits and files is not None and files.content_text is None
@@ -302,10 +304,10 @@ class SearchSession(QObject):
 
 
 def _file_query(query: LauncherQuery) -> SearchQuery | None:
-    """The catalog search behind `query`; a website query may have none, a plugin's none."""
-    if isinstance(query, PluginQuery):
-        return None
-    return query.files if isinstance(query, WebsiteQuery) else query
+    """The catalog search behind `query`; a website or plugin query may have none."""
+    if isinstance(query, WebsiteQuery | PluginQuery):
+        return query.files
+    return query
 
 
 def content_search_text(text: str) -> str | None:
