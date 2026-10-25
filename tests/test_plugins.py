@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import re
 import tempfile
 import threading
 import unittest
@@ -33,6 +35,7 @@ from winlauncher.plugins.search import (
     plugin_query,
     plugins_answer,
     rank_items,
+    searchable_items,
 )
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
@@ -72,23 +75,32 @@ def query(text: str):
 
 class PluginRankingTest(unittest.TestCase):
     def test_names_rank_like_file_names_and_keywords_a_little_lower(self):
-        hits = rank_items("fake", "Fake", [ANNA, BERND, TEAM], query("anna"), limit=10)
+        hits = rank_items(
+            "fake", "Fake", searchable_items([ANNA, BERND, TEAM]), query("anna"), limit=10
+        )
         self.assertEqual([hit.item for hit in hits], [ANNA, TEAM])
         self.assertEqual(hits[0].reason, "Name prefix")
-        keyword = rank_items("fake", "Fake", [ANNA], query("annas"), limit=10)[0]
+        keyword = rank_items("fake", "Fake", searchable_items([ANNA]), query("annas"), limit=10)[0]
         self.assertEqual(keyword.reason, "Keyword matches")
         self.assertEqual(hits[0].title, "Fake: Anna Schmidt")
-        self.assertEqual(rank_items("fake", "Fake", [ANNA], query("anna -schmidt"), limit=5), [])
+        self.assertEqual(
+            rank_items("fake", "Fake", searchable_items([ANNA]), query("anna -schmidt"), limit=5),
+            [],
+        )
 
     def test_earlier_items_win_ties_and_no_terms_keep_the_plugins_order(self):
         first = PluginItem("a", "Max Mustermann")
         second = PluginItem("b", "Max Mustermann ")
-        hits = rank_items("fake", "Fake", [second, first], query("max"), limit=10)
+        hits = rank_items("fake", "Fake", searchable_items([second, first]), query("max"), limit=10)
         self.assertEqual(hits[0].item, second)
-        listed = rank_items("fake", "Fake", [BERND, ANNA, TEAM], query(""), limit=2)
+        listed = rank_items(
+            "fake", "Fake", searchable_items([BERND, ANNA, TEAM]), query(""), limit=2
+        )
         self.assertEqual([hit.item for hit in listed], [BERND, ANNA])
-        plain = rank_items("fake", "Fake", [ANNA], query("anna"), limit=1)[0]
-        boosted = rank_items("fake", "Fake", [ANNA], query("anna"), boost=30, limit=1)[0]
+        plain = rank_items("fake", "Fake", searchable_items([ANNA]), query("anna"), limit=1)[0]
+        boosted = rank_items(
+            "fake", "Fake", searchable_items([ANNA]), query("anna"), boost=30, limit=1
+        )[0]
         self.assertEqual(boosted.score - plain.score, 30)
 
     def test_only_plain_word_searches_include_plugins(self):
@@ -115,6 +127,91 @@ class PluginRankingTest(unittest.TestCase):
         ]
         merged = merge_hits(files, plugins, 3)
         self.assertEqual([hit.score for hit in merged], [150, 100, 60])
+
+
+class CandidatePrePassTest(unittest.TestCase):
+    """The cheap test before matching must only skip items that could not score.
+
+    It mirrors the catalog's candidate SQL, so the same risk applies: a test that is
+    not a superset of the matcher would silently drop hits.
+    """
+
+    CORPUS = (
+        "Anna Schmidt",
+        "anna.schmidt@example.com",
+        "ABC-1234 Login fails on Windows",
+        "Löschen bricht ab",
+        "MyFileName",
+        "team_annahme",
+        "Visual Studio Code",
+        "straße 12",
+        "ÄÖÜ Test",
+        "a-b-c",
+        "12345",
+        "Bernd",
+    )
+
+    def items(self) -> list[PluginItem]:
+        return [
+            PluginItem(f"k{index}", name, keywords=("alias", name.split()[0]))
+            for index, name in enumerate(self.CORPUS)
+        ]
+
+    def ranked(self, items, text: str, *, skip_pre_pass: bool = False):
+        """Rank `text`; without the pre-pass every item reaches the matcher."""
+        prepared = searchable_items(items)
+        if not skip_pre_pass:
+            return rank_items("p", "P", prepared, query(text), limit=50)
+        with patch("winlauncher.plugins.search._candidates", side_effect=lambda items, q, f: items):
+            return rank_items("p", "P", prepared, query(text), limit=50)
+
+    def test_the_pre_pass_never_changes_a_result(self):
+        items = self.items()
+        words = [word for name in self.CORPUS for word in re.split(r"\W+", name.lower()) if word]
+        random.seed(11)
+        queries = [
+            "anna",
+            "ansch",
+            "vsc",
+            "löschen",
+            "loschen",
+            "abc-1234",
+            "1234",
+            "anna -bernd",
+            '"anna schmidt"',
+            "my name",
+            "a",
+            "straße",
+            "ä",
+            "*code",
+            "ann*",
+        ]
+        queries += ["".join(random.sample(word, len(word))) for word in words[:20]]
+        queries += [random.choice(words)[:2] + random.choice("xyz") for _ in range(20)]
+        for text in queries:
+            for suffix in ("", " match:keyword"):
+                with self.subTest(text=text + suffix):
+                    fast = self.ranked(items, text + suffix)
+                    every = self.ranked(items, text + suffix, skip_pre_pass=True)
+                    self.assertEqual(
+                        [(h.item.key, round(h.score, 6), h.reason) for h in fast],
+                        [(h.item.key, round(h.score, 6), h.reason) for h in every],
+                    )
+
+    def test_numbers_are_matched_in_one_piece_while_words_stay_loose(self):
+        tickets = [
+            PluginItem("1", "ABC-12345 Login fails on Windows"),
+            PluginItem("2", "ABC-52314 uC on halt when exported"),
+            PluginItem("3", "ABC-777 Timeout in the gateway"),
+        ]
+        # The same digits in another order are a different ticket, not a fuzzy match.
+        self.assertEqual([h.item.key for h in self.ranked(tickets, "12345")], ["1"])
+        self.assertEqual([h.item.key for h in self.ranked(tickets, "52314")], ["2"])
+        self.assertEqual(self.ranked(tickets, "1234567"), [])
+        # Words in the very same query still match loosely, typos included.
+        self.assertEqual([h.item.key for h in self.ranked(tickets, "uC halted")], ["2"])
+        self.assertEqual([h.item.key for h in self.ranked(tickets, "gatewy")], ["3"])
+        self.assertEqual([h.item.key for h in self.ranked(tickets, "12345 login")], ["1"])
 
 
 class PluginHostTest(unittest.TestCase):

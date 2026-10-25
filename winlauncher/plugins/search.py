@@ -8,12 +8,18 @@ hits are merged into the file results by score.
 from __future__ import annotations
 
 import heapq
-from collections.abc import Iterable, Sequence
+import re
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
 from winlauncher.catalog.model import normalize
 from winlauncher.plugins.api import PluginItem
-from winlauncher.search.matching import NameForms, match_term
+from winlauncher.search.matching import (
+    MIN_FUZZY_TERM_LENGTH,
+    NameForms,
+    is_wildcard,
+    match_term,
+)
 from winlauncher.search.query import MatchMode, SearchQuery
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import PriorityBand, SearchHit
@@ -23,6 +29,10 @@ from winlauncher.search.ranking import PriorityBand, SearchHit
 POSITION_BONUS = 12
 POSITION_HALF_VALUE = 10
 KEYWORD_PENALTY = 10  # A match on a keyword, such as a username, below a name match.
+# A term with a digit in it names something: a ticket, a version, a phone number. Its
+# characters are matched in one piece, so `12345` never finds the ticket 52314, while
+# the words of the same query keep matching loosely.
+_HAS_DIGIT = re.compile(r"\d")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,10 +90,35 @@ def plugins_answer(query: SearchQuery) -> bool:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SearchableItem:
+    """A plugin item together with the spellings matching compares against.
+
+    Normalizing text is the expensive half of matching, and an item's text changes
+    only when its plugin refreshes. It is therefore prepared there, not on every
+    keystroke, exactly as the catalog stores normalized search text per entry.
+    """
+
+    item: PluginItem
+    position: int  # Where the plugin listed it; the candidate test may skip items.
+    forms: tuple[NameForms, ...]  # The name first, then every keyword.
+    searchable: str  # All of their normalized text, for the candidate test.
+
+
+def searchable_items(items: Iterable[PluginItem]) -> tuple[SearchableItem, ...]:
+    """Prepare a plugin's items for searching; called once per refresh."""
+    prepared = []
+    for position, item in enumerate(items):
+        forms = (NameForms(item.name), *(NameForms(word) for word in item.keywords if word))
+        text = " ".join(form.normalized for form in forms)
+        prepared.append(SearchableItem(item, position, forms, text))
+    return tuple(prepared)
+
+
 def rank_items(
     plugin_id: str,
     label: str,
-    items: Sequence[PluginItem],
+    items: Sequence[SearchableItem],
     query: SearchQuery,
     *,
     boost: int = 0,
@@ -92,18 +127,24 @@ def rank_items(
     """The best `limit` items for `query`; no terms keeps the plugin's order."""
     if not query.terms:
         return [
-            PluginHit(plugin_id, label, item, position_bonus(position) + boost, "Recently used")
-            for position, item in enumerate(items[:limit])
+            PluginHit(
+                plugin_id,
+                label,
+                entry.item,
+                position_bonus(entry.position) + boost,
+                "Recently used",
+            )
+            for entry in items[:limit]
         ]
     fuzzy = query.match_mode == MatchMode.FUZZY
     hits = []
-    for position, item in enumerate(items):
-        text = _text_relevance(item, query, fuzzy)
+    for entry in _candidates(items, query, fuzzy):
+        text = _text_relevance(entry, query, fuzzy)
         if text is None:
             continue
         points, reason = text
-        score = points + position_bonus(position) + boost
-        hits.append(PluginHit(plugin_id, label, item, score, reason))
+        score = points + position_bonus(entry.position) + boost
+        hits.append(PluginHit(plugin_id, label, entry.item, score, reason))
     return heapq.nlargest(limit, hits, key=lambda hit: hit.score)
 
 
@@ -111,18 +152,54 @@ def position_bonus(position: int) -> float:
     return POSITION_BONUS / (1 + position / POSITION_HALF_VALUE)
 
 
-def _text_relevance(item: PluginItem, query: SearchQuery, fuzzy: bool) -> tuple[float, str] | None:
+def fuzzy_term(term: str, query: SearchQuery, fuzzy: bool) -> bool:
+    """Whether `term` may match loosely: not quoted, not an identifier, mode allows it."""
+    return fuzzy and term not in query.exact_terms and not _HAS_DIGIT.search(term)
+
+
+def _candidates(
+    items: Sequence[SearchableItem], query: SearchQuery, fuzzy: bool
+) -> Sequence[SearchableItem]:
+    """The items that can possibly match, decided by one cheap test per term.
+
+    The catalog never ranks every entry either: its candidate SQL asks for
+    `LIKE '%term%'`, and for the fuzzy pass for the subsequence `'%a%b%c%'`, so
+    only those rows reach the Python matcher. Here the same two tests are a
+    substring check and a compiled pattern, both running in C, which keeps the
+    expensive matching for the few items that can score at all. Every test stays a
+    superset of `match_term`, so the hits are the same either way.
+    """
+    tests = []
+    for term in query.terms:
+        test = _candidate_test(term, fuzzy_term(term, query, fuzzy))
+        if test is None:
+            return items  # A wildcard rules nothing out; match every item as before.
+        tests.append(test)
+    return [entry for entry in items if all(test(entry.searchable) for test in tests)]
+
+
+def _candidate_test(term: str, fuzzy: bool) -> Callable[[str], object] | None:
+    """How `term` can be ruled out cheaply, or None when it cannot be."""
+    if is_wildcard(term):
+        return None
+    if not fuzzy or len(term) < MIN_FUZZY_TERM_LENGTH:
+        return lambda text: term in text
+    # Fuzzy matching accepts the letters spread out, so only their order can rule an
+    # item out. Non-greedy, as the shortest run decides whether one exists at all.
+    return re.compile(".*?".join(re.escape(character) for character in term)).search
+
+
+def _text_relevance(
+    entry: SearchableItem, query: SearchQuery, fuzzy: bool
+) -> tuple[float, str] | None:
     """Every term must match the name or a keyword; terms add up."""
-    forms = [NameForms(item.name)]
-    forms.extend(NameForms(keyword) for keyword in item.keywords if keyword)
-    every_text = " ".join(form.normalized for form in forms)
-    if any(excluded in every_text for excluded in query.excluded_terms):
+    if any(excluded in entry.searchable for excluded in query.excluded_terms):
         return None
     points, reasons = 0.0, []
     for term in query.terms:
-        term_fuzzy = fuzzy and term not in query.exact_terms
+        term_fuzzy = fuzzy_term(term, query, fuzzy)
         best = None
-        for index, form in enumerate(forms):
+        for index, form in enumerate(entry.forms):
             match = match_term(term, form, None, term_fuzzy)
             if match is None:
                 continue
