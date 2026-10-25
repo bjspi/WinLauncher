@@ -479,7 +479,8 @@ class SettingsDialog(QDialog):
                     (
                         "plug",
                         "Plugins",
-                        "Chats and contacts from other programs, such as Telegram, as results.",
+                        "Chats and contacts from other programs as results. A keyword puts one "
+                        "plugin on top, @keyword answers from it alone.",
                         self.plugin_page.sections,
                     ),
                 )

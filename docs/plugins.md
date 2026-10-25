@@ -40,9 +40,12 @@ Telegram: Team Annahme        Group  ·  3 unread
   query in 13–45 ms, a number in 2 ms); tens of thousands do not, so a plugin
   should list the part of its world you actually search and offer the rest through
   a direct lookup, such as opening a ticket by its key.
-- **Keyword.** Typed first, the plugin's keyword searches only that plugin:
-  `tg anna`. The keyword alone lists its items in the plugin's order, such as
-  your most recent chats.
+- **Keyword.** Typed first, the plugin's keyword puts its items on top:
+  `tg anna` searches your chats for Anna. The keyword alone lists them in the
+  plugin's order, such as your most recent ones. The same text still searches your
+  files, so `tg` also finds a file named `tg`.
+- **`@` for that plugin alone.** `@tg anna` answers from Telegram only, without any
+  file results. Useful for a plugin whose keyword is a common word.
 - **Open.** Enter, a click or Ctrl+1…9 calls the plugin's `open` on the action
   worker. Ctrl+C copies the item's link.
 

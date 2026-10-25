@@ -110,14 +110,24 @@ class PluginRankingTest(unittest.TestCase):
         for text in ("", "anna type:folder", "anna ext:pdf", "anna in:C:\\Temp", "path:x anna"):
             self.assertFalse(plugins_answer(query(text)), text)
 
-    def test_keywords_select_one_plugin(self):
+    def test_keywords_select_one_plugin_without_taking_the_word_away(self):
         keywords = {"fk": "fake"}
         found = plugin_query("FK anna", keywords)
-        self.assertEqual(found, PluginQuery("fake", query("anna")))
+        self.assertEqual(found, PluginQuery("fake", query("anna"), query("FK anna")))
+        self.assertEqual(plugin_query("fk", keywords).files, query("fk"))
         self.assertEqual(plugin_query("fk", keywords).search.terms, ())
         self.assertIsNone(plugin_query("fkx anna", keywords))
         self.assertIsNone(plugin_query("", keywords))
         self.assertEqual(plugin_query('fk "anna', keywords).search.terms, ('"anna',))
+
+    def test_the_prefix_asks_for_that_plugin_alone(self):
+        keywords = {"fk": "fake"}
+        found = plugin_query("@fk anna", keywords)
+        self.assertEqual(found, PluginQuery("fake", query("anna")))
+        self.assertIsNone(found.files)  # No catalog search beside it.
+        self.assertEqual(plugin_query("@fk", keywords).search.terms, ())
+        self.assertIsNone(plugin_query("@nope anna", keywords))  # Searched as typed.
+        self.assertIsNone(plugin_query("@", keywords))
 
     def test_plugin_hits_join_file_hits_by_score(self):
         item = CatalogItem(Path("C:/a.txt"), ItemKind.FILE, 0, 0)
@@ -534,9 +544,10 @@ class PluginUiTest(unittest.TestCase):
 
         self.temporary = tempfile.TemporaryDirectory(prefix="winlauncher-plugin-ui-")
         self.addCleanup(self.temporary.cleanup)
-        root = Path(self.temporary.name) / "library"
+        root = self.root = Path(self.temporary.name) / "library"
         root.mkdir()
         (root / "Anna notes.txt").write_text("x", encoding="utf-8")
+        (root / "fk notes.txt").write_text("x", encoding="utf-8")
         data = root.parent / "state"
         config = PluginConfig("fake", enabled=True, keyword="fk")
         SettingsFile(data / "settings.json").save(
@@ -591,12 +602,29 @@ class PluginUiTest(unittest.TestCase):
         self.controller.rescan()
         self.assertEqual(self.tasks.count(self._category("PLUGIN")), 1)
 
-    def test_the_keyword_lists_only_the_plugins_items(self):
+    def test_the_keyword_lists_the_plugins_items_without_hiding_files(self):
+        """A short keyword must not take its word away from the ordinary search."""
         self.assertEqual(
             [row.name for row in self.search("fk")],
-            ["Fake: Anna Schmidt", "Fake: Bernd Weber", "Fake: Team Annahme"],
+            [
+                "Fake: Anna Schmidt",
+                "Fake: Bernd Weber",
+                "Fake: Team Annahme",
+                "fk notes.txt",  # The file is still found beside the plugin's items.
+            ],
         )
         self.assertEqual([row.name for row in self.search("fk bernd")], ["Fake: Bernd Weber"])
+
+    def test_the_prefix_leaves_the_catalog_out(self):
+        self.assertEqual(
+            [row.name for row in self.search("@fk")],
+            ["Fake: Anna Schmidt", "Fake: Bernd Weber", "Fake: Team Annahme"],
+        )
+        # "Team Annahme" contains "anna" too; what must be absent is the file.
+        self.assertEqual(
+            [row.name for row in self.search("@fk anna")],
+            ["Fake: Anna Schmidt", "Fake: Team Annahme"],
+        )
 
     def test_settings_page_edits_the_plugin(self):
         from winlauncher.ui.settings import SettingsDialog

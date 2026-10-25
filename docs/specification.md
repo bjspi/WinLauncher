@@ -560,11 +560,14 @@ that needs setup loses its list. **Refresh catalog** in the tray or the bar's me
 plugin; each plugin's settings card has **Refresh now**. A plugin lists at most 5,000 items; later items
 and repeated keys are dropped.
 
-Typed text that starts with an enabled plugin's keyword lists only that
-plugin's items. Without further words they come in the plugin's order; otherwise
-they are ranked. Plain word searches without filters, sorting or scope add the
-items of every enabled plugin with **In every search** on; website keywords and
-file filters do not. An item scores the catalog's text match of each term
+Typed text that starts with an enabled plugin's keyword lists that plugin's items
+first, searched for the words behind the keyword; without any they come in the
+plugin's order. The same text still searches the catalog, so a short keyword never
+takes its word away: `tg` lists the chats and finds a file named `tg`. The prefix
+`@` asks for the plugin alone and leaves the catalog out, as in `@tg anna`; an `@`
+before anything else is ordinary search text. Plain word searches without filters,
+sorting or scope add the items of every enabled plugin with **In every search**
+on; website keywords and file filters do not. An item scores the catalog's text match of each term
 against its name, or against a keyword 10 points lower. It adds
 `12 / (1 + position / 10)` for its position in the plugin's list and the plugin's
 boost. Every term must match, and an excluded term in the name or keywords drops

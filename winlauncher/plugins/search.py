@@ -29,6 +29,10 @@ from winlauncher.search.ranking import PriorityBand, SearchHit
 POSITION_BONUS = 12
 POSITION_HALF_VALUE = 10
 KEYWORD_PENALTY = 10  # A match on a keyword, such as a username, below a name match.
+# Typed before a keyword, it asks for that plugin alone: `@tg anna` searches only
+# Telegram, while `tg anna` searches it and the catalog, so a short keyword never
+# stops a file named "tg" from being found.
+ONLY_PLUGIN_PREFIX = "@"
 # A term with a digit in it names something: a ticket, a version, a phone number. Its
 # characters are matched in one piece, so `12345` never finds the ticket 52314, while
 # the words of the same query keep matching loosely.
@@ -51,26 +55,36 @@ class PluginHit:
 
 @dataclass(frozen=True, slots=True)
 class PluginQuery:
-    """Typed text that starts with a plugin's keyword: only that plugin answers.
+    """Typed text that starts with a plugin's keyword.
 
-    Without further words it lists the plugin's items in its own order.
+    The plugin searches the words behind its keyword, and without any it lists its
+    items in its own order. `files` is the catalog search the same text also runs,
+    so a keyword never takes a word away from the ordinary search; `@keyword` asks
+    for that plugin alone and leaves it None.
     """
 
     plugin_id: str
     search: SearchQuery
+    files: SearchQuery | None = None
 
 
 def plugin_query(text: str, keywords: dict[str, str]) -> PluginQuery | None:
     """The plugin query `text` asks for; `keywords` maps normalized keywords to plugin ids."""
-    keyword, _, rest = text.strip().partition(" ")
+    typed = text.strip()
+    alone = typed.startswith(ONLY_PLUGIN_PREFIX)
+    keyword, _, rest = typed.removeprefix(ONLY_PLUGIN_PREFIX).partition(" ")
     plugin_id = keywords.get(normalize(keyword)) if keyword else None
     if plugin_id is None:
         return None
+    return PluginQuery(plugin_id, _parsed(rest), None if alone else _parsed(typed))
+
+
+def _parsed(text: str) -> SearchQuery:
+    """`text` as a search; unparsable text, such as an unclosed quote, stays words."""
     try:
-        search = parse_query(rest)
+        return parse_query(text)
     except ValueError:
-        search = SearchQuery(terms=tuple(normalize(word) for word in rest.split()))
-    return PluginQuery(plugin_id, search)
+        return SearchQuery(terms=tuple(normalize(word) for word in text.split()))
 
 
 def plugins_answer(query: SearchQuery) -> bool:
