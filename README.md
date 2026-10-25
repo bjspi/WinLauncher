@@ -36,7 +36,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
 | 🌐 **Website keywords** | Define a title, keyword and URL in Settings → Websites. `az headphones` searches Amazon; `yt Python tutorial` searches YouTube. |
-| 💬 **Search plugins** | Chats, contacts and records of other programs as results, opened by a deep link into their app. Install one, such as [Telegram](https://github.com/bjspi/WinLauncher-Plugins), or write your own ([guide](docs/plugins.md)). |
+| 💬 **Search plugins** | Chats, contacts and records of other programs as results, opened by a deep link into their app. Drop a plugin folder in, point WinLauncher at a clone of the [plugin repository](https://github.com/bjspi/WinLauncher-Plugins) for Telegram chats, or write your own ([guide](docs/plugins.md)). |
 | 🖱️ **Your own menu commands** | Right-click a folder → **Open in Windows Terminal** or **Open Command Prompt here**, or add any command line of your own in Settings → Context menu. |
 | 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more, colored as you type; invalid values are underlined. |
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
