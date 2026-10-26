@@ -9,14 +9,12 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSize, QUrl
+from PySide6.QtCore import QObject, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QWidget,
 )
@@ -25,16 +23,15 @@ from winlauncher.plugins.api import Plugin, PluginCommand, PluginOption
 from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig
 from winlauncher.plugins.registry import PluginSource
 from winlauncher.settings import BOOST_RANGE, Settings
+from winlauncher.ui.catalog_settings import CatalogSection
 from winlauncher.ui.messages import ERROR, INFO, message
+from winlauncher.ui.plugin_catalogs import CatalogWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.settings import NumberField, PathList, _note, _sized, _with_unit
-from winlauncher.ui.widgets import Card, ToggleSwitch, line_icon, section_title
+from winlauncher.ui.widgets import Card, EntryList, ToggleSwitch, line_icon, section_title
 
 KEYWORD_FIELD_WIDTH = 88
 TEXT_OPTION_WIDTH = 220
-LIST_ICON_SIZE = QSize(28, 28)
-LIST_ROW_HEIGHT = 44  # Two lines: name and state.
-LIST_VISIBLE_ROWS = 5  # More plugins scroll.
 
 
 class PluginCard(Card):
@@ -208,6 +205,7 @@ class PluginPage(QObject):
         current: Callable[[], Settings],
         data_folder: str,
         parent: QObject,
+        catalogs: CatalogWatcher | None = None,
     ):
         super().__init__(parent)  # Ends the status connection with the dialog.
         self.original = settings
@@ -220,23 +218,15 @@ class PluginPage(QObject):
             for plugin in host.plugins
         ]
         self.data_folder = Path(data_folder) if data_folder else None
-        self.list = QListWidget()
-        self.list.setObjectName("itemList")
-        self.list.setAccessibleName("Installed plugins")
-        self.list.setIconSize(LIST_ICON_SIZE)
-        self.list.setSpacing(1)
+        self.list = EntryList("Installed plugins")
         for card in self.cards:
-            item = QListWidgetItem(_plugin_icon(card.plugin), "")
-            item.setSizeHint(QSize(0, LIST_ROW_HEIGHT))
-            self.list.addItem(item)
-        rows = max(1, len(self.cards))
-        self.list.setFixedHeight(min(rows, LIST_VISIBLE_ROWS) * (LIST_ROW_HEIGHT + 2) + 6)
+            self.list.add_entry(_plugin_icon(card.plugin), "")
         self.list.currentRowChanged.connect(self.select)
         overview = Card()
         overview.add_block(
             "Installed plugins",
-            "Choose a plugin to set it up. Copy a plugin folder into the folder below to "
-            "add one just for this computer.",
+            "Choose a plugin to set it up. Install more from a catalog below, or copy a "
+            "plugin folder into the plugin folder.",
             self.list,
         )
         if self.data_folder is not None:
@@ -247,8 +237,15 @@ class PluginPage(QObject):
         if host.problems:
             self.sections.append(_note("Not loaded: " + " ".join(host.problems)))
         self.sections.extend(self.cards)
+        self.catalog_section = (
+            CatalogSection(settings, catalogs, self) if catalogs is not None else None
+        )
+        if self.catalog_section is not None:
+            self.sections.extend(self.catalog_section.sections)
         self.sections.append(section_title("Where plugins come from"))
         self.sections.append(self._folders_card(settings))
+        if self.catalog_section is not None:
+            self.sections.append(self.catalog_section.catalogs_card)
         self.sections.append(
             _note(
                 "Plugins are loaded once at start: save, then restart WinLauncher from the "
@@ -273,9 +270,6 @@ class PluginPage(QObject):
         )
         return card
 
-    def plugin_paths(self) -> tuple[str, ...]:
-        return self.folders.paths()
-
     def select(self, row: int) -> None:
         """Show the settings of the plugin in `row` only."""
         for index, card in enumerate(self.cards):
@@ -296,8 +290,15 @@ class PluginPage(QObject):
         kept = tuple(config for config in self.original.plugins if config.id not in shown)
         return (*(card.config() for card in self.cards), *kept)
 
+    def apply_to(self, settings: Settings) -> Settings:
+        """`settings` with the edits of this page: plugins, plugin folders and catalogs."""
+        edited = replace(settings, plugins=self.configs(), plugin_paths=self.folders.paths())
+        if self.catalog_section is None:
+            return edited
+        return replace(edited, plugin_catalogs=self.catalog_section.catalog_urls())
+
     def edited_settings(self) -> Settings:
-        return replace(self.current(), plugins=self.configs(), plugin_paths=self.plugin_paths())
+        return self.apply_to(self.current())
 
 
 def _source_location(source: PluginSource) -> str:

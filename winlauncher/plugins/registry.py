@@ -20,7 +20,6 @@ import inspect
 import logging
 import re
 import sys
-import tomllib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from importlib.metadata import entry_points
@@ -29,12 +28,12 @@ from types import ModuleType
 
 from winlauncher.plugins.api import PLUGIN_ID, Plugin, PluginOption
 from winlauncher.plugins.config import KEYWORD, REFRESH_RANGE_MINUTES
+from winlauncher.plugins.manifest import MANIFEST_FILE, ManifestError, read_manifest
 from winlauncher.plugins.search import literal_patterns
 
 ENTRY_POINT_GROUP = "winlauncher.plugins"
 BUILT_IN: tuple[str, ...] = ()  # `module:Class` references WinLauncher loads itself.
 PLUGIN_FILE = "plugin.py"  # The module of a plugin folder.
-MANIFEST_FILE = "plugin.toml"  # Optional, beside it: `version = "1.0.0"`.
 _FOLDER_MODULES = "winlauncher_user_plugins"  # Module name prefix of loaded files.
 logger = logging.getLogger(__name__)
 
@@ -220,17 +219,12 @@ def _add_plugin_subfolder(found: Discovery, folder: Path) -> None:
 
 
 def _manifest_version(found: Discovery, manifest: Path) -> str:
-    """The `version` of a plugin manifest; empty when it does not name a usable one."""
+    """The `version` of a plugin manifest; empty when the manifest is unusable."""
     try:
-        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        found.problems.append(f"{manifest.parent.name}: {MANIFEST_FILE} is unreadable ({exc}).")
+        return read_manifest(manifest).version
+    except ManifestError as exc:
+        found.problems.append(f"{manifest.parent.name}: {exc}")
         return ""
-    version = data.get("version", "")
-    if not isinstance(version, str):
-        found.problems.append(f"{manifest.parent.name}: the version must be text.")
-        return ""
-    return version
 
 
 def _add_module_file(found: Discovery, file: Path, source: PluginSource) -> None:

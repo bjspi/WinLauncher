@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -51,6 +53,9 @@ INFO_DIALOG_WIDTH = 480
 INFO_DIALOG_MARGIN = 24
 INFO_HEADER_SPACING = 16  # Between the icon and the texts.
 ROW_SPACING = 16  # Between a row's text and its control.
+ENTRY_ICON_SIZE = QSize(28, 28)
+ENTRY_ROW_HEIGHT = 44  # Two lines, such as a name and its state.
+ENTRY_VISIBLE_ROWS = 5  # More entries scroll.
 
 
 def pick_path(parent: QWidget, title: str, filters: str | None = None) -> Path | None:
@@ -242,6 +247,32 @@ class Card(QFrame):
             divider.setFixedHeight(1)
             self._layout.addWidget(divider)
         self._layout.addWidget(widget)
+
+
+class EntryList(QListWidget):
+    """Two-line entries with an icon, such as plugins; as tall as its entries, up to a limit."""
+
+    def __init__(self, accessible_name: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("itemList")
+        self.setAccessibleName(accessible_name)
+        self.setIconSize(ENTRY_ICON_SIZE)
+        self.setSpacing(1)
+        self.fit_height()
+
+    def add_entry(self, icon: QIcon, text: str) -> None:
+        item = QListWidgetItem(icon, text)
+        item.setSizeHint(QSize(0, ENTRY_ROW_HEIGHT))
+        self.addItem(item)
+        self.fit_height()
+
+    def clear_entries(self) -> None:
+        self.clear()
+        self.fit_height()
+
+    def fit_height(self) -> None:
+        rows = min(max(1, self.count()), ENTRY_VISIBLE_ROWS)
+        self.setFixedHeight(rows * (ENTRY_ROW_HEIGHT + 2) + 6)
 
 
 def section_title(text: str) -> QLabel:

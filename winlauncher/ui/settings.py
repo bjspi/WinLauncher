@@ -55,6 +55,7 @@ from winlauncher.settings import (
 )
 from winlauncher.ui.commands import CommandList
 from winlauncher.ui.messages import ERROR, WARNING, message
+from winlauncher.ui.plugin_catalogs import CatalogWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
@@ -412,6 +413,7 @@ class SettingsDialog(QDialog):
         website_icons: WebsiteIcons,
         plugins: PluginScheduler | None = None,
         plugin_folder: str = "",
+        plugin_catalogs: CatalogWatcher | None = None,
     ):
         super().__init__(parent)
         self.original = settings
@@ -429,7 +431,12 @@ class SettingsDialog(QDialog):
             from winlauncher.ui.plugin_settings import PluginPage  # It builds on this module.
 
             self.plugin_page = PluginPage(
-                settings, plugins, self._settings_without_plugins, plugin_folder, self
+                settings,
+                plugins,
+                self._settings_without_plugins,
+                plugin_folder,
+                self,
+                plugin_catalogs,
             )
         self.pages = QStackedWidget()
         self.nav = QListWidget()
@@ -861,11 +868,7 @@ class SettingsDialog(QDialog):
         settings = self._settings_without_plugins()
         if self.plugin_page is None:
             return settings
-        return replace(
-            settings,
-            plugins=self.plugin_page.configs(),
-            plugin_paths=self.plugin_page.plugin_paths(),
-        )
+        return self.plugin_page.apply_to(settings)
 
     def _settings_without_plugins(self) -> Settings:
         advanced = parse_advanced_rules(self.rule_json.toPlainText())

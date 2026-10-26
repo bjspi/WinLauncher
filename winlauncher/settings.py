@@ -20,7 +20,7 @@ from winlauncher.catalog.priority import (
     SearchPriority,
 )
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
-from winlauncher.plugins.config import PluginConfig
+from winlauncher.plugins.config import DEFAULT_CATALOGS, PluginConfig, catalog_key
 from winlauncher.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
 DEFAULT_DOUBLE_CTRL_MS = 350
@@ -169,6 +169,8 @@ class Settings:
     # Folders searched for plugins besides the data directory's own `plugins` folder,
     # such as a cloned plugin repository. Read once at start.
     plugin_paths: tuple[str, ...] = ()
+    # Git repositories with a catalog.toml whose plugins can be installed from Settings.
+    plugin_catalogs: tuple[str, ...] = DEFAULT_CATALOGS
 
     def __post_init__(self) -> None:
         if self.appearance not in tuple(Appearance):
@@ -254,6 +256,11 @@ class Settings:
             raise ValueError("Priority folders must be absolute paths.")
         if not all(Path(folder).is_absolute() for folder in self.plugin_paths):
             raise ValueError("Plugin folders must be absolute paths.")
+        catalogs = [catalog_key(url) for url in self.plugin_catalogs]
+        if not all(catalogs):
+            raise ValueError("Plugin catalogs need a repository URL or folder.")
+        if len(set(catalogs)) != len(catalogs):
+            raise ValueError("A plugin catalog is listed twice.")
 
     def _validate_markers(self) -> None:
         for marker in self.marker_files:
