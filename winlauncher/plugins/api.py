@@ -28,6 +28,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Protocol
 
+from winlauncher.connectivity import InternetState
+from winlauncher.connectivity import InternetStatus as InternetStatus
+
 PLUGIN_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 OptionValue = bool | int | str
 
@@ -129,6 +132,8 @@ class PluginContext:
     # Only commands may ask; a background refresh raises SetupRequired instead.
     ask: Ask = no_questions
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("winlauncher.plugins"))
+    # Read the current shared hint, including during a long refresh or retry loop.
+    internet: Callable[[], InternetState] = InternetState
 
 
 @dataclass(frozen=True, slots=True)

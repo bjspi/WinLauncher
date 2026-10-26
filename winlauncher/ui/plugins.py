@@ -18,6 +18,8 @@ from PySide6.QtCore import QObject, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QLineEdit, QWidget
 
+from winlauncher.connectivity import InternetState, InternetStatus
+from winlauncher.platform.connectivity import probe_internet
 from winlauncher.plugins.api import PluginCommand
 from winlauncher.plugins.host import PluginHost
 from winlauncher.plugins.search import PluginHit
@@ -26,6 +28,7 @@ from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.widgets import InfoDialog, line_icon
 
 FIRST_REFRESH_DELAY_MS = 4000  # After startup, once the first scan had its head start.
+INTERNET_CHECK_INTERVAL_MS = 15_000
 QUESTION_TIMEOUT_S = 600  # A forgotten question frees its worker after this.
 ICON_SIZE = 64
 MAX_CACHED_ICONS = 2000
@@ -53,8 +56,15 @@ class PluginScheduler(QObject):
         self._timers: dict[str, QTimer] = {}
         self._running: dict[str, threading.Event] = {}
         self._closed = False
+        self._checking_internet = False
+        self._internet_was_offline = False
+        self._internet_timer = QTimer(self)
+        self._internet_timer.setInterval(INTERNET_CHECK_INTERVAL_MS)
+        self._internet_timer.timeout.connect(self._check_internet)
 
     def start(self) -> None:
+        self._check_internet()
+        self._internet_timer.start()
         if self.host.load_cached():
             self.tasks.submit(
                 TaskCategory.PLUGIN,
@@ -63,6 +73,47 @@ class PluginScheduler(QObject):
                 partial(logger.warning, "Cached plugin items not prepared: %s"),
             )
         self.apply()
+
+    @property
+    def paused_offline(self) -> bool:
+        """Whether automatic refreshes pause; manual actions remain available."""
+        return (
+            self.settings().plugins_pause_offline
+            and self.host.internet.status == InternetStatus.OFFLINE
+        )
+
+    def _check_internet(self) -> None:
+        if self._closed or self._checking_internet:
+            return
+        self._checking_internet = True
+        self.tasks.submit(
+            TaskCategory.NETWORK,
+            probe_internet,
+            self._internet_checked,
+            self._internet_failed,
+        )
+
+    def _internet_failed(self, message: str) -> None:
+        logger.warning("Internet check failed: %s", message)
+        self._internet_checked(InternetState(checked_at=time.time()))
+
+    def _internet_checked(self, state: InternetState) -> None:
+        self._checking_internet = False
+        if self._closed:
+            return
+        previous = self.host.internet.status
+        self.host.internet = state
+        if state.status == InternetStatus.OFFLINE:
+            self._internet_was_offline = True
+        if previous != state.status:
+            logger.info("Internet status: %s -> %s", previous, state.status)
+        self.status_changed.emit()
+        if state.status == InternetStatus.ONLINE:
+            resume = self._internet_was_offline and self.settings().plugins_pause_offline
+            self._internet_was_offline = False
+            if resume:
+                for plugin in self.host.plugins:
+                    self.refresh(plugin.id, automatic=True)
 
     def apply(self) -> None:
         """Follow the settings: start, stop or reschedule each plugin's refreshes."""
@@ -79,22 +130,26 @@ class PluginScheduler(QObject):
             interval = config.refresh_minutes * 60_000
             if timer is None:
                 timer = self._timers[plugin.id] = QTimer(self)
-                timer.timeout.connect(partial(self.refresh, plugin.id))
+                timer.timeout.connect(partial(self.refresh, plugin.id, automatic=True))
             if timer.interval() != interval or not timer.isActive():
                 timer.start(interval)
                 state = self.host.state(plugin.id)
                 stale = state.refreshed is None or time.time() - state.refreshed > interval / 1000
                 if stale or state.error:
                     QTimer.singleShot(
-                        FIRST_REFRESH_DELAY_MS, self, partial(self.refresh, plugin.id)
+                        FIRST_REFRESH_DELAY_MS,
+                        self,
+                        partial(self.refresh, plugin.id, automatic=True),
                     )
 
     def refresh_all(self) -> None:
         for plugin in self.host.plugins:
             self.refresh(plugin.id)
 
-    def refresh(self, plugin_id: str) -> None:
+    def refresh(self, plugin_id: str, *, automatic: bool = False) -> None:
         if self._closed or plugin_id in self._running:
+            return
+        if automatic and self.paused_offline:
             return
         config = self.host.config(plugin_id, self.settings().plugins)
         if not config.enabled:
@@ -102,7 +157,13 @@ class PluginScheduler(QObject):
         cancel = self._running[plugin_id] = threading.Event()
         self.tasks.submit(
             TaskCategory.PLUGIN,
-            partial(self.host.refresh, plugin_id, config, cancel),
+            partial(
+                self.host.refresh,
+                plugin_id,
+                config,
+                cancel,
+                pause_when_offline=automatic and self.settings().plugins_pause_offline,
+            ),
             partial(self._refreshed, plugin_id, cancel),
             partial(self._refresh_failed, plugin_id, cancel),
         )
@@ -149,6 +210,7 @@ class PluginScheduler(QObject):
 
     def close(self) -> None:
         self._closed = True
+        self._internet_timer.stop()
         for timer in self._timers.values():
             timer.stop()
         for cancel in self._running.values():

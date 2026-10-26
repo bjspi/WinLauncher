@@ -577,6 +577,21 @@ that needs setup loses its list. **Refresh catalog** in the tray or the bar's me
 plugin; each plugin's settings card has **Refresh now**. A plugin lists at most 5,000 items; later items
 and repeated keys are dropped.
 
+Internet reachability is checked at startup and every 15 s on a dedicated worker:
+Windows Network List Manager plus one ICMP echo to Cloudflare DNS `1.1.1.1`, with
+a 1 s timeout. Either success means online; two negative results mean offline;
+otherwise the status is unknown. Plugins may read the latest immutable observation
+through `context.internet()`, including the individual probe results and timestamp.
+It is a hint, not a guarantee of access to a particular service or VPN.
+
+**Pause plugins without internet** (`plugins_pause_offline`, default false) under
+**Plugin settings → All plugins** skips automatic refreshes when offline, including
+queued refreshes that have not called the plugin yet. Cached results, manual
+refreshes, open actions and commands keep working. Running calls are not interrupted,
+and unknown status does not pause refreshes. After offline, the next online check
+refreshes enabled plugins promptly; an intervening unknown check does not lose
+that recovery. Plugins retain responsibility for their own backoff and timeouts.
+
 Typed text that starts with an enabled plugin's keyword lists that plugin's items
 first, searched for the words behind the keyword; without any they come in the
 plugin's order. All keywords of a plugin work alike. A route's keyword does the

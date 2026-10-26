@@ -18,6 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.connectivity import InternetState, InternetStatus
 from winlauncher.plugins.api import (
     Plugin,
     PluginCommand,
@@ -367,6 +368,19 @@ class PluginHostTest(unittest.TestCase):
         self.assertEqual((state.items, state.needs_setup), ((), True))
         self.assertFalse((self.data / "plugin-data" / "fake" / CACHE_FILE).exists())
 
+    def test_context_reads_live_internet_status_and_offline_pause_preserves_items(self):
+        state = self.host.refresh("fake", self.config)
+        context = self.plugin.contexts[-1]
+        self.assertEqual(context.internet().status, InternetStatus.UNKNOWN)
+        self.host.internet = InternetState(False, False, 42)
+        self.assertEqual(context.internet().status, InternetStatus.OFFLINE)
+        self.plugin.items = PluginError("Must not run while paused")
+        self.assertEqual(self.host.refresh("fake", self.config, pause_when_offline=True), state)
+        self.assertEqual(len(self.plugin.contexts), 1)
+        self.assertEqual(len(self.host.state("fake").items), 3)
+        # Explicit refreshes still run, so local/VPN plugins remain usable.
+        self.assertEqual(self.host.refresh("fake", self.config).error, str(self.plugin.items))
+
     def test_disabled_plugins_and_file_queries_stay_silent(self):
         self.host.refresh("fake", self.config)
         off = PluginConfig("fake", enabled=False, keywords=("fk",))
@@ -621,7 +635,7 @@ def write_plugin_folder(folder: Path, plugin_id: str, *, version: object = None)
 class PluginSettingsTest(unittest.TestCase):
     def test_plugin_configs_roundtrip_and_validate(self):
         config = PluginConfig("chats", enabled=True, keywords=("tg",), options={"bots": False})
-        settings = Settings(roots=(), plugins=(config,))
+        settings = Settings(roots=(), plugins=(config,), plugins_pause_offline=True)
         with tempfile.TemporaryDirectory() as directory:
             file = SettingsFile(Path(directory) / "settings.json")
             file.save(settings)
@@ -629,6 +643,9 @@ class PluginSettingsTest(unittest.TestCase):
             stored = json.loads(file.path.read_text(encoding="utf-8"))
         self.assertEqual(stored["plugins"][0]["options"], {"bots": False})
         self.assertEqual(settings_from_json({"roots": []}).plugins, ())
+        self.assertFalse(settings_from_json({"roots": []}).plugins_pause_offline)
+        with self.assertRaises(ValueError):
+            settings_from_json({"roots": [], "plugins_pause_offline": "false"})
         hash(settings)
         invalid = (
             {"id": "x", "refresh_minutes": 0},
@@ -735,6 +752,64 @@ class PluginUiTest(unittest.TestCase):
             self.tasks.finish(self._category("PLUGIN"))
             prepare.assert_called_once_with()
 
+    def test_offline_pause_skips_automatic_refresh_but_allows_manual_and_resumes(self):
+        scheduler = self.controller.plugin_refresh
+        self.controller.settings = replace(self.controller.settings, plugins_pause_offline=True)
+        original = self.controller.plugins.state("fake")
+        offline = InternetState(False, False, 42)
+        scheduler._internet_checked(offline)
+        count = self.tasks.count(self._category("PLUGIN"))
+        scheduler.refresh("fake", automatic=True)
+        self.assertEqual(self.tasks.count(self._category("PLUGIN")), count)
+        self.assertEqual(self.controller.plugins.state("fake"), original)
+        scheduler.refresh_all()
+        self.assertEqual(self.tasks.count(self._category("PLUGIN")), count + 1)
+        self.tasks.finish(self._category("PLUGIN"))
+        # An inconclusive probe between offline and online must not lose the recovery.
+        scheduler._internet_checked(InternetState(checked_at=43))
+        scheduler._internet_checked(InternetState(True, False, 44))
+        self.assertEqual(self.tasks.count(self._category("PLUGIN")), count + 2)
+        self.tasks.finish(self._category("PLUGIN"))
+        scheduler._internet_checked(InternetState(True, True, 45))
+        self.assertEqual(self.tasks.count(self._category("PLUGIN")), count + 2)
+        # Default policy lets plugins decide for themselves even when offline.
+        self.controller.settings = replace(self.controller.settings, plugins_pause_offline=False)
+        scheduler._internet_checked(offline)
+        scheduler.refresh("fake", automatic=True)
+        self.assertEqual(self.tasks.count(self._category("PLUGIN")), count + 3)
+
+    def test_queued_refresh_rechecks_connectivity_before_calling_plugin(self):
+        scheduler = self.controller.plugin_refresh
+        self.controller.settings = replace(self.controller.settings, plugins_pause_offline=True)
+        scheduler._internet_checked(InternetState(True, True, 42))
+        scheduler.refresh("fake", automatic=True)
+        calls = len(self.plugin.contexts)
+        scheduler._internet_checked(InternetState(False, False, 43))
+        self.tasks.finish(self._category("PLUGIN"))
+        self.assertEqual(len(self.plugin.contexts), calls)
+        self.assertFalse(scheduler.is_refreshing("fake"))
+
+    def test_connectivity_checks_use_their_own_worker_and_stop_with_scheduler(self):
+        scheduler = self.controller.plugin_refresh
+        network = self._category("NETWORK")
+        count = self.tasks.count(network)
+        scheduler._check_internet()  # Startup's check is still pending.
+        self.assertEqual(self.tasks.count(network), count)
+        with patch("winlauncher.ui.plugins.probe_internet", return_value=InternetState(True, True)):
+            # The startup job holds its original callable; replace it without running I/O.
+            job = next(j for j in self.tasks.jobs if j.category == network and not j.done)
+            job.done = True
+            job.on_success(InternetState(True, True))
+            scheduler._check_internet()
+            self.tasks.finish(network)
+        self.assertEqual(self.tasks.count(network), count + 1)
+        scheduler.close()
+        self.assertFalse(scheduler._internet_timer.isActive())
+        scheduler._check_internet()
+        scheduler._internet_checked(InternetState(False, False))
+        self.assertEqual(self.tasks.count(network), count + 1)
+        self.assertEqual(self.controller.plugins.internet.status, InternetStatus.ONLINE)
+
     def test_the_keyword_lists_the_plugins_items_without_hiding_files(self):
         """A short keyword must not take its word away from the ordinary search."""
         self.assertEqual(
@@ -783,8 +858,12 @@ class PluginUiTest(unittest.TestCase):
         card.keywords.setText("ff, fff")
         card.boost.setValue(20)
         dialog.plugin_pages.time_limit.setValue(50)
+        dialog.plugin_pages.pause_offline.setChecked(True)
         edited = dialog.read_settings()
         self.assertEqual(edited.plugin_time_limit_ms, 50)
+        self.assertTrue(edited.plugins_pause_offline)
+        self.controller.plugin_refresh._internet_checked(InternetState(False, False, 42))
+        self.assertEqual(dialog.plugin_pages.internet_status.text(), "Internet: offline.")
         config = edited.plugins[0]
         self.assertEqual(
             (config.keywords, config.boost, config.options), (("ff", "fff"), 20, {"count": 3})
