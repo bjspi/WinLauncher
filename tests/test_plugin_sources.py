@@ -114,6 +114,18 @@ class SourceLayoutTest(unittest.TestCase):
         write_plugin(single, "2.0.0")
         self.assertEqual([p.folder for p in read_source(single).plugins], [single])
 
+    def test_plugin_folders_keep_the_spelling_the_source_was_given_in(self):
+        """An activated folder must lie in its source as the user typed it, short names too."""
+        import win32api
+
+        source = self.root / "A Long Folder Name"
+        write_plugin(source / "plugins" / "jira")
+        (source / "catalog.toml").write_text('plugins = "plugins"', encoding="utf-8")
+        short = Path(win32api.GetShortPathName(str(source)))
+        if short == source:
+            self.skipTest("this volume keeps no 8.3 short names")
+        self.assertEqual(read_source(short).plugins[0].folder, short / "plugins" / "jira")
+
     def test_unusable_sources_and_manifests_are_reported(self):
         with self.assertRaisesRegex(SourceError, "does not exist"):
             read_source(self.root / "missing")

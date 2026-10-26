@@ -19,6 +19,7 @@ template, are never offered.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,7 +142,9 @@ def _catalog_layout(root: Path) -> tuple[str, list[Path]]:
     name, folder = data.get("name", ""), data.get("plugins", DEFAULT_PLUGINS_FOLDER)
     if not isinstance(name, str) or not isinstance(folder, str):
         raise SourceError(f"name and plugins in {CATALOG_FILE} must be text.")
-    plugins = (root / folder).resolve()
-    if not plugins.is_relative_to(root.resolve()):
+    # Spelled as the user wrote the source: resolving would expand short names and
+    # junctions, and an activated folder would no longer match the source it lies in.
+    plugins = Path(os.path.normpath(root / folder))
+    if not plugins.resolve().is_relative_to(root.resolve()):
         raise SourceError(f"The plugins folder of {CATALOG_FILE} must lie inside the source.")
     return name, plugin_folders(plugins)
