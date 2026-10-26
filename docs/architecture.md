@@ -49,9 +49,11 @@ flowchart TD
 | `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
 | `commands.py` | The user's context-menu commands and their command lines |
 | `plugins/api.py` | The plugin interface: `Plugin`, `PluginItem`, `PluginContext`, options and commands |
-| `plugins/registry.py` | The plugin folders of every configured path, entry points; `PluginSource` |
-| `plugins/manifest.py` | `plugin.toml`: version, name, description and required packages, read without running the plugin |
-| `plugins/catalog.py` | Plugin catalogs: shallow git clones, what they offer, install, update and removal |
+| `plugins/registry.py` | Loads the own plugins folder, activated plugin folders and entry points; `PluginSource` |
+| `plugins/folders.py` | Plugin folders on disk: `plugin.toml` manifests and the three layouts of a source |
+| `plugins/encoding.py` | Plugin files and tool output in UTF-8 or Windows-1252, whichever they were written in |
+| `plugins/sources.py` | Plugin sources: remote clones, local folders, what they offer, install and uninstall |
+| `plugins/packages.py` | A plugin's Python packages, installed with pipx or pip into WinLauncher's environment |
 | `plugins/host.py` | Each plugin's latest items and their cache, refresh, search, open and commands |
 | `plugins/search.py` | Plugin keywords, which queries plugins answer, item ranking, merging with file hits |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
@@ -60,7 +62,7 @@ flowchart TD
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
 | `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugins settings page |
-| `ui/plugin_catalogs.py`, `ui/catalog_settings.py` | Periodic catalog checks, update notices, installs; the catalog part of the Plugins page |
+| `ui/plugin_sources.py`, `ui/source_settings.py` | Periodic source checks, update notices, installs and activations; the source part of the Plugins page |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
 | `ui/widgets.py` | The settings look: tinted line icons, animated switches, cards with setting rows, info dialogs |
 | `ui/theme.py` | Light and dark colors, the stylesheet built from them, following the Windows color scheme; painters read `colors()` and refresh kept icons on `Theme.changed` |
@@ -226,15 +228,24 @@ against the Python loop and exercise every extension entry point.
 
 ## Search plugins
 
-`plugins/` imports neither Qt nor Win32. `discover_plugins` searches the plugin
-paths in order and loads each `plugin.py` as a module of its own, named after its
-folder; `Discovery` collects the usable plugins, the problems to show and a
-`PluginSource` per id (origin, module path, manifest version), which is all the
-settings page needs to say where a plugin comes from. `plugin.toml` holds only
-what must be readable without executing the plugin — its version, and for
-catalogs a name, description and required packages (`manifest.py`, shared by the
-loader and catalogs); id, label, keyword and options stay class attributes, so
-there is one source of truth.
+`plugins/` imports neither Qt nor Win32. `discover_plugins` loads every plugin of
+the own plugins folder, then each plugin folder the user activated in a local
+source, each `plugin.py` as a module of its own named after its folder; nothing
+else is imported, so no plugin code runs before the user chose it. `Discovery`
+collects the usable plugins, the problems to show and a `PluginSource` per id
+(origin, module path, manifest version), which is all the settings page needs to
+say where a plugin comes from. `plugin.toml` holds only what must be readable
+without executing the plugin — its version, name, description and required
+packages (`folders.py`); id, label, keywords, routes and options stay class
+attributes, so there is one source of truth. Plugin files are loaded through a
+loader of its own (`_PluginFileLoader`) that decodes them with `encoding.py`, so a
+file saved as Windows-1252 runs instead of failing over an umlaut; it also writes
+no `__pycache__` into plugin folders.
+
+A plugin's keywords map to a `KeywordTarget`: the plugin, and for a route's keyword
+the route id. `PluginHost.keywords` builds that map from the settings, and a
+`PluginQuery` carries the route, which `_rank` applies as a filter on the
+prepared items before ranking, so a route costs no refresh of its own.
 
 Matching a plugin's items is the same text matching the catalog uses, so a chat
 named Anna ranks like a file named Anna and the scores can be merged. Its two
@@ -267,26 +278,37 @@ score (`merge_hits`), with the file engine's order preserved. `PluginIcons` load
 item images on the GUI thread (small local files), cropping avatars to circles
 and painting initials when there is none.
 
-Plugin catalogs are plain git repositories, so any host works and private ones
-authenticate through the user's own git credential helper; nothing is
-downloaded over WinLauncher's own HTTP code. `PluginCatalogs` (`plugins/catalog.py`)
-keeps a shallow clone per catalog under `<data>/plugin-catalogs`, named after the
-URL plus a hash of it, updates it with `fetch --depth 1 origin HEAD` and
-`reset --hard`, and reads `catalog.toml` and each plugin folder's manifest from
-it. Installing copies a folder from the clone into `<data>/plugins`: assembled as
-`_installing-<name>` (the loader skips `_` names), swapped in by renaming, with an
-`installed-from.txt` naming the catalog. That note is what makes a folder the
-catalog's to update or remove, so a private plugin of the same name is never
-touched. `CatalogWatcher` (`ui/plugin_catalogs.py`) runs every check, install and
-removal on its own one-worker pool (`TaskCategory.PLUGIN_CATALOG`): a stuck plugin
-never delays it, and git never changes one clone twice at once. It keeps the last
-result per catalog, re-checks every 6 hours and when the list is edited, and
-announces each new version once.
+Plugin sources come in two kinds, told apart by the text alone: a drive or share
+path is local, anything else is a repository for git (`source_kind`). Both are
+read by `folders.read_source`, which accepts a `catalog.toml` naming the plugins
+folder, a single plugin folder, or a folder of them. Remote sources go through
+git, so any host works and private ones authenticate with the user's own
+credential helper; WinLauncher has no HTTP code of its own for them.
+`PluginSources` (`plugins/sources.py`) keeps a shallow clone per remote source
+under `<data>/plugin-sources`, named after the address plus a hash of it, updated
+with `fetch --depth 1 origin HEAD` and `reset --hard`. Installing copies a plugin
+folder from the clone into `<data>/plugins`: assembled as `_installing-<name>`
+(the loader skips `_` names), swapped in by renaming, with an `installed-from.txt`
+naming the source. That note is what makes a folder the source's to update or
+uninstall, so a private plugin of the same name is never touched. Local sources
+are read in place and never copied: activating a plugin adds its folder to the
+`active_plugins` setting, which the loader reads at the next start.
+
+`SourceWatcher` (`ui/plugin_sources.py`) runs every check, install, uninstall and
+activation on its own one-worker pool (`TaskCategory.PLUGIN_SOURCE`): a stuck
+plugin never delays it, and git never changes one clone twice at once. Install and
+activation first install the plugin's `requires` with `packages.install_packages`
+(`pipx inject` for a pipx installation, else pip on WinLauncher's interpreter), so
+a failed package installation leaves nothing half installed. The watcher keeps
+the last result per source, re-checks every 6 hours and when the saved list
+changes, and announces each new version once. `SourceSection`
+(`ui/source_settings.py`) holds activations as a pending settings edit, saved with
+the others, and offers to save and restart after a change.
 
 ## Threads, scheduling and cancellation
 
 Qt widgets live on the GUI thread. `BackgroundTasks` runs work on separate search
-(2), prefetch (1), index (1), action (1), plugin (2) and plugin catalog (1) pools and always delivers
+(2), prefetch (1), index (1), action (1), plugin (2) and plugin source (1) pools and always delivers
 results through a queued signal to callbacks on the GUI thread. Callbacks never
 run inside `submit`. Its `WorkerPool` takes callables from a queue on daemon
 threads instead of using a `ThreadPoolExecutor`, whose workers Python joins at

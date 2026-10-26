@@ -1,11 +1,10 @@
-"""Find the installed plugins: the plugin folders, installed packages and built-ins.
+"""Load the plugins in use: the plugins folder, activated plugin folders, packages.
 
-A plugin folder holds one subfolder per plugin, `<name>/plugin.py`, beside an
-optional `plugin.toml` that names its version. A loose `<name>.py` file in the
-same folder is a plugin too, for a quick one of your own. WinLauncher searches its
-data directory's `plugins` folder and the folders configured beside it, in order,
-so a cloned plugin repository and private plugins live side by side. Packages may
-declare plugins as entry points of the group `winlauncher.plugins` instead.
+WinLauncher's own plugins folder holds one subfolder per plugin — installed from
+a source or copied in by hand — and loose `<name>.py` files for quick plugins of
+your own; all of them load. Plugin folders of local sources load only once the
+user activated them, from where they lie. Packages may declare plugins as entry
+points of the group `winlauncher.plugins` instead.
 
 The first plugin claiming an id wins; later ones, unreadable folders and modules
 that fail to import are reported and skipped, so one broken plugin never hides the
@@ -15,6 +14,7 @@ others. WinLauncher itself ships no plugin.
 from __future__ import annotations
 
 import importlib
+import importlib.abc
 import importlib.util
 import inspect
 import logging
@@ -26,14 +26,20 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from types import ModuleType
 
-from winlauncher.plugins.api import PLUGIN_ID, Plugin, PluginOption
+from winlauncher.plugins.api import PLUGIN_ID, Plugin, PluginOption, PluginRoute
 from winlauncher.plugins.config import KEYWORD, REFRESH_RANGE_MINUTES
-from winlauncher.plugins.manifest import MANIFEST_FILE, ManifestError, read_manifest
+from winlauncher.plugins.encoding import read_python_source
+from winlauncher.plugins.folders import (
+    MANIFEST_FILE,
+    PLUGIN_FILE,
+    SKIPPED_PREFIX,
+    ManifestError,
+    read_manifest,
+)
 from winlauncher.plugins.search import literal_patterns
 
 ENTRY_POINT_GROUP = "winlauncher.plugins"
 BUILT_IN: tuple[str, ...] = ()  # `module:Class` references WinLauncher loads itself.
-PLUGIN_FILE = "plugin.py"  # The module of a plugin folder.
 _FOLDER_MODULES = "winlauncher_user_plugins"  # Module name prefix of loaded files.
 logger = logging.getLogger(__name__)
 
@@ -102,8 +108,10 @@ def _declaration_problem(plugin_class: type[Plugin]) -> str | None:
     for name in ("description", "icon"):
         if not isinstance(getattr(plugin_class, name), str):
             return f"its {name} must be text."
-    if not isinstance(plugin_class.keyword, str) or not KEYWORD.fullmatch(plugin_class.keyword):
-        return "its keyword may contain letters, numbers, _ and -."
+    if (problem := _keywords_problem(plugin_class)) is not None:
+        return problem
+    if (problem := _routes_problem(plugin_class.routes)) is not None:
+        return problem
     if type(plugin_class.round_icons) is not bool:
         return "round_icons must be True or False."
     if (problem := _literal_terms_problem(plugin_class.literal_terms)) is not None:
@@ -112,6 +120,42 @@ def _declaration_problem(plugin_class: type[Plugin]) -> str | None:
     if type(minutes) is not int or not low <= minutes <= high:
         return f"refresh_minutes must be a whole number from {low} to {high}."
     return _options_problem(plugin_class.options)
+
+
+def _keywords_problem(plugin_class: type[Plugin]) -> str | None:
+    keyword, keywords = plugin_class.keyword, plugin_class.keywords
+    if not isinstance(keyword, str) or (keyword and not KEYWORD.fullmatch(keyword)):
+        return "its keyword may contain letters, numbers, _ and -."
+    if not _usable_keywords(keywords):
+        return "keywords must be a tuple of words of letters, numbers, _ and -."
+    if keyword and keywords:
+        return "declare keywords or keyword, not both."
+    return None
+
+
+def _routes_problem(routes: object) -> str | None:
+    if not isinstance(routes, tuple) or not all(isinstance(route, PluginRoute) for route in routes):
+        return "routes must be a tuple of PluginRoute values."
+    ids: set[str] = set()
+    for route in routes:
+        if not isinstance(route.id, str) or not PLUGIN_ID.fullmatch(route.id):
+            return "a route id must use a-z, 0-9, _ and -."
+        if route.id in ids:
+            return f"the route {route.id} is declared twice."
+        ids.add(route.id)
+        if not isinstance(route.label, str) or not route.label.strip():
+            return f"the route {route.id} needs a label."
+        if not isinstance(route.description, str):
+            return f"the description of route {route.id} must be text."
+        if not _usable_keywords(route.keywords):
+            return f"the keywords of route {route.id} must be a tuple of words."
+    return None
+
+
+def _usable_keywords(keywords: object) -> bool:
+    return isinstance(keywords, tuple) and all(
+        isinstance(keyword, str) and KEYWORD.fullmatch(keyword) for keyword in keywords
+    )
 
 
 def _literal_terms_problem(patterns: object) -> str | None:
@@ -158,9 +202,12 @@ def _usable_bounds(option: PluginOption) -> bool:
 
 
 def discover_plugins(
-    folders: Sequence[Path] = (), *, built_in: Iterable[str] = BUILT_IN
+    folders: Sequence[Path] = (),
+    active: Sequence[Path] = (),
+    *,
+    built_in: Iterable[str] = BUILT_IN,
 ) -> Discovery:
-    """Every plugin of `folders`, searched in order, plus packages and built-ins."""
+    """Built-ins and packages, every plugin in `folders`, then each `active` plugin folder."""
     found = Discovery()
     for reference in built_in:
         _add_reference(found, reference, reference)
@@ -169,10 +216,16 @@ def discover_plugins(
         _add_reference(found, entry.value, distribution)
     for folder in folders:
         _add_plugin_folder(found, folder)
+    for folder in active:
+        if folder.is_dir():
+            _add_plugin_subfolder(found, folder)
+        else:
+            found.problems.append(f"{folder}: the activated plugin folder is gone.")
     logger.info(
-        "Plugins found: %s; folders=%d problems=%d",
+        "Plugins found: %s; folders=%d active=%d problems=%d",
         ", ".join(plugin.id for plugin in found.plugins) or "none",
         len(folders),
+        len(active),
         len(found.problems),
     )
     return found
@@ -192,14 +245,14 @@ def _add_plugin_folder(found: Discovery, folder: Path) -> None:
     """One configured plugin path: its plugin folders and its loose `*.py` files."""
     try:
         if not folder.is_dir():
-            return  # A path that is not there yet is no error; it may be a clone to come.
+            return  # Created when the first plugin is installed.
         entries = sorted(folder.iterdir())
     except OSError as exc:
         found.problems.append(f"{folder}: {exc.strerror or exc}")
         return
     for entry in entries:
-        if entry.name.startswith("_"):
-            continue  # Templates, caches and other folders a plugin author keeps around.
+        if entry.name.startswith(SKIPPED_PREFIX):
+            continue  # Templates, staging folders and caches.
         if entry.is_dir():
             _add_plugin_subfolder(found, entry)
         elif entry.suffix == ".py":
@@ -214,16 +267,15 @@ def _add_plugin_subfolder(found: Discovery, folder: Path) -> None:
         if manifest.is_file():  # Meant as a plugin; other folders are none of our business.
             found.problems.append(f"{folder.name}: has no {PLUGIN_FILE}.")
         return
-    version = _manifest_version(found, manifest) if manifest.is_file() else ""
-    _add_module_file(found, module, PluginSource(folder.name, module, version))
+    _add_module_file(found, module, PluginSource(folder.name, module, _version(found, folder)))
 
 
-def _manifest_version(found: Discovery, manifest: Path) -> str:
-    """The `version` of a plugin manifest; empty when the manifest is unusable."""
+def _version(found: Discovery, folder: Path) -> str:
+    """The version its manifest names; empty when it has none or an unusable one."""
     try:
-        return read_manifest(manifest).version
+        return read_manifest(folder).version
     except ManifestError as exc:
-        found.problems.append(f"{manifest.parent.name}: {exc}")
+        found.problems.append(f"{folder.name}: {exc}")
         return ""
 
 
@@ -255,7 +307,7 @@ def _add_module_file(found: Discovery, file: Path, source: PluginSource) -> None
 
 def _load_module(file: Path) -> ModuleType:
     name = _module_name(file)
-    spec = importlib.util.spec_from_file_location(name, file)
+    spec = importlib.util.spec_from_file_location(name, file, loader=_PluginFileLoader(file))
     if spec is None or spec.loader is None:
         raise ImportError("not a Python module")
     module = importlib.util.module_from_spec(spec)
@@ -266,6 +318,21 @@ def _load_module(file: Path) -> ModuleType:
         sys.modules.pop(name, None)
         raise
     return module
+
+
+class _PluginFileLoader(importlib.abc.Loader):
+    """Runs a plugin file in whatever encoding its author's editor saved it.
+
+    Python's own loader insists on UTF-8 or a coding declaration, so a plugin saved
+    as Windows-1252 would fail over an umlaut in a comment.
+    """
+
+    def __init__(self, file: Path):
+        self.file = file
+
+    def exec_module(self, module: ModuleType) -> None:
+        code = compile(read_python_source(self.file), str(self.file), "exec", dont_inherit=True)
+        exec(code, module.__dict__)  # noqa: S102 - running the plugin is the loader's job.
 
 
 def _module_name(file: Path) -> str:

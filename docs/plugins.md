@@ -40,10 +40,16 @@ Telegram: Team Annahme        Group  ·  3 unread
   query in 13–45 ms, a number in 2 ms); tens of thousands do not, so a plugin
   should list the part of its world you actually search and offer the rest through
   a direct lookup, such as opening a ticket by its key.
-- **Keyword.** Typed first, the plugin's keyword puts its items on top:
+- **Keywords.** Typed first, a plugin's keyword puts its items on top:
   `tg anna` searches your chats for Anna. The keyword alone lists them in the
   plugin's order, such as your most recent ones. The same text still searches your
-  files, so `tg` also finds a file named `tg`.
+  files, so `tg` also finds a file named `tg`. A plugin may have several keywords
+  that work alike, such as `jira` and `ji`; change them in its settings, separated
+  by commas.
+- **Routes.** A plugin may offer keywords that search only part of its items. A
+  ticket plugin could list every ticket under `jira` and offer a route *Bugs only*
+  with the keyword `bug`: `bug login` then finds only bugs about logins. Route
+  keywords are changed in the plugin's settings, too.
 - **`@` for that plugin alone.** `@tg anna` answers from Telegram only, without any
   file results. Useful for a plugin whose keyword is a common word.
 - **Open.** Enter, a click or Ctrl+1…9 calls the plugin's `open` on the action
@@ -61,34 +67,43 @@ telegram\
     assets\          icons and whatever else it needs
 ```
 
-### Install from a catalog
+### Plugin sources
 
-**Settings → Plugins → Available plugins** lists what your plugin catalogs offer,
-with **Install**, **Update** and **Remove**. A catalog is a git repository;
-[WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins) is configured
-by default. Installing copies the plugin's folder into
-`%USERPROFILE%\.WinLauncher\plugins\`; restart from the tray, then turn it on.
-WinLauncher checks the catalogs every 6 hours and announces a new version of an
-installed plugin in a tray message. A plugin that needs Python packages shows the
-command that installs them.
+**Settings → Plugins → Plugin sources** lists where plugins come from, one per
+line; [WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins) is there
+by default. **Available plugins** above shows what they offer.
 
-Catalogs are fetched with git, so git must be installed. Under **Plugin
-catalogs** you can add your own, one per line: an `https://` or SSH address, or a
-folder such as a network share. A private repository works once git can reach it
-with your saved credentials — clone it once in a terminal if git has to ask for a
-password; WinLauncher itself never prompts.
+| Source | Example | What you do |
+| --- | --- | --- |
+| A git repository | `https://github.com/bjspi/WinLauncher-Plugins.git`, `git@git.example.com:team/plugins.git` | **Install**, **Update**, **Uninstall** — the plugin is copied into `%USERPROFILE%\.WinLauncher\plugins\` |
+| A folder | `D:\Work\plugins`, `\server\share\plugins` | **Activate**, **Deactivate** — the plugin loads from where it lies, so your edits apply at the next start |
 
-### Your own catalog
+Nothing from a source loads until you install or activate it. Both first install
+the Python packages the plugin needs (`requires`, see below) into WinLauncher's
+environment, and the plugin is on from the next start; the page offers to restart
+right away. WinLauncher checks its sources every 6 hours and announces a new
+version of an installed plugin in a tray message.
 
-Any repository becomes a catalog with a `catalog.toml` at its root:
+Repositories are fetched with git, so git must be installed. A private one works
+once git can reach it with your saved credentials — clone it once in a terminal if
+git has to ask for a password; WinLauncher itself never prompts.
 
-```toml
-name = "Team plugins"     # Shown in Settings; the URL when missing.
-plugins = "plugins"       # The folder holding one subfolder per plugin.
-```
+### Laying out a source
 
-Each plugin folder in it describes itself in its `plugin.toml`, which WinLauncher
-reads without running the plugin:
+A folder or repository offers plugins in one of three ways:
+
+- a `catalog.toml` at its root names it and the folder holding its plugins:
+
+  ```toml
+  name = "Team plugins"     # Shown in Settings; the address when missing.
+  plugins = "plugins"       # One subfolder per plugin.
+  ```
+
+- it is a single plugin folder, or
+- it is a folder of plugin folders.
+
+Each plugin folder describes itself in its `plugin.toml`, which WinLauncher reads
+without running the plugin:
 
 ```toml
 version = "1.2.0"         # Raise it with every change: installed copies get the update.
@@ -98,19 +113,15 @@ requires = ["jira>=3.8"]  # Python packages beside WinLauncher, as pip requireme
 ```
 
 Folders starting with `_`, such as a template, are not offered. Updates and
-removal only touch plugin folders that were installed from that catalog, so a
-private plugin of the same name in your plugin folder is left alone.
+uninstalling only touch plugin folders installed from that source, so a private
+plugin of the same name is left alone.
 
-### Plugin folders
+### The plugins folder
 
-Plugin folders are searched in
+`%USERPROFILE%\.WinLauncher\plugins\` always loads: plugins installed from a
+repository land there, and so can private plugins or single ones you copy in.
 
-1. `%USERPROFILE%\.WinLauncher\plugins\`, always — where catalogs install to,
-   and the place for private plugins and single plugins you copied in, and
-2. every folder listed under **Settings → Plugins → Plugin folders**, in order —
-   point one at a clone of a plugin repository you work on.
-
-A loose `<name>.py` file in those folders is a plugin too, for a quick one of your
+A loose `<name>.py` file in that folder is a plugin too, for a quick one of your
 own without any folder. Installed packages may declare plugins as entry points of
 the group `winlauncher.plugins` instead:
 
@@ -119,11 +130,11 @@ the group `winlauncher.plugins` instead:
 crm = "my_package.crm:CrmPlugin"
 ```
 
-The first plugin claiming an id wins, so a private plugin in the first folder
-takes precedence over one of the same name in a cloned repository; the others are
-listed as problems on the Plugins page, together with folders that failed to load.
-Everything is loaded once at start: after adding a folder, save and restart
-WinLauncher from the tray. Plugins stay off until you turn them on.
+The first plugin claiming an id wins, so a plugin in the plugins folder takes
+precedence over an activated one of the same id; the others are listed as problems
+on the Plugins page, together with folders that failed to load. Everything is
+loaded once at start, so installing, activating or removing a plugin takes effect
+after a restart.
 
 ## A plugin cannot break WinLauncher
 
@@ -132,7 +143,7 @@ of the program may trust what it declares:
 
 - A module that fails to import — a syntax error, a missing package, an exception
   at import time — is listed as a problem; everything else starts normally.
-- What a plugin declares (`label`, `description`, `keyword`, `refresh_minutes`,
+- What a plugin declares (`label`, `description`, `keywords`, `routes`, `refresh_minutes`,
   `icon`, `round_icons`, `options`) is checked once at load. A plugin that declares
   something the launcher could not paint is rejected with a message naming the
   mistake, instead of failing later inside a result row or the settings page. A
@@ -166,7 +177,7 @@ class Notes(Plugin):
     id = "notes"            # Settings key and data folder: a-z, 0-9, _ and -.
     label = "Note"          # Rows read "Note: <name>".
     description = "Text files from my notes folder."
-    keyword = "n"           # "n shopping" searches only this plugin.
+    keywords = ("n", "note")  # "n shopping" puts this plugin first; synonyms work alike.
     refresh_minutes = 5
     icon = ""               # Image file for items without their own icon.
     round_icons = False     # True for avatars: round crops, initials without a picture.
@@ -183,13 +194,14 @@ class Notes(Plugin):
         return [PluginItem(str(f), f.stem, target=str(f), subtitle=str(f.parent)) for f in files]
 ```
 
-- `PluginItem(key, name, target, subtitle, keywords, icon, title, data)`:
+- `PluginItem(key, name, target, subtitle, keywords, icon, title, routes, data)`:
   - `key` identifies the item across refreshes.
   - `name` is matched and shown after the label; `title` replaces the whole
     "Label: name" text.
   - `keywords` also find the item (a username, an email address), a little below
     name matches.
   - `icon` is an image file, such as a cached avatar.
+  - `routes` names the plugin's routes that list the item (see below).
   - `data` holds JSON values for `open`; it is never matched.
 - `refresh(context)` returns the items. Raise `PluginError` with a message for the
   user, or `SetupRequired` when the user must set something up first.
@@ -204,6 +216,43 @@ class Notes(Plugin):
   `context.options` holds the validated values of `options`. A long refresh
   should stop when `context.cancel` is set. `context.log` writes to
   WinLauncher's log.
+
+### Keywords and routes
+
+`keywords` are the plugin's suggestions; the user's own replace them in Settings.
+Older plugins declare a single `keyword = "n"`, which still works. A route searches
+only the items that name it in their `routes`:
+
+```python
+from winlauncher.plugins.api import Plugin, PluginItem, PluginRoute
+
+
+class Tickets(Plugin):
+    id = "tickets"
+    label = "Ticket"
+    keywords = ("jira", "ji")
+    routes = (PluginRoute("bugs", "Bugs only", ("bug",), "Typed first, it searches bugs."),)
+
+    def refresh(self, context):
+        return [
+            PluginItem("T-1", "Login fails after update", routes=("bugs",)),
+            PluginItem("T-3", "Login with single sign-on"),
+        ]
+```
+
+`jira login` finds both tickets, `bug login` only the first, and `@bug login` only
+the first without any file results. A route is a filter on the items the plugin
+listed, so it costs no extra refresh; its `id` must stay stable, because the user's
+keywords for it are stored under it.
+
+### Encodings
+
+`plugin.py`, `plugin.toml` and `catalog.toml` may be saved as UTF-8, with or
+without a byte order mark, or as Windows-1252, as older Windows editors do; a
+`# coding:` declaration in `plugin.py` is honored. UTF-8 is still the
+recommendation.
+
+### Files of a plugin
 
 Files that belong to the plugin itself, such as its icon, are addressed relative to
 its module: `Path(__file__).with_name("assets") / "telegram.svg"`. Everything the
@@ -233,7 +282,7 @@ CONTACTS_FOLDER = 10  # olFolderContacts
 class OutlookContacts(Plugin):
     id = "outlook"
     label = "Outlook"
-    keyword = "ol"
+    keywords = ("ol", "outlook")
     refresh_minutes = 30
     round_icons = True
 

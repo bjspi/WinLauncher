@@ -36,7 +36,7 @@ or searches the folder you are in when you simply start typing in Explorer.
 | 📈 **Learns what you open** | Launches per query, favorites and recency lift the results you actually use. |
 | 🧮 **Built-in calculator** | Type `200 + 10%`, `sqrt(2)` or `hex(255)` and the result appears above the search results; <kbd>Enter</kbd> copies it. |
 | 🌐 **Website keywords** | Define a title, keyword and URL in Settings → Websites. `az headphones` searches Amazon; `yt Python tutorial` searches YouTube. |
-| 💬 **Search plugins** | Chats, contacts and records of other programs as results, opened by a deep link into their app. `tg anna` puts your Telegram chats on top without hiding files, `@tg anna` answers from Telegram alone. Install them from [WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins) or your team's own catalog right in Settings ([more](#-search-plugins)). |
+| 💬 **Search plugins** | Chats, contacts and records of other programs as results, opened by a deep link into their app. `tg anna` puts your Telegram chats on top without hiding files, `@tg anna` answers from Telegram alone. Install them from [WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins), your team's repository or a local folder, right in Settings ([more](#-search-plugins)). |
 | 🖱️ **Your own menu commands** | Right-click a folder → **Open in Windows Terminal** or **Open Command Prompt here**, or add any command line of your own in Settings → Context menu. |
 | 🎯 **Rich query language** | `type:`, `ext:`, `in:`, `path:`, `name:`, dates, sorting, `!exclusions` and more, colored as you type; invalid values are underlined. |
 | 🚫 **Clean results by default** | Skips `.git*`, caches (`__pycache__`, `.ruff_cache`, `.mypy_cache`, …), virtual environments under any name, `node_modules`, `build`, `dist`, Gradle folders and folders marked with `.nobackup`. |
@@ -78,7 +78,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.13.0"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.14.0"
 winlauncher --show
 ```
 
@@ -389,23 +389,21 @@ indexing that folder, run in the background and honor exclusions and markers.
 ## 💬 Search plugins
 
 WinLauncher itself ships no plugin, only the host that loads, schedules and searches
-them. The plugins live in their own repository,
-**[WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins)** — currently
-Telegram, plus a template for your own — and that repository is WinLauncher's
-default **plugin catalog**:
+them. They come from **plugin sources**, listed under Settings → Plugins → **Plugin
+sources** — by default
+**[WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins)**, with
+Telegram and a template for your own:
 
-1. **Settings → Plugins → Available plugins**: choose a plugin, **Install**.
-2. Restart WinLauncher from the tray, then turn the plugin on in its settings.
+| Source | You get | You click |
+| --- | --- | --- |
+| 🌐 A git repository — GitHub, your company's git server, SSH | A copy in your plugins folder, its Python packages, and update notices | **Install** · **Update** · **Uninstall** |
+| 📁 A folder on this computer or a share | The plugin loads from where it lies — ideal while you write one | **Activate** · **Deactivate** |
 
-WinLauncher checks its catalogs every 6 hours and tells you when an installed plugin
-has a new version; **Update** installs it. Any git repository with a `catalog.toml`
-can be a catalog — a team's own one on a company git server, too: add its address
-under **Plugin catalogs**. Catalogs need [git](https://git-scm.com/); private ones
-use your saved git credentials.
-
-Private plugins go into `%USERPROFILE%\.WinLauncher\plugins\`, which is always
-searched. A plugin that fails to load or throws is listed as a problem and never
-takes WinLauncher down. [docs/plugins.md](docs/plugins.md) explains catalogs,
+Choose a plugin under **Available plugins**, click, and restart when WinLauncher
+offers it: the plugin is on. Nothing from a source loads before you choose it, and a
+plugin that fails to load or throws is listed as a problem and never takes
+WinLauncher down. Repositories need [git](https://git-scm.com/); private ones use
+your saved git credentials. [docs/plugins.md](docs/plugins.md) explains sources,
 writing plugins, and how they run and are ranked.
 
 ## 🎛️ Exclusions and priorities
@@ -470,8 +468,8 @@ the top group; the number fine-tunes the order.
   is sent only when you open the result in your browser, and is not saved in the
   file search history. No third-party favicon service is used.
 - 📄 Indexes names and metadata only — never file contents.
-- 💬 WinLauncher ships no plugin, and an installed one stays off until you turn it
-  on. Each keeps its own data in `%USERPROFILE%\.WinLauncher\plugin-data`; whom a
+- 💬 WinLauncher ships no plugin, and none loads before you install or activate it.
+  Each keeps its own data in `%USERPROFILE%\.WinLauncher\plugin-data`; whom a
   plugin talks to is up to that plugin.
 - 🗂️ Settings, catalog, favorites, history and logs live in `%USERPROFILE%\.WinLauncher`
 - 📝 `settings.json` holds user preferences. `winlauncher.log` rotates at 5 MB with five backups.

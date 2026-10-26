@@ -9,7 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from winlauncher.catalog.exclusions import DEFAULT_MARKER_FILES, ExclusionPolicy
-from winlauncher.catalog.model import normalize
+from winlauncher.catalog.model import normalize, path_key
 from winlauncher.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
@@ -20,7 +20,8 @@ from winlauncher.catalog.priority import (
     SearchPriority,
 )
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
-from winlauncher.plugins.config import DEFAULT_CATALOGS, PluginConfig, catalog_key
+from winlauncher.plugins.config import DEFAULT_SOURCES, PluginConfig, source_key
+from winlauncher.plugins.folders import OfferedPlugin, SourceError, read_source
 from winlauncher.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
 DEFAULT_DOUBLE_CTRL_MS = 350
@@ -32,6 +33,7 @@ RESULT_LIMIT_RANGE = (10, 200)
 DEFAULT_CONTENT_SEARCH_THREADS = 4
 CONTENT_SEARCH_THREADS_RANGE = (1, 16)
 BOOST_RANGE = (-100, 100)
+LEGACY_PLUGIN_FIELDS = ("plugin_paths", "plugin_catalogs")  # Replaced by plugin sources.
 # Excluded names; matching directories also exclude their whole subtree.
 DEFAULT_EXCLUDED_PATTERNS = (
     # Version control, including copies such as .git_old (and .github)
@@ -164,13 +166,12 @@ class Settings:
     # Own entries in the result context menu, in menu order.
     menu_commands: tuple[MenuCommand, ...] = DEFAULT_MENU_COMMANDS
     appearance: str = Appearance.SYSTEM.value  # An `Appearance`; a string in the JSON file.
-    # Search plugins the user configured; plugins without an entry stay off.
+    # The settings of loaded plugins; a plugin without an entry uses its defaults.
     plugins: tuple[PluginConfig, ...] = ()
-    # Folders searched for plugins besides the data directory's own `plugins` folder,
-    # such as a cloned plugin repository. Read once at start.
-    plugin_paths: tuple[str, ...] = ()
-    # Git repositories with a catalog.toml whose plugins can be installed from Settings.
-    plugin_catalogs: tuple[str, ...] = DEFAULT_CATALOGS
+    # Where plugins come from: git repositories to install from, and local folders.
+    plugin_sources: tuple[str, ...] = DEFAULT_SOURCES
+    # Plugin folders of local sources, loaded from where they lie. Read once at start.
+    active_plugins: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.appearance not in tuple(Appearance):
@@ -254,13 +255,15 @@ class Settings:
             raise ValueError("Search roots and excluded paths must be absolute.")
         if not all(Path(rule.path).is_absolute() for rule in self.folder_priorities):
             raise ValueError("Priority folders must be absolute paths.")
-        if not all(Path(folder).is_absolute() for folder in self.plugin_paths):
-            raise ValueError("Plugin folders must be absolute paths.")
-        catalogs = [catalog_key(url) for url in self.plugin_catalogs]
-        if not all(catalogs):
-            raise ValueError("Plugin catalogs need a repository URL or folder.")
-        if len(set(catalogs)) != len(catalogs):
-            raise ValueError("A plugin catalog is listed twice.")
+        sources = [source_key(source) for source in self.plugin_sources]
+        if not all(sources):
+            raise ValueError("Plugin sources need a repository address or a folder.")
+        if len(set(sources)) != len(sources):
+            raise ValueError("A plugin source is listed twice.")
+        if not all(Path(folder).is_absolute() for folder in self.active_plugins):
+            raise ValueError("Activated plugin folders must be absolute paths.")
+        if len({path_key(folder) for folder in self.active_plugins}) != len(self.active_plugins):
+            raise ValueError("A plugin folder is activated twice.")
 
     def _validate_markers(self) -> None:
         for marker in self.marker_files:
@@ -288,14 +291,16 @@ class Settings:
             _require_range(
                 plugin.boost, BOOST_RANGE, "Plugin boosts must be between {low} and {high}."
             )
-            keyword = normalize(plugin.keyword)
-            if keyword and plugin.enabled:
-                if keyword in keywords:
+            if not plugin.enabled:
+                continue  # A plugin that is off does not claim its words.
+            route_words = (word for words in plugin.routes.values() for word in words)
+            for word in (*plugin.keywords, *route_words):
+                if normalize(word) in keywords:
                     raise ValueError(
-                        f"The keyword {plugin.keyword!r} of plugin {plugin.id} is already "
-                        "used by a website or another plugin."
+                        f"The keyword {word!r} of plugin {plugin.id} is already used by a "
+                        "website, another plugin or another of its keywords."
                     )
-                keywords.add(keyword)
+                keywords.add(normalize(word))
 
     def _validate_priority_rules(self) -> None:
         for rule in self._all_priority_rules():
@@ -353,11 +358,46 @@ def settings_from_json(data: object) -> Settings:
     """Missing fields keep their defaults; present fields must have the default's type."""
     if not isinstance(data, dict):
         raise ValueError("The settings file must contain a JSON object.")
+    data = _with_plugin_sources(data)
     values = {}
     for setting in fields(Settings):
         if setting.name in data:
             values[setting.name] = _setting_value(setting.name, data[setting.name])
     return Settings(**values)
+
+
+def _with_plugin_sources(data: dict) -> dict:
+    """Settings of 0.12 and 0.13 as plugin sources, so no plugin in use disappears.
+
+    They listed plugin folders, which loaded every plugin in them, apart from
+    plugin catalogs. Both become sources, and the folders' plugins stay activated.
+    """
+    if "plugin_sources" in data or not any(key in data for key in LEGACY_PLUGIN_FIELDS):
+        return data
+    catalogs = data.get("plugin_catalogs", list(DEFAULT_SOURCES))
+    folders = data.get("plugin_paths", [])
+    for name, value in (("plugin_catalogs", catalogs), ("plugin_paths", folders)):
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"{name} must be a list of strings.")
+    active = [str(plugin.folder) for folder in folders for plugin in _offered(Path(folder))]
+    return {**data, "plugin_sources": [*catalogs, *folders], "active_plugins": active}
+
+
+def _with_plugin_keywords(entry: dict) -> dict:
+    """A plugin entry of 0.13 or older named one `keyword`; now there are `keywords`."""
+    if "keyword" not in entry:
+        return entry
+    upgraded = {key: value for key, value in entry.items() if key != "keyword"}
+    keyword = entry["keyword"]
+    upgraded.setdefault("keywords", [keyword] if keyword else [])
+    return upgraded
+
+
+def _offered(folder: Path) -> tuple[OfferedPlugin, ...]:
+    try:
+        return read_source(folder).plugins
+    except SourceError:
+        return ()  # A folder that is gone offers nothing to keep.
 
 
 # Settings fields holding a list of records, with the record type and its name in messages.
@@ -373,6 +413,8 @@ def _setting_value(name: str, value: object) -> object:
         record_type, label = _RECORD_TYPES[name]
         if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
             raise ValueError(f"{name} must be a list of objects.")
+        if name == "plugins":
+            value = [_with_plugin_keywords(entry) for entry in value]
         try:
             return tuple(record_type(**entry) for entry in value)
         except TypeError as exc:

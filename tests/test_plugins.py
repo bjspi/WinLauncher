@@ -23,12 +23,14 @@ from winlauncher.plugins.api import (
     PluginError,
     PluginItem,
     PluginOption,
+    PluginRoute,
     SetupRequired,
 )
 from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.host import CACHE_FILE, PluginHost
 from winlauncher.plugins.registry import Discovery, PluginSource, discover_plugins
 from winlauncher.plugins.search import (
+    KeywordTarget,
     PluginHit,
     PluginQuery,
     literal_patterns,
@@ -111,7 +113,7 @@ class PluginRankingTest(unittest.TestCase):
             self.assertFalse(plugins_answer(query(text)), text)
 
     def test_keywords_select_one_plugin_without_taking_the_word_away(self):
-        keywords = {"fk": "fake"}
+        keywords = {"fk": KeywordTarget("fake")}
         found = plugin_query("FK anna", keywords)
         self.assertEqual(found, PluginQuery("fake", query("anna"), query("FK anna")))
         self.assertEqual(plugin_query("fk", keywords).files, query("fk"))
@@ -121,7 +123,7 @@ class PluginRankingTest(unittest.TestCase):
         self.assertEqual(plugin_query('fk "anna', keywords).search.terms, ('"anna',))
 
     def test_the_prefix_asks_for_that_plugin_alone(self):
-        keywords = {"fk": "fake"}
+        keywords = {"fk": KeywordTarget("fake")}
         found = plugin_query("@fk anna", keywords)
         self.assertEqual(found, PluginQuery("fake", query("anna")))
         self.assertIsNone(found.files)  # No catalog search beside it.
@@ -270,7 +272,7 @@ class PluginHostTest(unittest.TestCase):
         self.data = Path(self.temporary.name)
         self.plugin = FakePlugin()
         self.host = PluginHost(Discovery([self.plugin]), self.data)
-        self.config = PluginConfig("fake", enabled=True, keyword="fk", options={"count": 99})
+        self.config = PluginConfig("fake", enabled=True, keywords=("fk",), options={"count": 99})
 
     def test_refresh_keeps_items_in_a_cache_that_the_next_start_reads(self):
         state = self.host.refresh("fake", self.config)
@@ -299,15 +301,16 @@ class PluginHostTest(unittest.TestCase):
 
     def test_disabled_plugins_and_file_queries_stay_silent(self):
         self.host.refresh("fake", self.config)
-        off = PluginConfig("fake", enabled=False, keyword="fk")
+        off = PluginConfig("fake", enabled=False, keywords=("fk",))
         self.assertEqual(self.host.search(query("anna"), (off,), 10), [])
         self.assertEqual(self.host.search(PluginQuery("fake", query("")), (off,), 10), [])
         self.assertEqual(self.host.search(query("anna type:file"), (self.config,), 10), [])
         hidden = PluginConfig("fake", enabled=True, in_search=False)
         self.assertEqual(self.host.search(query("anna"), (hidden,), 10), [])
         self.assertEqual(len(self.host.search(PluginQuery("fake", query("")), (hidden,), 10)), 3)
-        self.assertEqual(self.host.keywords((self.config,)), {"fk": "fake"})
-        self.assertEqual(self.host.keywords(()), {})  # Plugins are off by default.
+        self.assertEqual(self.host.keywords((self.config,)), {"fk": KeywordTarget("fake")})
+        # A loaded plugin was installed or activated on purpose, so it starts out on.
+        self.assertEqual(self.host.keywords(()), {"fk": KeywordTarget("fake")})
 
     def test_a_busy_plugin_is_not_refreshed_twice_and_duplicates_are_dropped(self):
         self.plugin.items = [ANNA, ANNA, BERND]
@@ -415,6 +418,14 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             ({"description": 7}, "description must be text"),
             ({"icon": Path("x.svg")}, "icon must be text"),
             ({"keyword": "two words"}, "keyword may contain"),
+            ({"keywords": "jira"}, "keywords must be a tuple"),
+            ({"keywords": ("two words",)}, "keywords must be a tuple"),
+            ({"keyword": "a", "keywords": ("b",)}, "not both"),
+            ({"routes": [PluginRoute("bugs", "Bugs")]}, "tuple of PluginRoute"),
+            ({"routes": (PluginRoute("Bugs", "Bugs"),)}, "route id must use"),
+            ({"routes": (PluginRoute("bugs", "Bugs"), PluginRoute("bugs", "B"))}, "declared twice"),
+            ({"routes": (PluginRoute("bugs", " "),)}, "route bugs needs a label"),
+            ({"routes": (PluginRoute("bugs", "Bugs", ("a b",)),)}, "keywords of route bugs"),
             ({"round_icons": 1}, "True or False"),
             ({"refresh_minutes": 0}, "whole number from 1 to 1440"),
             ({"refresh_minutes": True}, "whole number from 1 to 1440"),
@@ -495,19 +506,15 @@ def write_plugin_folder(folder: Path, plugin_id: str, *, version: object = None)
 
 class PluginSettingsTest(unittest.TestCase):
     def test_plugin_configs_roundtrip_and_validate(self):
-        config = PluginConfig("chats", enabled=True, keyword="tg", options={"bots": False})
-        settings = Settings(roots=(), plugins=(config,), plugin_paths=(r"D:\Plugins",))
+        config = PluginConfig("chats", enabled=True, keywords=("tg",), options={"bots": False})
+        settings = Settings(roots=(), plugins=(config,))
         with tempfile.TemporaryDirectory() as directory:
             file = SettingsFile(Path(directory) / "settings.json")
             file.save(settings)
             self.assertEqual(file.load(), settings)
             stored = json.loads(file.path.read_text(encoding="utf-8"))
         self.assertEqual(stored["plugins"][0]["options"], {"bots": False})
-        self.assertEqual(stored["plugin_paths"], [r"D:\Plugins"])
         self.assertEqual(settings_from_json({"roots": []}).plugins, ())
-        self.assertEqual(settings_from_json({"roots": []}).plugin_paths, ())
-        with self.assertRaisesRegex(ValueError, "Plugin folders must be absolute"):
-            Settings(roots=(), plugin_paths=("plugins",))
         hash(settings)
         invalid = (
             {"id": "x", "refresh_minutes": 0},
@@ -528,7 +535,7 @@ class PluginSettingsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "twice"):
             Settings(roots=(), plugins=(config, config))
         # A disabled plugin's keyword does not claim the word.
-        Settings(roots=(), plugins=(PluginConfig("a", keyword="g"),))
+        Settings(roots=(), plugins=(PluginConfig("a", enabled=False, keywords=("g",)),))
 
 
 class PluginUiTest(unittest.TestCase):
@@ -549,7 +556,7 @@ class PluginUiTest(unittest.TestCase):
         (root / "Anna notes.txt").write_text("x", encoding="utf-8")
         (root / "fk notes.txt").write_text("x", encoding="utf-8")
         data = root.parent / "state"
-        config = PluginConfig("fake", enabled=True, keyword="fk")
+        config = PluginConfig("fake", enabled=True, keywords=("fk",))
         SettingsFile(data / "settings.json").save(
             Settings(
                 roots=(str(root),), index_apps=False, index_windows_tools=False, plugins=(config,)
@@ -641,14 +648,12 @@ class PluginUiTest(unittest.TestCase):
             dialog.plugin_page.list.item(0).text(), "Fake\nOn  ·  keyword fk  ·  3 items"
         )
         self.assertFalse(card.isHidden())
-        card.keyword.setText("ff")
+        card.keywords.setText("ff, fff")
         card.boost.setValue(20)
-        dialog.plugin_page.folders.add_folders([Path("D:/Projects/Python/WinLauncher-Plugins")])
         edited = dialog.read_settings()
         config = edited.plugins[0]
-        self.assertEqual((config.keyword, config.boost, config.options), ("ff", 20, {"count": 3}))
         self.assertEqual(
-            edited.plugin_paths, (str(Path("D:/Projects/Python/WinLauncher-Plugins")),)
+            (config.keywords, config.boost, config.options), (("ff", "fff"), 20, {"count": 3})
         )
 
 

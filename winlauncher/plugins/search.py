@@ -54,29 +54,40 @@ class PluginHit:
 
 
 @dataclass(frozen=True, slots=True)
+class KeywordTarget:
+    """What a keyword searches: one plugin, or only the items of one of its routes."""
+
+    plugin_id: str
+    route: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PluginQuery:
     """Typed text that starts with a plugin's keyword.
 
     The plugin searches the words behind its keyword, and without any it lists its
-    items in its own order. `files` is the catalog search the same text also runs,
-    so a keyword never takes a word away from the ordinary search; `@keyword` asks
-    for that plugin alone and leaves it None.
+    items in its own order; a route's keyword keeps to that route's items. `files`
+    is the catalog search the same text also runs, so a keyword never takes a word
+    away from the ordinary search; `@keyword` asks for that plugin alone and leaves
+    it None.
     """
 
     plugin_id: str
     search: SearchQuery
     files: SearchQuery | None = None
+    route: str | None = None
 
 
-def plugin_query(text: str, keywords: dict[str, str]) -> PluginQuery | None:
-    """The plugin query `text` asks for; `keywords` maps normalized keywords to plugin ids."""
+def plugin_query(text: str, keywords: dict[str, KeywordTarget]) -> PluginQuery | None:
+    """The plugin query `text` asks for; `keywords` maps normalized keywords to targets."""
     typed = text.strip()
     alone = typed.startswith(ONLY_PLUGIN_PREFIX)
     keyword, _, rest = typed.removeprefix(ONLY_PLUGIN_PREFIX).partition(" ")
-    plugin_id = keywords.get(normalize(keyword)) if keyword else None
-    if plugin_id is None:
+    target = keywords.get(normalize(keyword)) if keyword else None
+    if target is None:
         return None
-    return PluginQuery(plugin_id, _parsed(rest), None if alone else _parsed(typed))
+    files = None if alone else _parsed(typed)
+    return PluginQuery(target.plugin_id, _parsed(rest), files, target.route)
 
 
 def _parsed(text: str) -> SearchQuery:
