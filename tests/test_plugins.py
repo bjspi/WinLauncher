@@ -642,12 +642,14 @@ class PluginUiTest(unittest.TestCase):
             plugins=self.controller.plugin_refresh,
         )
         self.addCleanup(dialog.deleteLater)
-        card = dialog.plugin_page.cards[0]
+        card = dialog.plugin_pages.cards[0]
         self.assertIn("3 items", card.status.text())
-        self.assertEqual(
-            dialog.plugin_page.list.item(0).text(), "Fake\nOn  ·  keyword fk  ·  3 items"
-        )
-        self.assertFalse(card.isHidden())
+        self.assertEqual(dialog.plugin_pages.settings_sections, [card])
+        self.assertTrue(card.keywords.isVisibleTo(card))
+        card.enabled.setChecked(False)  # Turned off, the card folds to its switch.
+        self.assertFalse(card.keywords.isVisibleTo(card))
+        self.assertTrue(card.enabled.isVisibleTo(card))
+        card.enabled.setChecked(True)
         card.keywords.setText("ff, fff")
         card.boost.setValue(20)
         edited = dialog.read_settings()

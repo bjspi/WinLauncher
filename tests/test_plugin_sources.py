@@ -491,7 +491,7 @@ class SourceWatcherTest(unittest.TestCase):
                 f"Jira  0.1.0\n{self.root / 'work'}  ·  Not active",
             ],
         )
-        self.assertEqual(section.main_button.text(), "Install")
+        self.assertEqual(section.main_button.text(), "Install and activate")
         self.assertFalse(section.uninstall_button.isHidden())
 
         section.list.setCurrentRow(1)

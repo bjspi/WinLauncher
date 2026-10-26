@@ -533,7 +533,7 @@ else is loaded. Every `Plugin` subclass a module defines itself is one plugin. T
 first plugin claiming an id wins. A module that fails to import, an id that is not
 `[a-z0-9][a-z0-9_-]*`, an id already taken, an unreadable folder or manifest, a
 folder with a manifest but no `plugin.py` and an activated folder that is gone are
-skipped and named on the Plugins settings page; a folder that is neither is
+skipped and named on the Plugins page; a folder that is neither is
 ignored silently and an entry whose name starts with `_` is never loaded. A loaded
 plugin without a settings entry is on.
 
@@ -547,6 +547,11 @@ are not text fails its refresh. Settings buttons a plugin declares that are not
 usable `PluginCommand` values are dropped. No plugin call runs on the GUI thread,
 and the worker threads are daemons, so a plugin stuck in a call delays only other
 plugin work and never prevents WinLauncher from quitting.
+
+Settings has two plugin pages. **Plugins** gets plugins: what the sources offer,
+the problems of the last start, the source list and the plugin folder. **Plugin
+settings** holds one card per loaded plugin, all on one page; a card's first row
+is the plugin's on switch, and while it is off the card folds to that row.
 
 Settings store per plugin `id`, `enabled`, `keywords`, `routes` (route id to its
 keywords), `in_search`, `refresh_minutes` (1–1440), `boost` (-100–100) and
@@ -623,7 +628,7 @@ changes at the next start says so. A plugin with `requires` shows the command th
 installs those packages into WinLauncher's environment (`pipx inject` for a pipx
 installation, else `python -m pip install` on WinLauncher's interpreter).
 
-- **Install** and **Update** (remote) ask for confirmation, install the packages,
+- **Install and activate** and **Update** (remote) ask for confirmation, install the packages,
   then copy the folder into `<data>/plugins` with an `installed-from.txt` naming
   the source, replacing an older copy in one rename. When the packages fail,
   nothing is copied and the message names the command to run.

@@ -1,4 +1,4 @@
-"""The Plugins settings page: one card per plugin with its options, status and commands."""
+"""The plugin pages of Settings: getting plugins, and one card per plugin to set it up."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -29,7 +29,7 @@ from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.settings import NumberField, _note, _sized, _split_commas, _with_unit
 from winlauncher.ui.source_settings import SourceSection
-from winlauncher.ui.widgets import Card, EntryList, ToggleSwitch, line_icon, section_title
+from winlauncher.ui.widgets import Card, ToggleSwitch, section_title
 
 KEYWORD_FIELD_WIDTH = 160  # Room for a few keywords, separated by commas.
 TEXT_OPTION_WIDTH = 220
@@ -110,6 +110,7 @@ class PluginCard(Card):
             self.command_buttons.append(button)
         self.add_row("Status", "", actions)
         self.add_block("", "", self.status)
+        self.fold_under(self.enabled)
         self.show_status()
 
     def _add_option(self, option: PluginOption, value: object) -> None:
@@ -146,22 +147,6 @@ class PluginCard(Card):
             boost=self.boost.value(),
             options=options,
         )
-
-    def summary(self) -> str:
-        """One line for the plugin list: on or off, keyword and item count."""
-        saved = self.scheduler.host.config(self.plugin.id, self.scheduler.settings().plugins)
-        if not saved.enabled:
-            return "Off"
-        state = self.scheduler.host.state(self.plugin.id)
-        parts = ["On"]
-        if saved.keywords:
-            noun = "keyword" if len(saved.keywords) == 1 else "keywords"
-            parts.append(f"{noun} {', '.join(saved.keywords)}")
-        if state.needs_setup:
-            parts.append("needs setup")
-        elif state.refreshed is not None:
-            parts.append(f"{len(state.items):,} items")
-        return "  ·  ".join(parts)
 
     def show_status(self) -> None:
         state = self.scheduler.host.state(self.plugin.id)
@@ -206,8 +191,13 @@ class PluginCard(Card):
         self.show_status()
 
 
-class PluginPage(QObject):
-    """The plugin cards of the Settings dialog; its `sections` go on the page."""
+class PluginPages(QObject):
+    """The two plugin pages of the Settings dialog.
+
+    `install_sections` installs plugins and lists where they come from;
+    `settings_sections` holds one card per loaded plugin, so setting plugins up
+    stays apart from getting them.
+    """
 
     def __init__(
         self,
@@ -230,44 +220,48 @@ class PluginPage(QObject):
             for plugin in host.plugins
         ]
         self.data_folder = Path(data_folder) if data_folder else None
-        self.list = EntryList("Installed plugins")
-        for card in self.cards:
-            self.list.add_entry(_plugin_icon(card.plugin), "")
-        self.list.currentRowChanged.connect(self.select)
-        overview = Card()
-        overview.add_block(
-            "Installed plugins",
-            "Choose a plugin to set it up. Add more under Available plugins below, or copy "
-            "a plugin folder into the plugin folder.",
-            self.list,
-        )
-        if self.data_folder is not None:
-            folder_button = QPushButton("Open plugin folder")
-            folder_button.clicked.connect(self.open_folder)
-            overview.add_row("Plugin folder", str(self.data_folder), folder_button)
-        self.sections: list[QWidget] = [overview]
-        if host.problems:
-            self.sections.append(_note("Not loaded: " + " ".join(host.problems)))
-        self.sections.extend(self.cards)
         self.source_section = (
             SourceSection(settings, sources, self.loaded_folders, self.turn_on, restart, self)
             if sources is not None
             else None
         )
+        self.install_sections = self._install_sections()
+        self.settings_sections: list[QWidget] = list(self.cards) or [
+            _note(
+                "No plugin is loaded. Install or activate one under Plugins; it loads at the "
+                "next start."
+            )
+        ]
+        scheduler.status_changed.connect(self.show_status)
+        self.show_status()
+
+    def _install_sections(self) -> list[QWidget]:
+        sections: list[QWidget] = []
         if self.source_section is not None:
-            self.sections.extend(self.source_section.sections)
-            self.sections.append(section_title("Where plugins come from"))
-            self.sections.append(self.source_section.sources_card)
-        self.sections.append(
+            sections.extend(self.source_section.sections)
+        if self.host.problems:
+            sections.append(_note("Not loaded: " + " ".join(self.host.problems)))
+        if self.source_section is not None:
+            sections.append(section_title("Where plugins come from"))
+            sections.append(self.source_section.sources_card)
+        if self.data_folder is not None:
+            folder_button = QPushButton("Open plugin folder")
+            folder_button.clicked.connect(self.open_folder)
+            folder = Card()
+            folder.add_row(
+                "Plugin folder",
+                f"{self.data_folder}\nInstalled plugins lie here; a plugin folder you copy in "
+                "loads as well.",
+                folder_button,
+            )
+            sections.append(folder)
+        sections.append(
             _note(
                 "Plugins are loaded once at start, so installing, activating or removing one "
                 "takes effect after a restart. Writing your own is documented in docs/plugins.md."
             )
         )
-        scheduler.status_changed.connect(self.show_status)
-        self.show_status()
-        if self.cards:
-            self.list.setCurrentRow(0)
+        return sections
 
     def loaded_folders(self) -> set[str]:
         """Path keys of the folders the loaded plugins came from."""
@@ -281,19 +275,13 @@ class PluginPage(QObject):
             if loaded_from is not None and path_key(loaded_from) == path_key(folder):
                 card.enabled.setChecked(True)
 
-    def select(self, row: int) -> None:
-        """Show the settings of the plugin in `row` only."""
-        for index, card in enumerate(self.cards):
-            card.setVisible(index == row)
-
     def open_folder(self) -> None:
         self.data_folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_folder)))
 
     def show_status(self) -> None:
-        for row, card in enumerate(self.cards):
+        for card in self.cards:
             card.show_status()
-            self.list.item(row).setText(f"{card.plugin.label}\n{card.summary()}")
 
     def configs(self) -> tuple[PluginConfig, ...]:
         """The edited plugins, plus configured plugins that are not installed now."""
@@ -330,8 +318,3 @@ def _source_location(source: PluginSource) -> str:
     if source.path is not None:
         return str(source.path)
     return f"Installed package {source.origin}"
-
-
-def _plugin_icon(plugin: Plugin) -> QIcon:
-    icon = QIcon(plugin.icon) if plugin.icon else QIcon()
-    return icon if not icon.isNull() else line_icon("plug")

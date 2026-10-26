@@ -428,11 +428,11 @@ class SettingsDialog(QDialog):
         self.resize(DIALOG_SIZE)
         self.websites = WebsiteList(settings.websites, website_icons)
         self.menu_commands = CommandList(settings.menu_commands)
-        self.plugin_page = None
+        self.plugin_pages = None
         if plugins is not None:
-            from winlauncher.ui.plugin_settings import PluginPage  # It builds on this module.
+            from winlauncher.ui.plugin_settings import PluginPages  # It builds on this module.
 
-            self.plugin_page = PluginPage(
+            self.plugin_pages = PluginPages(
                 settings,
                 plugins,
                 self._settings_without_plugins,
@@ -489,12 +489,18 @@ class SettingsDialog(QDialog):
                     (
                         "plug",
                         "Plugins",
-                        "Chats and contacts from other programs as results. A keyword puts one "
-                        "plugin on top, @keyword answers from it alone.",
-                        self.plugin_page.sections,
+                        "Chats and contacts from other programs as results: install them here.",
+                        self.plugin_pages.install_sections,
+                    ),
+                    (
+                        "gear",
+                        "Plugin settings",
+                        "Each plugin's switch, keywords and options. A keyword puts one plugin "
+                        "on top, @keyword answers from it alone.",
+                        self.plugin_pages.settings_sections,
                     ),
                 )
-                if self.plugin_page is not None
+                if self.plugin_pages is not None
                 else ()
             ),
             (
@@ -869,9 +875,9 @@ class SettingsDialog(QDialog):
     def read_settings(self) -> Settings:
         """Raise ValueError with a user-facing message for invalid input."""
         settings = self._settings_without_plugins()
-        if self.plugin_page is None:
+        if self.plugin_pages is None:
             return settings
-        return self.plugin_page.apply_to(settings)
+        return self.plugin_pages.apply_to(settings)
 
     def _settings_without_plugins(self) -> Settings:
         advanced = parse_advanced_rules(self.rule_json.toPlainText())
