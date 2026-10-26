@@ -58,6 +58,7 @@ flowchart TD
 | `plugins/budget.py` | Times each plugin's ranking; leaves plugins over the time limit out of ordinary searches |
 | `plugins/search.py` | Plugin keywords, which queries plugins answer, item ranking, merging with file hits |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
+| `platform/launcher.py`, `loader/` | Branded Windows process, its per-installation resources, PATH migration and application commands |
 | `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |
 | `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
@@ -76,6 +77,31 @@ flowchart TD
 temporary SQLite catalogs and ordinary filesystem fixtures. The search package
 translates queries into SQL itself (`candidates.py`), so the catalog store does not
 depend on the query language.
+
+## Windows application host
+
+On Windows x64, the version-independent Rust host loads the existing CPython DLL
+and calls `Py_Main` in its own process. Qt therefore owns a tray icon belonging to
+`winlauncher.exe`, whose icon and file description identify WinLauncher. The host
+has no dependency on the optional Rust search engine or on a particular Python
+minor version. Its checked-in binary and source fingerprint ship as package data;
+source installs need no compiler, and app releases reuse the same host binary.
+
+`platform/launcher.py` configures an installed copy in the user's `.local/bin`
+(or `XDG_BIN_HOME`). Windows resources hold the real interpreter, base Python DLL,
+package directory and entry module. No separate configuration file is needed.
+CPython's `__PYVENV_LAUNCHER__` preserves the real environment's `sys.executable`;
+pip and Python subprocesses use that interpreter. Application starts use
+`application_command` instead. The GUI host forwards arguments without shell
+parsing, and Python's exit code becomes the process exit code.
+
+The elected instance finishes a pending update, installs or refreshes the host,
+migrates an owned Startup shortcut, and hands a legacy Python start to the host.
+The replacement waits for the same data-directory lock. Migration preserves the
+shortcut's original arguments and custom data directory, never enables absent
+autostart, and never replaces an unrelated command or shortcut. Updating a running
+host renames the old image aside; later starts remove it after Windows releases it.
+An installation failure is logged and the Python application remains usable.
 
 ## Catalog indexing
 
