@@ -78,7 +78,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.14.3"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.14.4"
 winlauncher --show
 ```
 
@@ -401,7 +401,8 @@ Telegram and a template for your own:
 
 Choose a plugin under **Available plugins**, click, and restart when WinLauncher
 offers it: the plugin is on. Its keywords and options are under **Plugin
-settings**, one card per plugin that folds when you switch the plugin off. Nothing from a source loads before you choose it, and a
+settings**, one card per plugin: folded to its icon, name and switch until you
+open it, and WinLauncher remembers which ones you opened. Nothing from a source loads before you choose it, and a
 plugin that fails to load or throws is listed as a problem and never takes
 WinLauncher down. Repositories need [git](https://git-scm.com/); private ones use
 your saved git credentials. [docs/plugins.md](docs/plugins.md) explains sources,

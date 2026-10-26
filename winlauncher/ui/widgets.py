@@ -19,8 +19,9 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Qt,
+    Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QShowEvent
+from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPixmap, QShowEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -34,11 +35,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from winlauncher.ui.theme import colors
+from winlauncher.ui.theme import colors, theme
 
 ICONS = Path(__file__).with_name("assets") / "icons"
 ICON_TINT_PLACEHOLDER = "#000000"  # The stroke color the SVG files are drawn with.
@@ -54,6 +56,8 @@ INFO_DIALOG_MARGIN = 24
 INFO_HEADER_SPACING = 16  # Between the icon and the texts.
 ROW_SPACING = 16  # Between a row's text and its control.
 ENTRY_ICON_SIZE = QSize(28, 28)
+HEADER_ICON_SIZE = 28  # The icon before a foldable card's title.
+FOLD_ICON_SIZE = QSize(16, 16)
 ENTRY_ROW_HEIGHT = 44  # Two lines, such as a name and its state.
 ENTRY_VISIBLE_ROWS = 5  # More entries scroll.
 
@@ -240,16 +244,30 @@ class Card(QFrame):
         self._append(block)
         return block
 
-    def fold_under(self, switch: QCheckBox) -> None:
-        """Show only the first row while `switch` is off, such as a plugin's on switch.
+    def add_header(self, icon: QIcon, title: str, description: str, control: QWidget) -> FoldButton:
+        """The first row of a foldable card: icon, texts, a fold button, then `control`.
 
-        Call it once all rows are added: it folds the rows the card has by then.
+        The rows added after it are the card's details; `show_details` shows or
+        hides them. Clicking the texts works like the fold button.
         """
-        switch.toggled.connect(self._show_folded_rows)
-        self._show_folded_rows(switch.isChecked())
+        header = _ClickableRow()
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(0, 10, 0, 10)
+        layout.setSpacing(ROW_SPACING)
+        picture = QLabel()
+        picture.setPixmap(icon.pixmap(HEADER_ICON_SIZE, HEADER_ICON_SIZE))
+        layout.addWidget(picture, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(_texts(title, description), 1)
+        fold = FoldButton(f"Details of {title}")
+        header.clicked.connect(fold.click)
+        layout.addWidget(fold, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._append(header)
+        return fold
 
-    def _show_folded_rows(self, visible: bool) -> None:
-        for index in range(1, self._layout.count()):  # Row 0 holds the switch.
+    def show_details(self, visible: bool) -> None:
+        """Show or hide every row below the header."""
+        for index in range(1, self._layout.count()):
             self._layout.itemAt(index).widget().setVisible(visible)
 
     def _append(self, widget: QWidget) -> None:
@@ -259,6 +277,39 @@ class Card(QFrame):
             divider.setFixedHeight(1)
             self._layout.addWidget(divider)
         self._layout.addWidget(widget)
+
+
+class FoldButton(QToolButton):
+    """A chevron that unfolds a card's details while checked."""
+
+    def __init__(self, accessible_name: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("foldButton")
+        self.setAccessibleName(accessible_name)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setIconSize(FOLD_ICON_SIZE)
+        self.toggled.connect(self._use_icon)
+        theme().changed.connect(self._use_icon)
+        self._use_icon()
+
+    def _use_icon(self) -> None:
+        self.setIcon(line_icon("chevron-down" if self.isChecked() else "chevron-right"))
+
+
+class _ClickableRow(QWidget):
+    """A row that reports clicks on its empty parts and texts."""
+
+    clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override.
+        if event.button() is Qt.MouseButton.LeftButton and self.rect().contains(event.pos()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 
 class EntryList(QListWidget):

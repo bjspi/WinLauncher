@@ -414,6 +414,7 @@ class SettingsDialog(QDialog):
         plugins: PluginScheduler | None = None,
         plugin_folder: str = "",
         plugin_sources: SourceWatcher | None = None,
+        plugin_cards: Path | None = None,
         restart: Callable[[], None] | None = None,
     ):
         super().__init__(parent)
@@ -440,6 +441,7 @@ class SettingsDialog(QDialog):
                 self,
                 plugin_sources,
                 self.save_and_restart if restart is not None else None,
+                plugin_cards,
             )
         self.pages = QStackedWidget()
         self.nav = QListWidget()
