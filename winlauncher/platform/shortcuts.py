@@ -54,7 +54,13 @@ def write_item_shortcut(path: Path, item: Any) -> None:
 
 
 def write_target_shortcut(
-    path: Path, target: str, arguments: str = "", icon: tuple[str, int] | None = None
+    path: Path,
+    target: str,
+    arguments: str = "",
+    icon: tuple[str, int] | None = None,
+    *,
+    description: str = "",
+    working_directory: str = "",
 ) -> None:
     """A shortcut that runs `target` with `arguments`, showing `icon` (file, index)."""
     link = _new_link()
@@ -63,7 +69,20 @@ def write_target_shortcut(
         link.SetArguments(arguments)
     if icon is not None:
         link.SetIconLocation(*icon)
+    if description:
+        link.SetDescription(description)
+    if working_directory:
+        link.SetWorkingDirectory(working_directory)
     _save(link, path)
+
+
+def load_shortcut(path: Path) -> Any:
+    """Load an IShellLink; the caller must release it before uninitializing COM."""
+    import pythoncom
+
+    link = _new_link()
+    link.QueryInterface(pythoncom.IID_IPersistFile).Load(str(path))
+    return link
 
 
 def _new_link() -> Any:

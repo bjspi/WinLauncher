@@ -3,7 +3,8 @@
 The shortcut file itself is the source of truth. WinLauncher only ever changes a
 shortcut it recognizes as its own and refuses to touch an unrelated one.
 
-COM objects are created and released inside `_with_wscript_shell`, before the
+Uses Windows' IShellLink directly, without loading Windows Script Host.
+COM objects are created and released inside `_with_shortcut`, before the
 apartment is uninitialized; exceptions never carry COM references out of it.
 """
 
@@ -16,7 +17,9 @@ import tempfile
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TypeVar
+
+from winlauncher.platform.shortcuts import load_shortcut, write_target_shortcut
 
 SHORTCUT_NAME = "WinLauncher.lnk"
 SHORTCUT_DESCRIPTION = "WinLauncher startup shortcut"
@@ -68,7 +71,7 @@ class StartupShortcut:
         path = self.path
         if not path.exists():
             return ShortcutState.MISSING
-        description, arguments = _with_wscript_shell(lambda shell: _read_shortcut(shell, path))
+        description, arguments = _with_shortcut(lambda: _read_shortcut(path))
         owned = description == SHORTCUT_DESCRIPTION and arguments.startswith(
             subprocess.list2cmdline(MODULE_ARGUMENTS[:2])
         )
@@ -80,16 +83,17 @@ class StartupShortcut:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="winlauncher-", dir=path.parent) as folder:
             temporary = Path(folder) / path.name
-            _with_wscript_shell(lambda shell: self._save_shortcut(shell, temporary))
+            _with_shortcut(lambda: self._save_shortcut(temporary))
             os.replace(temporary, path)
 
-    def _save_shortcut(self, shell: Any, target: Path) -> None:
-        shortcut = shell.CreateShortcut(str(target))
-        shortcut.TargetPath = str(_windowless_python())
-        shortcut.Arguments = self.launch_arguments()
-        shortcut.WorkingDirectory = str(PACKAGE_PARENT)
-        shortcut.Description = SHORTCUT_DESCRIPTION
-        shortcut.Save()
+    def _save_shortcut(self, target: Path) -> None:
+        write_target_shortcut(
+            target,
+            str(_windowless_python()),
+            self.launch_arguments(),
+            description=SHORTCUT_DESCRIPTION,
+            working_directory=str(PACKAGE_PARENT),
+        )
 
 
 def _windowless_python() -> Path:
@@ -105,28 +109,27 @@ def _user_startup_folder() -> Path:
     return Path(shell.SHGetKnownFolderPath(shellcon.FOLDERID_Startup))
 
 
-def _read_shortcut(shell: Any, path: Path) -> tuple[str, str]:
-    shortcut = shell.CreateShortcut(str(path))
-    return str(shortcut.Description), str(shortcut.Arguments)
+def _read_shortcut(path: Path) -> tuple[str, str]:
+    shortcut = load_shortcut(path)
+    return shortcut.GetDescription(), shortcut.GetArguments()
 
 
-def _with_wscript_shell(action: Callable[[Any], _Result]) -> _Result:
+def _with_shortcut(action: Callable[[], _Result]) -> _Result:
     import pythoncom
 
     pythoncom.CoInitialize()
     try:
-        return _call_with_shell(action)
+        return _call_shortcut(action)
     finally:
         pythoncom.CoUninitialize()
 
 
-def _call_with_shell(action: Callable[[Any], _Result]) -> _Result:
+def _call_shortcut(action: Callable[[], _Result]) -> _Result:
     """Run `action`; its frames and COM objects are gone when this function returns."""
     import pywintypes
-    import win32com.client
 
     try:
-        return action(win32com.client.Dispatch("WScript.Shell"))
+        return action()
     except pywintypes.com_error as exc:
         message = f"Windows could not access the Startup shortcut: {exc.strerror}"
     # Raised outside the except block, so no traceback keeps COM objects alive.

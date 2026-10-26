@@ -84,6 +84,10 @@ Python memory for this corpus; cache preparation runs on a background worker.
 
 ## GitHub builds and releases
 
+CI enables `PYTHONFAULTHANDLER=1` for native crash tracebacks. To investigate a
+local Windows/COM process abort, run `python -X faulthandler -m unittest discover
+-s tests -v`; an isolated successful rerun does not establish the cause of a crash.
+
 [CI](https://github.com/bjspi/WinLauncher/actions/workflows/ci.yml) runs on pushes to
 `main`, pull requests and manual dispatch. It checks Python style, Rust formatting
 and Clippy, runs the Windows tests with each engine, tests the Rust wheel on

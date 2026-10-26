@@ -420,5 +420,6 @@ periodic Git work off the GUI thread. `GCM_INTERACTIVE=Never` and
 - SQLite rather than another database dependency.
 - Qt Widgets via PySide6; Windows integration via ctypes and pywin32.
 - No elevation, shell extension, service or scheduled task. Autostart is an
-  ordinary per-user Startup shortcut created only on request.
+  ordinary per-user Startup shortcut created only on request, using the shared
+  `IShellLink` adapter without Windows Script Host.
 - Original Python implementation and artwork.
