@@ -11,7 +11,7 @@ import heapq
 import re
 import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
 from winlauncher.catalog.model import normalize
@@ -40,8 +40,10 @@ ONLY_PLUGIN_PREFIX = "@"
 # the words of the same query keep matching loosely.
 _HAS_DIGIT = re.compile(r"\d")
 # Ranking runs in Python on a search worker, and Python runs one thread at a time.
-# After this many items it lets the GUI thread run and stops a search typed over.
-CHECKPOINT_ITEMS = 256
+# Give the GUI a real turn after this much filtering and matching work; sleep(0)
+# can immediately reacquire the interpreter and starve Qt's Python callbacks.
+CHECKPOINT_INTERVAL_S = 0.005
+CHECKPOINT_PAUSE_S = 0.001
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,14 +137,30 @@ class SearchableItem:
     searchable: str  # All of their normalized text, for the candidate test.
 
 
-def searchable_items(items: Iterable[PluginItem]) -> tuple[SearchableItem, ...]:
-    """Prepare a plugin's items for searching; called once per refresh."""
+def searchable_items(
+    items: Iterable[PluginItem], *, prepare: bool = True
+) -> tuple[SearchableItem, ...]:
+    """Prepare a plugin's items for searching; called once per refresh.
+
+    `prepare` also computes the word forms fuzzy matching needs, which otherwise
+    the first search after each refresh would; see `prepare_forms`.
+    """
     prepared = []
     for position, item in enumerate(items):
         forms = (NameForms(item.name), *(NameForms(word) for word in item.keywords if word))
         text = " ".join(form.normalized for form in forms)
         prepared.append(SearchableItem(item, position, forms, text))
-    return tuple(prepared)
+    result = tuple(prepared)
+    if prepare:
+        prepare_forms(result)
+    return result
+
+
+def prepare_forms(items: Iterable[SearchableItem]) -> None:
+    """Compute the word forms of `items` now, on a worker, rather than while typing."""
+    for entry in items:
+        for form in entry.forms:
+            form.prepare()
 
 
 def literal_patterns(patterns: Iterable[str]) -> tuple[re.Pattern[str], ...]:
@@ -171,6 +189,8 @@ def rank_items(
     as a ticket key, and must therefore be matched in one piece. A set `cancel`
     stops the ranking at its next checkpoint and leaves no hits.
     """
+    if cancel is not None and cancel.is_set():
+        return []
     if not query.terms:
         return [
             PluginHit(
@@ -184,22 +204,16 @@ def rank_items(
         ]
     loose = _loose_terms(query, literal)
     hits = []
-    for checked, entry in enumerate(_candidates(items, query, loose)):
-        if checked % CHECKPOINT_ITEMS == 0 and _stopped(cancel):
-            return []
+    for entry in _candidates(items, query, loose, cancel):
         text = _text_relevance(entry, query, loose)
         if text is None:
             continue
         points, reason = text
         score = points + position_bonus(entry.position) + boost
         hits.append(PluginHit(plugin_id, label, entry.item, score, reason))
+    if cancel is not None and cancel.is_set():
+        return []
     return heapq.nlargest(limit, hits, key=lambda hit: hit.score)
-
-
-def _stopped(cancel: threading.Event | None) -> bool:
-    """A checkpoint: yield to the GUI thread, then tell whether the search was typed over."""
-    time.sleep(0)  # Releases the interpreter, so the search bar keeps painting.
-    return cancel is not None and cancel.is_set()
 
 
 def position_bonus(position: int) -> float:
@@ -225,35 +239,54 @@ def _loose_terms(query: SearchQuery, literal: Sequence[re.Pattern[str]]) -> froz
 
 
 def _candidates(
-    items: Sequence[SearchableItem], query: SearchQuery, loose: frozenset[str]
-) -> Sequence[SearchableItem]:
+    items: Sequence[SearchableItem],
+    query: SearchQuery,
+    loose: frozenset[str],
+    cancel: threading.Event | None = None,
+) -> Iterator[SearchableItem]:
     """The items that can possibly match, decided by one cheap test per term.
 
     The catalog never ranks every entry either: its candidate SQL asks for
     `LIKE '%term%'`, and for the fuzzy pass for the subsequence `'%a%b%c%'`, so
     only those rows reach the Python matcher. Here the same two tests are a
-    substring check and a compiled pattern, both running in C, which keeps the
-    expensive matching for the few items that can score at all. Every test stays a
-    superset of `match_term`, so the hits are the same either way.
+    substring check and successive `str.find` calls, without regex backtracking.
+    Filtering streams into matching, sharing its timed checkpoints even when no
+    items match. Every test stays a superset of `match_term`.
     """
     tests = []
     for term in query.terms:
         test = _candidate_test(term, term in loose)
-        if test is None:
-            return items  # A wildcard rules nothing out; match every item as before.
-        tests.append(test)
-    return [entry for entry in items if all(test(entry.searchable) for test in tests)]
+        if test is not None:
+            tests.append(test)
+    deadline = time.perf_counter() + CHECKPOINT_INTERVAL_S
+    for entry in items:
+        if time.perf_counter() >= deadline:
+            time.sleep(CHECKPOINT_PAUSE_S)
+            deadline = time.perf_counter() + CHECKPOINT_INTERVAL_S
+        if cancel is not None and cancel.is_set():
+            return
+        if all(test(entry.searchable) for test in tests):
+            yield entry
 
 
-def _candidate_test(term: str, fuzzy: bool) -> Callable[[str], object] | None:
+def _candidate_test(term: str, fuzzy: bool) -> Callable[[str], bool] | None:
     """How `term` can be ruled out cheaply, or None when it cannot be."""
     if is_wildcard(term):
         return None
     if not fuzzy or len(term) < MIN_FUZZY_TERM_LENGTH:
         return lambda text: term in text
-    # Fuzzy matching accepts the letters spread out, so only their order can rule an
-    # item out. Non-greedy, as the shortest run decides whether one exists at all.
-    return re.compile(".*?".join(re.escape(character) for character in term)).search
+
+    def in_order(text: str) -> bool:
+        """Find each letter once; failed alignments never need to be retried."""
+        start = 0
+        for letter in term:
+            position = text.find(letter, start)
+            if position < 0:
+                return False
+            start = position + 1
+        return True
+
+    return in_order
 
 
 def _text_relevance(

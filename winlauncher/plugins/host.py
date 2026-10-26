@@ -39,6 +39,7 @@ from winlauncher.plugins.search import (
     SearchableItem,
     literal_patterns,
     plugins_answer,
+    prepare_forms,
     rank_items,
     searchable_items,
 )
@@ -191,8 +192,12 @@ class PluginHost:
 
     # Items ----------------------------------------------------------------------
 
-    def load_cached(self) -> None:
-        """Read the items each plugin listed last time; a broken cache is ignored."""
+    def load_cached(self) -> bool:
+        """Read the items each plugin listed last time; a broken cache is ignored.
+
+        True when any plugin had items cached; `prepare_cached` then has work to do.
+        """
+        loaded = False
         for plugin_id, entry in self._entries.items():
             path = self.data_dir / plugin_id / CACHE_FILE
             if not path.exists():
@@ -205,13 +210,24 @@ class PluginHost:
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 logger.warning("Cached items of plugin %s ignored: %s", plugin_id, exc)
                 continue
-            self._set(entry, replace(entry.state, items=items, refreshed=refreshed))
+            self._set(entry, replace(entry.state, items=items, refreshed=refreshed), prepare=False)
+            loaded = loaded or bool(items)
             logger.info(
                 "Plugin %s cached items loaded: items=%d elapsed_ms=%.0f",
                 plugin_id,
                 len(items),
                 (time.perf_counter() - started) * 1000,
             )
+        return loaded
+
+    def prepare_cached(self) -> None:
+        """Prepare what `load_cached` read for fuzzy matching; runs on a worker.
+
+        Reading the cache stays quick on the UI thread; until this ran, the first
+        search computes what it needs itself.
+        """
+        for entry in self._entries.values():
+            prepare_forms(entry.searchable)
 
     def refresh(
         self, plugin_id: str, config: PluginConfig, cancel: threading.Event | None = None
@@ -287,11 +303,11 @@ class PluginHost:
         (self.data_dir / plugin_id / CACHE_FILE).unlink(missing_ok=True)
         self._set(entry, PluginState())
 
-    def _set(self, entry: _Entry, state: PluginState) -> PluginState:
+    def _set(self, entry: _Entry, state: PluginState, *, prepare: bool = True) -> PluginState:
         """Publish a plugin's new state, preparing its items when they are new ones."""
         searchable = entry.searchable
         if state.items is not entry.state.items:
-            searchable = searchable_items(state.items)
+            searchable = searchable_items(state.items, prepare=prepare)
             self.budget.forget(entry.plugin.id)
         with self._guard:
             entry.state, entry.searchable = state, searchable

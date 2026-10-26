@@ -55,7 +55,13 @@ class PluginScheduler(QObject):
         self._closed = False
 
     def start(self) -> None:
-        self.host.load_cached()
+        if self.host.load_cached():
+            self.tasks.submit(
+                TaskCategory.PLUGIN,
+                self.host.prepare_cached,
+                lambda _result: None,
+                partial(logger.warning, "Cached plugin items not prepared: %s"),
+            )
         self.apply()
 
     def apply(self) -> None:

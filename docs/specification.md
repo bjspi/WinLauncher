@@ -590,13 +590,18 @@ both.
 
 Plugin items are ranked in Python on the search worker, and Python runs one thread
 at a time, so a big plugin makes typing lag even though it searches in the
-background. Ranking therefore yields to the GUI thread every 256 items and stops
-there when the search was typed over, keeping no plugin hits. Each plugin's
+background. Filtering and ranking therefore share checkpoints between items:
+after roughly 5 ms of work the worker pauses for 1 ms to let the GUI thread run.
+Both stages stop when the search was typed over, keeping no plugin hits, including
+when no candidates matched. Fuzzy word boundaries and letter positions are kept
+per item and prepared during refresh; cached items prepare them on a background
+worker after startup. Each plugin's
 ranking is timed; a plugin that takes longer than **Time limit per search**
 (`plugin_time_limit_ms`, 0–1000 ms, default 30, 0 turns it off) in 3 ordinary
 searches in a row is left out of ordinary searches until its items change, such as
 at its next refresh. Its keywords still search it. Its settings card shows the last
-search time and whether it is left out.
+search time and whether it is left out. This limit evaluates completed searches;
+it does not interrupt an individual search after the configured number of milliseconds.
 
 A term that contains a digit names something — a ticket, a version, a phone
 number — and is matched in one piece even in fuzzy mode: `12345` finds the ticket

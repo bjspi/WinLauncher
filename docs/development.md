@@ -64,9 +64,23 @@ and reloads in about 100 ms after a catalog change.
 - `UI event loop delayed: 420 ms search_running=... indexing=... plugins_refreshing=jira`
   — the GUI thread stalled, and what ran meanwhile.
 
-Ranking 6,000 ticket-like items took 4 ms (`hcp-12`), 22 ms (`export`) and 60–75 ms
-(`e`, `anna exp`, `xpt`) on a desktop CPU; filtering candidates is at most 16 ms of
-that, matching the rest.
+Measured on Windows with Python 3.12.1 and PySide6 6.11.1, using 2,170 synthetic
+tickets with three keywords each, 60 results and nine repetitions per query:
+
+| Query | 0.15.0 median | 0.15.1 median |
+| --- | ---: | ---: |
+| `sl` | 74 ms | 33 ms |
+| `sleep` | 55 ms | 21 ms |
+| `timeout` | 60 ms | 7 ms |
+| `connection` | 272 ms | 60 ms |
+
+The same mixed-query workload ran on a worker while a 2 ms Qt timer measured GUI
+event delivery: its largest gap fell from 33 ms to 8.5 ms. A faster ranking alone
+does not prove responsiveness: `sleep(0)` checkpoints can starve Qt's Python
+callbacks, so check event delivery as well as elapsed search time. These timings
+depend on the data and CPU; some queries still exceed the default 30 ms budget.
+Preparing the fuzzy layouts adds about 100 ms per refresh and 15 MiB of retained
+Python memory for this corpus; cache preparation runs on a background worker.
 
 ## GitHub builds and releases
 
