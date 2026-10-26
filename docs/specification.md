@@ -578,8 +578,9 @@ plugin; each plugin's settings card has **Refresh now**. A plugin lists at most 
 and repeated keys are dropped.
 
 Internet reachability is checked at startup and every 15 s on a dedicated worker:
-Windows Network List Manager plus one ICMP echo to Cloudflare DNS `1.1.1.1`, with
-a 1 s timeout. Either success means online; two negative results mean offline;
+Windows Network List Manager plus an HTTPS GET to `https://www.gstatic.com/generate_204`,
+with a 2 s request timeout, expecting HTTP 204. Either success means online; two
+negative results mean offline;
 otherwise the status is unknown. Plugins may read the latest immutable observation
 through `context.internet()`, including the individual probe results and timestamp.
 It is a hint, not a guarantee of access to a particular service or VPN.
