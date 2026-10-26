@@ -172,6 +172,51 @@ kill a thread. Two plugins stuck in `refresh` occupy both plugin workers, and no
 plugin refreshes again until they return. Network calls and subprocesses therefore
 need explicit timeouts, and a long refresh must honor `context.cancel`.
 
+## Internet status and offline pauses
+
+WinLauncher checks Windows' Network List Manager and sends one ICMP echo (ping)
+to Cloudflare's public DNS server `1.1.1.1` at startup and every 15 seconds. The
+ping has a one-second timeout and runs on a separate network worker. No DNS query
+or plugin data is sent. Either successful check means **online**; only when both
+report no connectivity is the status **offline**. Missing or inconclusive checks
+mean **unknown** unless the other check succeeds. A blocked ping alone therefore
+does not mark an otherwise connected computer offline.
+
+**Settings → Plugin settings → All plugins → Pause plugins without internet**
+pauses automatic refreshes while the status is offline. It defaults to off:
+local and VPN-only services may work without public internet. Cached items stay
+searchable, and **Refresh now**, **Refresh catalog**, opening items and plugin
+commands remain available. Already running calls are not interrupted. Queued
+automatic refreshes check the status again before calling the plugin. When
+connectivity returns to online, enabled plugins are refreshed without waiting for
+their normal interval. Unknown status allows automatic refreshes.
+
+Plugins may read the shared status whether or not the pause setting is enabled:
+
+```python
+from winlauncher.plugins.api import InternetStatus, PluginError
+
+
+def refresh(self, context):
+    internet = context.internet()
+    if internet.status == InternetStatus.OFFLINE:
+        # Raise rather than return [], so the launcher's cached items survive.
+        raise PluginError("Offline; keeping the last items.")
+    return self.fetch_items()  # Keep explicit timeouts and normal error handling.
+```
+
+`context.internet()` reads the latest immutable observation, even from an existing
+context during a long refresh. It exposes `status` (`InternetStatus.ONLINE`,
+`OFFLINE`, `UNKNOWN`), `windows_online` and `ping_online` (`bool | None`), and
+`checked_at` (Unix seconds, or `None` before the first check). Reading it never
+starts network I/O. Before the first observation its status is unknown.
+
+This is an optional hint: online does not guarantee that a particular host, VPN,
+proxy or sign-in works. Plugins own their retry policy. They can pause retries
+without increasing their backoff while offline and allow a prompt retry after
+reconnection. WinLauncher cannot reset a plugin's internal backoff; server rate
+limits and authentication errors still need their own handling.
+
 ## Writing a plugin
 
 The interface lives in `winlauncher/plugins/api.py`; the plugin repository has a

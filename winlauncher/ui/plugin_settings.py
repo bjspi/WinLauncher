@@ -229,6 +229,8 @@ class PluginCard(Card):
             parts.append(f"{len(state.items):,} items, listed at {when}{day}.")
         if refreshing:
             parts.append("Refreshing…")
+        elif self.scheduler.paused_offline:
+            parts.append("Automatic refreshes paused: no internet. Refresh now still works.")
         elif state.error:
             parts.append(state.error)
         elif state.refreshed is None:
@@ -319,6 +321,18 @@ class PluginPages(QObject):
         )
         self.time_limit.setAccessibleName("Plugin time limit per search in milliseconds")
         shared = Card()
+        self.pause_offline = ToggleSwitch("Pause automatic plugin refreshes without internet")
+        self.pause_offline.setChecked(settings.plugins_pause_offline)
+        shared.add_row(
+            "Pause plugins without internet",
+            "Pauses automatic refreshes and resumes when internet returns. Cached items and "
+            "manual actions stay available. Leave off for local or VPN-only services.",
+            self.pause_offline,
+        )
+        self.internet_status = QLabel()
+        self.internet_status.setObjectName("rowDescription")
+        self.internet_status.setWordWrap(True)
+        shared.add_row("Internet connection", "Checked every 15 seconds.", self.internet_status)
         shared.add_row(
             "Time limit per search",
             "Plugins search in the background, yet a slow one still makes typing lag. A "
@@ -389,6 +403,8 @@ class PluginPages(QObject):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_folder)))
 
     def show_status(self) -> None:
+        state = self.host.internet
+        self.internet_status.setText(f"Internet: {state.status.value}.")
         for card in self.cards:
             card.show_status()
 
@@ -401,7 +417,10 @@ class PluginPages(QObject):
     def apply_to(self, settings: Settings) -> Settings:
         """`settings` with the edits of these pages: plugins, sources and activations."""
         edited = replace(
-            settings, plugins=self.configs(), plugin_time_limit_ms=self.time_limit.value()
+            settings,
+            plugins=self.configs(),
+            plugin_time_limit_ms=self.time_limit.value(),
+            plugins_pause_offline=self.pause_offline.isChecked(),
         )
         if self.source_section is None:
             return edited

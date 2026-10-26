@@ -27,6 +27,7 @@ class TaskCategory(StrEnum):
     # Plugin source checks and installs: never behind a stuck plugin, and one at a time,
     # so git never changes a source's clone twice at once.
     PLUGIN_SOURCE = "plugin-source"
+    NETWORK = "network"  # Connectivity checks must not wait behind stuck plugins.
 
 
 _POOL_SIZES = {
@@ -36,6 +37,7 @@ _POOL_SIZES = {
     TaskCategory.ACTION: 1,
     TaskCategory.PLUGIN: 2,
     TaskCategory.PLUGIN_SOURCE: 1,
+    TaskCategory.NETWORK: 1,
 }
 _Job = tuple[Future, Callable[[], Any]]
 

@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from winlauncher.catalog.model import normalize
+from winlauncher.connectivity import InternetState, InternetStatus
 from winlauncher.plugins.api import (
     Ask,
     Plugin,
@@ -110,6 +111,11 @@ class PluginHost:
         }
         self._guard = threading.Lock()  # Guards state replacement.
         self.budget = SearchBudget()
+        self.internet = InternetState()
+
+    def internet_state(self) -> InternetState:
+        """An immutable snapshot; existing plugin contexts see later observations too."""
+        return self.internet
 
     @property
     def plugins(self) -> list[Plugin]:
@@ -188,6 +194,7 @@ class PluginHost:
             cancel=cancel or threading.Event(),
             ask=ask,
             log=logging.getLogger(f"winlauncher.plugins.{plugin_id}"),
+            internet=self.internet_state,
         )
 
     # Items ----------------------------------------------------------------------
@@ -230,10 +237,17 @@ class PluginHost:
             prepare_forms(entry.searchable)
 
     def refresh(
-        self, plugin_id: str, config: PluginConfig, cancel: threading.Event | None = None
+        self,
+        plugin_id: str,
+        config: PluginConfig,
+        cancel: threading.Event | None = None,
+        *,
+        pause_when_offline: bool = False,
     ) -> PluginState:
         """List the plugin's items now; runs on a worker. A busy plugin is skipped."""
         entry = self._entries[plugin_id]
+        if pause_when_offline and self.internet.status == InternetStatus.OFFLINE:
+            return entry.state
         if not entry.lock.acquire(blocking=False):
             return entry.state
         try:

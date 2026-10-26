@@ -174,6 +174,8 @@ class Settings:
     plugins: tuple[PluginConfig, ...] = ()
     # A plugin slower than this in ordinary searches is left out of them for a while.
     plugin_time_limit_ms: int = DEFAULT_PLUGIN_TIME_LIMIT_MS
+    # Only automatic refreshes pause; local/VPN-only plugins may still work offline.
+    plugins_pause_offline: bool = False
     # Where plugins come from: git repositories to install from, and local folders.
     plugin_sources: tuple[str, ...] = DEFAULT_SOURCES
     # Plugin folders of local sources, loaded from where they lie. Read once at start.
