@@ -174,12 +174,12 @@ need explicit timeouts, and a long refresh must honor `context.cancel`.
 
 ## Internet status and offline pauses
 
-WinLauncher checks Windows' Network List Manager and sends one ICMP echo (ping)
-to Cloudflare's public DNS server `1.1.1.1` at startup and every 15 seconds. The
-ping has a one-second timeout and runs on a separate network worker. No DNS query
-or plugin data is sent. Either successful check means **online**; only when both
-report no connectivity is the status **offline**. Missing or inconclusive checks
-mean **unknown** unless the other check succeeds. A blocked ping alone therefore
+WinLauncher checks Windows' Network List Manager and requests
+`https://www.gstatic.com/generate_204` at startup and every 15 seconds. The HTTPS
+GET expects HTTP 204, has a two-second request timeout and runs on a separate
+network worker. No plugin data is sent. Either successful check means **online**;
+only when both report no connectivity is the status **offline**. Missing or inconclusive checks
+mean **unknown** unless the other check succeeds. A blocked HTTPS probe alone therefore
 does not mark an otherwise connected computer offline.
 
 **Settings → Plugin settings → All plugins → Pause plugins without internet**
@@ -207,9 +207,10 @@ def refresh(self, context):
 
 `context.internet()` reads the latest immutable observation, even from an existing
 context during a long refresh. It exposes `status` (`InternetStatus.ONLINE`,
-`OFFLINE`, `UNKNOWN`), `windows_online` and `ping_online` (`bool | None`), and
+`OFFLINE`, `UNKNOWN`), `windows_online` and `http_online` (`bool | None`), and
 `checked_at` (Unix seconds, or `None` before the first check). Reading it never
 starts network I/O. Before the first observation its status is unknown.
+The old `ping_online` attribute remains a read-only alias for `http_online`.
 
 This is an optional hint: online does not guarantee that a particular host, VPN,
 proxy or sign-in works. Plugins own their retry policy. They can pause retries

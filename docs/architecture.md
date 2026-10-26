@@ -48,7 +48,7 @@ flowchart TD
 | `settings.py` | Validated settings value object and atomic JSON file |
 | `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
 | `commands.py` | The user's context-menu commands and their command lines |
-| `connectivity.py`, `platform/connectivity.py` | Immutable internet hints; Windows Network List Manager and bounded ICMP echo to public DNS |
+| `connectivity.py`, `platform/connectivity.py` | Immutable internet hints; Windows Network List Manager and an HTTPS request to Google's HTTP 204 endpoint |
 | `plugins/api.py` | The plugin interface: `Plugin`, `PluginItem`, `PluginContext`, options and commands |
 | `plugins/registry.py` | Loads the own plugins folder, activated plugin folders and entry points; `PluginSource` |
 | `plugins/folders.py` | Plugin folders on disk: `plugin.toml` manifests and the three layouts of a source |
