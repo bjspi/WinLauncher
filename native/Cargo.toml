@@ -19,6 +19,10 @@ grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
 grep-matcher = "0.1.9"
 
+[profile.dev]
+debug = 0
+incremental = false
+
 [profile.release]
 lto = "thin"
 
