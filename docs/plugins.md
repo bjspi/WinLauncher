@@ -62,7 +62,7 @@ and, next to it, a `plugin.toml`:
 
 ```text
 telegram\
-    plugin.toml      version, name, description, required packages
+    plugin.toml      version, name, description, icon, required packages
     plugin.py        one or more Plugin subclasses
     assets\          icons and whatever else it needs
 ```
@@ -109,6 +109,7 @@ without running the plugin:
 version = "1.2.0"         # Raise it with every change: installed copies get the update.
 name = "Jira"
 description = "Your open tickets; choosing one opens it in the browser."
+icon = "assets/jira.svg"  # Shown under Available plugins; must lie in the plugin folder.
 requires = ["jira>=3.8"]  # Python packages beside WinLauncher, as pip requirements.
 ```
 

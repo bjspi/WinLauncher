@@ -141,6 +141,20 @@ class SourceLayoutTest(unittest.TestCase):
         self.assertEqual([plugin.name for plugin in contents.plugins], ["good"])
         self.assertIn("bad: requires must be a list", " ".join(contents.problems))
 
+    def test_a_manifest_names_an_icon_inside_its_plugin_folder(self):
+        write_plugin(self.root / "chats", "1.0.0", icon="assets/chats.svg")
+        (self.root / "chats" / "assets").mkdir()
+        (self.root / "chats" / "assets" / "chats.svg").write_text("<svg/>", encoding="utf-8")
+        write_plugin(self.root / "outside", "1.0.0", icon="../chats/assets/chats.svg")
+        write_plugin(self.root / "missing", "1.0.0", icon="assets/none.svg")
+        offered = {plugin.folder.name: plugin for plugin in read_source(self.root).plugins}
+        self.assertEqual(offered["chats"].icon, self.root / "chats" / "assets" / "chats.svg")
+        self.assertIsNone(offered["outside"].icon)  # Never a file outside the plugin.
+        self.assertIsNone(offered["missing"].icon)
+        (self.root / "chats" / "plugin.toml").write_text("icon = 1", encoding="utf-8")
+        with self.assertRaisesRegex(ManifestError, "the icon must be text"):
+            read_manifest(self.root / "chats")
+
     def test_manifests_name_their_mistakes(self):
         (self.root / "plugin.toml").write_text("version = 1", encoding="utf-8")
         with self.assertRaisesRegex(ManifestError, "the version must be text"):
@@ -501,6 +515,22 @@ class SourceWatcherTest(unittest.TestCase):
         section.active = [jira]  # Its source is no longer listed, so it is dropped.
         self.assertEqual(section.source_locations(), (self.repository.location,))
         self.assertEqual(section.active_plugins(), ())
+
+
+class EntryListTest(unittest.TestCase):
+    def test_a_short_list_shows_every_entry_without_scrolling(self):
+        from winlauncher.ui.theme import Appearance, theme
+        from winlauncher.ui.widgets import EntryList, line_icon
+
+        QApplication.instance() or QApplication([])
+        theme().use(Appearance.LIGHT)  # The style sheet gives the list its frame.
+        entries = EntryList("Plugins")
+        self.addCleanup(entries.deleteLater)
+        for name in ("Chats\nInstalled", "Tickets\nActive"):
+            entries.add_entry(line_icon("plug"), name)
+        entries.show()
+        QApplication.processEvents()
+        self.assertEqual(entries.verticalScrollBar().maximum(), 0)
 
 
 class DefaultOnTest(unittest.TestCase):

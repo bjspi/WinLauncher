@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -99,11 +100,6 @@ class SourceSection(QObject):
         self.main_button.clicked.connect(self.run_main_action)
         self.uninstall_button = QPushButton("Uninstall")
         self.uninstall_button.clicked.connect(self.uninstall_selected)
-        self.status = QLabel()
-        self.status.setObjectName("rowDescription")
-        self.status.setWordWrap(True)
-        self.check_button = QPushButton("Check now")
-        self.check_button.clicked.connect(self.watcher.check)
         card = Card()
         card.add_block(
             "Available plugins",
@@ -113,7 +109,6 @@ class SourceSection(QObject):
         )
         actions = _row(self.main_button, self.uninstall_button)
         card.add_block("", "", _stacked(self.details, actions))
-        card.add_block("", "", _beside(self.status, self.check_button))
         return card
 
     def _sources_card(self, settings: Settings) -> Card:
@@ -122,6 +117,11 @@ class SourceSection(QObject):
         self.locations.setFixedHeight(SOURCE_EDITOR_HEIGHT)
         add_folder = QPushButton("Add folder…")
         add_folder.clicked.connect(self.add_folder)
+        self.check_button = QPushButton("Check now")
+        self.check_button.clicked.connect(self.watcher.check)
+        self.status = QLabel()
+        self.status.setObjectName("rowDescription")
+        self.status.setWordWrap(True)
         card = Card()
         card.add_block(
             "Plugin sources",
@@ -130,7 +130,7 @@ class SourceSection(QObject):
             "activate where they lie: a plugin folder, a folder of them, or one with a "
             f"catalog.toml. Checked every {CHECK_INTERVAL_HOURS} hours; save to check an "
             "edited list.",
-            _stacked(self.locations, _row(add_folder)),
+            _stacked(self.locations, _row(add_folder, self.check_button), self.status),
         )
         return card
 
@@ -161,7 +161,7 @@ class SourceSection(QObject):
         self.list.blockSignals(True)
         self.list.clear_entries()
         for row in self.rows:
-            self.list.add_entry(line_icon("plug"), self._row_text(row))
+            self.list.add_entry(_offer_icon(row.offer), self._row_text(row))
         keys = [row.key for row in self.rows]
         index = keys.index(selected.key) if selected is not None and selected.key in keys else 0
         self.list.setCurrentRow(index if self.rows else -1)
@@ -332,6 +332,12 @@ def _outcome_text(outcome: SourceOutcome) -> str:
             return f"{name} is activated and is on from the next start."
 
 
+def _offer_icon(offer: Offer) -> QIcon:
+    """The icon the plugin's manifest names, else the generic plug."""
+    icon = QIcon(str(offer.plugin.icon)) if offer.plugin.icon is not None else QIcon()
+    return icon if not icon.isNull() else line_icon("plug")
+
+
 def _details(offer: Offer) -> str:
     """The description, the packages it needs, and why it cannot be installed if so."""
     manifest = offer.plugin.manifest
@@ -374,13 +380,3 @@ def _stacked(*widgets: QWidget) -> QWidget:
     for widget in widgets:
         layout.addWidget(widget)
     return box
-
-
-def _beside(text: QLabel, button: QPushButton) -> QWidget:
-    row = QWidget()
-    layout = QHBoxLayout(row)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(12)
-    layout.addWidget(text, 1)
-    layout.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
-    return row

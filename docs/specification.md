@@ -615,8 +615,8 @@ offered. Settings written by 0.12 or 0.13 are read as sources: their catalogs an
 plugin folders become sources, and every plugin those folders loaded is activated.
 
 **Available plugins** on the Plugins page lists every offer with its manifest's
-`name` (else the folder name), `version`, `description` and `requires`, and its
-state. A remote plugin is not installed, installed, has an update (the installed
+`name` (else the folder name), `version`, `description`, `requires` and `icon` (an
+image file inside the plugin folder; else a generic plug), and its state. A remote plugin is not installed, installed, has an update (the installed
 version differs), or is blocked because `<data>/plugins` holds a folder of that
 name that did not come from this source; a local one is active or not. A state that
 changes at the next start says so. A plugin with `requires` shows the command that
