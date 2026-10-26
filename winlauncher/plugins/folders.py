@@ -2,7 +2,7 @@
 
 A plugin folder holds `plugin.py` and, optionally, a `plugin.toml` manifest with
 what WinLauncher may know without running the plugin: its version, name,
-description and the Python packages it needs. Both are read in UTF-8 or, as older
+description, icon and the Python packages it needs. Both are read in UTF-8 or, as older
 Windows editors save them, Windows-1252 (see `encoding`).
 
 A plugin source — a local folder, or the clone of a remote repository — offers
@@ -48,6 +48,7 @@ class PluginManifest:
     description: str = ""
     # Python packages to install beside WinLauncher, as pip requirements.
     requires: tuple[str, ...] = ()
+    icon: str = ""  # An image file inside the plugin folder, such as "assets/icon.svg".
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,15 @@ class OfferedPlugin:
     @property
     def version(self) -> str:
         return self.manifest.version
+
+    @property
+    def icon(self) -> Path | None:
+        """The plugin's image file; None without one, or for one outside its folder."""
+        if not self.manifest.icon:
+            return None
+        icon = Path(os.path.normpath(self.folder / self.manifest.icon))
+        inside = icon.resolve().is_relative_to(self.folder.resolve())
+        return icon if inside and icon.is_file() else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +99,7 @@ def read_manifest(folder: Path) -> PluginManifest:
         data = tomllib.loads(read_text(file))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ManifestError(f"{MANIFEST_FILE} is unreadable ({exc}).") from None
-    for key in ("version", "name", "description"):
+    for key in ("version", "name", "description", "icon"):
         if not isinstance(data.get(key, ""), str):
             raise ManifestError(f"the {key} must be text.")
     requires = data.get("requires", [])
@@ -100,6 +110,7 @@ def read_manifest(folder: Path) -> PluginManifest:
         name=data.get("name", ""),
         description=data.get("description", ""),
         requires=tuple(requires),
+        icon=data.get("icon", ""),
     )
 
 

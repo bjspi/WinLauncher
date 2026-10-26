@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     QSize,
     Qt,
 )
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QShowEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -271,8 +271,18 @@ class EntryList(QListWidget):
         self.fit_height()
 
     def fit_height(self) -> None:
+        """Room for every entry up to the limit, so a short list never scrolls.
+
+        The frame comes from the style sheet, which applies only once the list is
+        shown; `showEvent` therefore measures again.
+        """
         rows = min(max(1, self.count()), ENTRY_VISIBLE_ROWS)
-        self.setFixedHeight(rows * (ENTRY_ROW_HEIGHT + 2) + 6)
+        row = ENTRY_ROW_HEIGHT + 2 * self.spacing()
+        self.setFixedHeight(rows * row + 2 * self.frameWidth())
+
+    def showEvent(self, event: QShowEvent) -> None:
+        self.fit_height()
+        super().showEvent(event)
 
 
 def section_title(text: str) -> QLabel:
