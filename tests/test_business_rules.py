@@ -1049,7 +1049,11 @@ class BusinessRulesTest(unittest.TestCase):
         reveal.assert_called_once_with(f'"{explorer}" /select,"{path}"')
 
     def test_settings_round_trip_and_validation(self):
-        settings = replace(self.settings, name_priorities=(NamePriority(".*backup.*", -15, "low"),))
+        settings = replace(
+            self.settings,
+            name_priorities=(NamePriority(".*backup.*", -15, "low"),),
+            plugin_time_limit_ms=0,
+        )
         file = SettingsFile(self.base / "settings.json")
         file.save(settings)
         self.assertEqual(file.load(), settings)
@@ -1059,6 +1063,8 @@ class BusinessRulesTest(unittest.TestCase):
             replace(settings, marker_files=("../marker",))
         with self.assertRaises(ValueError):
             replace(settings, name_priorities=(NamePriority("secret", files="false"),))
+        with self.assertRaises(ValueError):
+            replace(settings, plugin_time_limit_ms=-1)
 
     def test_double_ctrl_rejects_shortcuts_repeats_and_long_holds(self):
         gesture = DoubleCtrlGesture(350)

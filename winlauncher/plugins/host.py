@@ -29,6 +29,7 @@ from winlauncher.plugins.api import (
     SetupRequired,
     no_questions,
 )
+from winlauncher.plugins.budget import SearchBudget, SearchRecord
 from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.registry import Discovery, PluginSource
 from winlauncher.plugins.search import (
@@ -68,6 +69,34 @@ class _Entry:
     lock: threading.Lock = field(default_factory=threading.Lock)  # One call at a time.
 
 
+@dataclass(frozen=True, slots=True)
+class PluginTiming:
+    """How long one plugin's ranking took in one search, for the log."""
+
+    plugin_id: str
+    elapsed_ms: float
+    items: int  # Its items the search looked at.
+    hits: int
+
+    def __str__(self) -> str:
+        return f"{self.plugin_id}={self.elapsed_ms:.1f}ms/{self.items}items/{self.hits}hits"
+
+
+@dataclass(frozen=True, slots=True)
+class PluginSearch:
+    """The plugin hits of one search, how long each plugin took and who was left out."""
+
+    hits: list[PluginHit] = field(default_factory=list)
+    timings: tuple[PluginTiming, ...] = ()
+    left_out: tuple[str, ...] = ()  # Too slow for ordinary searches (`SearchBudget`).
+
+    def summary(self) -> str:
+        """One log field: each plugin's time, item and hit count, then those left out."""
+        parts = [str(timing) for timing in self.timings]
+        parts.extend(f"{plugin_id}=left-out" for plugin_id in self.left_out)
+        return ",".join(parts) or "-"
+
+
 class PluginHost:
     def __init__(self, found: Discovery, data_dir: Path):
         """`data_dir` is WinLauncher's data directory; plugins get folders below it."""
@@ -79,6 +108,7 @@ class PluginHost:
             for plugin in found.plugins
         }
         self._guard = threading.Lock()  # Guards state replacement.
+        self.budget = SearchBudget()
 
     @property
     def plugins(self) -> list[Plugin]:
@@ -90,6 +120,13 @@ class PluginHost:
 
     def state(self, plugin_id: str) -> PluginState:
         return self._entries[plugin_id].state
+
+    def search_record(self, plugin_id: str) -> SearchRecord:
+        return self.budget.record(plugin_id)
+
+    def refreshing(self) -> list[str]:
+        """The plugins whose refresh runs now, for the log of a stalled GUI."""
+        return [plugin_id for plugin_id, entry in self._entries.items() if entry.state.refreshing]
 
     def source(self, plugin_id: str) -> PluginSource:
         """Where the plugin was loaded from, for the settings page."""
@@ -160,6 +197,7 @@ class PluginHost:
             path = self.data_dir / plugin_id / CACHE_FILE
             if not path.exists():
                 continue
+            started = time.perf_counter()
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 items = tuple(_item_from_json(value) for value in data["items"][:MAX_ITEMS])
@@ -168,6 +206,12 @@ class PluginHost:
                 logger.warning("Cached items of plugin %s ignored: %s", plugin_id, exc)
                 continue
             self._set(entry, replace(entry.state, items=items, refreshed=refreshed))
+            logger.info(
+                "Plugin %s cached items loaded: items=%d elapsed_ms=%.0f",
+                plugin_id,
+                len(items),
+                (time.perf_counter() - started) * 1000,
+            )
 
     def refresh(
         self, plugin_id: str, config: PluginConfig, cancel: threading.Event | None = None
@@ -178,10 +222,13 @@ class PluginHost:
             return entry.state
         try:
             self._set(entry, replace(entry.state, refreshing=True))
+            logger.info("Plugin %s refresh started", plugin_id)
             started = time.perf_counter()
             context = self.context(plugin_id, config, cancel)
             try:
-                items = _validated(entry.plugin.refresh(context))
+                listed = entry.plugin.refresh(context)
+                listed_at = time.perf_counter()
+                items = _validated(listed)
             except SetupRequired as exc:
                 # Signed out or never set up: what it listed before is no longer the user's.
                 logger.info("Plugin %s needs setup: %s", plugin_id, exc)
@@ -198,21 +245,41 @@ class PluginHost:
                 )
                 return self._set(entry, failed)
             if context.cancel.is_set():
+                logger.info("Plugin %s refresh cancelled", plugin_id)
                 return self._set(entry, replace(entry.state, refreshing=False))
-            refreshed = time.time()
-            self._write_cache(plugin_id, items, refreshed)
-            logger.info(
-                "Plugin %s refreshed: items=%d elapsed_ms=%.0f",
-                plugin_id,
-                len(items),
-                (time.perf_counter() - started) * 1000,
-            )
-            return self._set(entry, PluginState(items, refreshed))
+            return self._publish(entry, items, started, listed_at)
         finally:
             if entry.state.refreshing:
                 # Even a plugin that raised SystemExit leaves no plugin marked busy.
                 self._set(entry, replace(entry.state, refreshing=False))
             entry.lock.release()
+
+    def _publish(
+        self, entry: _Entry, items: tuple[PluginItem, ...], started: float, listed_at: float
+    ) -> PluginState:
+        """Keep freshly listed items: cache them, prepare them for matching, log the times.
+
+        The plugin's own code ran until `listed_at`; what follows is WinLauncher's
+        work, so the log tells a slow plugin from slow preparation.
+        """
+        validated_at = time.perf_counter()
+        refreshed = time.time()
+        self._write_cache(entry.plugin.id, items, refreshed)
+        cached_at = time.perf_counter()
+        state = self._set(entry, PluginState(items, refreshed))
+        done = time.perf_counter()
+        logger.info(
+            "Plugin %s refreshed: items=%d plugin_ms=%.0f validate_ms=%.0f cache_ms=%.0f "
+            "prepare_ms=%.0f total_ms=%.0f",
+            entry.plugin.id,
+            len(items),
+            (listed_at - started) * 1000,
+            (validated_at - listed_at) * 1000,
+            (cached_at - validated_at) * 1000,
+            (done - cached_at) * 1000,
+            (done - started) * 1000,
+        )
+        return state
 
     def forget(self, plugin_id: str) -> None:
         """Drop the plugin's items, such as after signing out."""
@@ -225,6 +292,7 @@ class PluginHost:
         searchable = entry.searchable
         if state.items is not entry.state.items:
             searchable = searchable_items(state.items)
+            self.budget.forget(entry.plugin.id)
         with self._guard:
             entry.state, entry.searchable = state, searchable
         return state
@@ -242,29 +310,87 @@ class PluginHost:
     # Search and actions -----------------------------------------------------
 
     def search(
-        self, query: SearchQuery | PluginQuery, configs: Sequence[PluginConfig], limit: int
-    ) -> list[PluginHit]:
-        """Hits of one plugin for a plugin query, or of every plugin in ordinary searches."""
+        self,
+        query: SearchQuery | PluginQuery,
+        configs: Sequence[PluginConfig],
+        limit: int,
+        *,
+        cancel: threading.Event | None = None,
+        time_limit_ms: int = 0,
+    ) -> PluginSearch:
+        """Hits of one plugin for a plugin query, or of every plugin in ordinary searches.
+
+        Ordinary searches leave out plugins that ranked too slowly before
+        (`SearchBudget`); a plugin query always ranks its plugin.
+        """
         if isinstance(query, PluginQuery):
             config = self.config(query.plugin_id, configs)
             if not config.enabled:
-                return []
-            return self._rank(config, query.search, limit, query.route)
+                return PluginSearch()
+            return self._search_each(
+                [config],
+                query.search,
+                limit,
+                cancel,
+                time_limit_ms,
+                ordinary=False,
+                route=query.route,
+            )
         if not plugins_answer(query):
-            return []
-        hits: list[PluginHit] = []
+            return PluginSearch()
+        searched, left_out = [], []
         for config in self.enabled(configs):
-            if config.in_search:
-                hits.extend(self._rank(config, query, limit))
-        return hits
+            if not config.in_search:
+                continue
+            if self.budget.allows(config.id, time_limit_ms):
+                searched.append(config)
+            else:
+                left_out.append(config.id)
+        found = self._search_each(searched, query, limit, cancel, time_limit_ms, ordinary=True)
+        return replace(found, left_out=tuple(left_out))
+
+    def _search_each(
+        self,
+        configs: Sequence[PluginConfig],
+        query: SearchQuery,
+        limit: int,
+        cancel: threading.Event | None,
+        time_limit_ms: int,
+        *,
+        ordinary: bool,
+        route: str | None = None,
+    ) -> PluginSearch:
+        """Rank each plugin in turn, timing it; a cancelled search keeps no hits."""
+        hits: list[PluginHit] = []
+        timings = []
+        for config in configs:
+            started = time.perf_counter()
+            items = self._items(config.id, route)
+            ranked = self._rank(config, items, query, limit, cancel)
+            if cancel is not None and cancel.is_set():
+                return PluginSearch()
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            self.budget.note(config.id, elapsed_ms, time_limit_ms, ordinary=ordinary)
+            timings.append(PluginTiming(config.id, elapsed_ms, len(items), len(ranked)))
+            hits.extend(ranked)
+        return PluginSearch(hits, tuple(timings))
+
+    def _items(self, plugin_id: str, route: str | None) -> tuple[SearchableItem, ...]:
+        """The plugin's items as prepared for matching; with a route, only its items."""
+        items = self._entries[plugin_id].searchable
+        if route is None:
+            return items
+        return tuple(searchable for searchable in items if route in searchable.item.routes)
 
     def _rank(
-        self, config: PluginConfig, query: SearchQuery, limit: int, route: str | None = None
+        self,
+        config: PluginConfig,
+        items: Sequence[SearchableItem],
+        query: SearchQuery,
+        limit: int,
+        cancel: threading.Event | None,
     ) -> list[PluginHit]:
         entry = self._entries[config.id]
-        items = entry.searchable
-        if route is not None:
-            items = tuple(searchable for searchable in items if route in searchable.item.routes)
         return rank_items(
             config.id,
             entry.plugin.label,
@@ -273,6 +399,7 @@ class PluginHost:
             boost=config.boost,
             limit=limit,
             literal=entry.literal,
+            cancel=cancel,
         )
 
     def open(self, hit: PluginHit, config: PluginConfig) -> None:

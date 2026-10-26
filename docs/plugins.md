@@ -161,6 +161,12 @@ of the program may trust what it declares:
   in a network call delays only other plugin work and never keeps WinLauncher from
   quitting.
 
+- A plugin whose items take too long to rank — several thousand, say — is left out
+  of ordinary searches after 3 slow searches in a row, until it lists new items;
+  its keywords still search it. **Settings → Plugin settings → Time limit per
+  search** sets the limit (default 30 ms, 0 turns it off). Turning **In every
+  search** off keeps a big plugin to its keywords for good.
+
 What WinLauncher cannot do is interrupt a running plugin, because Python cannot
 kill a thread. Two plugins stuck in `refresh` occupy both plugin workers, and no
 plugin refreshes again until they return. Network calls and subprocesses therefore

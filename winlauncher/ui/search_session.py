@@ -19,7 +19,7 @@ from typing import TypeAlias
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from winlauncher.catalog import long_paths
-from winlauncher.plugins.host import PluginHost
+from winlauncher.plugins.host import PluginHost, PluginSearch
 from winlauncher.plugins.search import PluginQuery, merge_hits, plugin_query
 from winlauncher.search.native_engine import native_availability
 from winlauncher.search.query import SearchQuery
@@ -234,27 +234,42 @@ class SearchSession(QObject):
         started = time.perf_counter()
         hits: list[LauncherHit] = []
         limit = settings.max_results
-        if isinstance(query, PluginQuery) and self.plugins is not None:
-            hits.extend(self.plugins.search(query, settings.plugins, limit))
+        plugins = PluginSearch()
+        if isinstance(query, PluginQuery):
+            plugins = self._search_plugins(query, settings, cancel)
+            hits.extend(plugins.hits)
         elif isinstance(query, WebsiteQuery):
             hits.append(query.target())
         if (files := _file_query(query)) is not None:
             found = self.service.search(files, settings, cancel=cancel)
             # Only a plain search adds every plugin; a keyword already named one.
-            if isinstance(query, SearchQuery) and self.plugins is not None:
-                found = merge_hits(
-                    found, self.plugins.search(files, settings.plugins, limit), limit
-                )
+            if isinstance(query, SearchQuery):
+                plugins = self._search_plugins(files, settings, cancel)
+                found = merge_hits(found, plugins.hits, limit)
             hits.extend(found)
         hits = [] if cancel.is_set() else hits[:limit]
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "Search finished: elapsed_ms=%.1f hits=%d cancelled=%s",
+            "Search finished: elapsed_ms=%.1f hits=%d cancelled=%s plugins=%s",
             elapsed_ms,
             len(hits),
             cancel.is_set(),
+            plugins.summary(),
         )
         return SearchResults(hits, elapsed_ms, _missing_files(hits))
+
+    def _search_plugins(
+        self, query: SearchQuery | PluginQuery, settings: Settings, cancel: threading.Event
+    ) -> PluginSearch:
+        if self.plugins is None:
+            return PluginSearch()
+        return self.plugins.search(
+            query,
+            settings.plugins,
+            settings.max_results,
+            cancel=cancel,
+            time_limit_ms=settings.plugin_time_limit_ms,
+        )
 
     def _completed(
         self,

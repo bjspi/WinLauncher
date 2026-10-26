@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import heapq
 import re
+import threading
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
@@ -37,6 +39,9 @@ ONLY_PLUGIN_PREFIX = "@"
 # characters are matched in one piece, so `12345` never finds the ticket 52314, while
 # the words of the same query keep matching loosely.
 _HAS_DIGIT = re.compile(r"\d")
+# Ranking runs in Python on a search worker, and Python runs one thread at a time.
+# After this many items it lets the GUI thread run and stops a search typed over.
+CHECKPOINT_ITEMS = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,11 +163,13 @@ def rank_items(
     boost: int = 0,
     limit: int,
     literal: Sequence[re.Pattern[str]] = (),
+    cancel: threading.Event | None = None,
 ) -> list[PluginHit]:
     """The best `limit` items for `query`; no terms keeps the plugin's order.
 
     `literal` are the plugin's patterns for terms that name one of its items, such
-    as a ticket key, and must therefore be matched in one piece.
+    as a ticket key, and must therefore be matched in one piece. A set `cancel`
+    stops the ranking at its next checkpoint and leaves no hits.
     """
     if not query.terms:
         return [
@@ -177,7 +184,9 @@ def rank_items(
         ]
     loose = _loose_terms(query, literal)
     hits = []
-    for entry in _candidates(items, query, loose):
+    for checked, entry in enumerate(_candidates(items, query, loose)):
+        if checked % CHECKPOINT_ITEMS == 0 and _stopped(cancel):
+            return []
         text = _text_relevance(entry, query, loose)
         if text is None:
             continue
@@ -185,6 +194,12 @@ def rank_items(
         score = points + position_bonus(entry.position) + boost
         hits.append(PluginHit(plugin_id, label, entry.item, score, reason))
     return heapq.nlargest(limit, hits, key=lambda hit: hit.score)
+
+
+def _stopped(cancel: threading.Event | None) -> bool:
+    """A checkpoint: yield to the GUI thread, then tell whether the search was typed over."""
+    time.sleep(0)  # Releases the interpreter, so the search bar keeps painting.
+    return cancel is not None and cancel.is_set()
 
 
 def position_bonus(position: int) -> float:

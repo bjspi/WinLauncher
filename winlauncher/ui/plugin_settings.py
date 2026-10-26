@@ -23,10 +23,11 @@ from PySide6.QtWidgets import (
 
 from winlauncher.catalog.model import path_key
 from winlauncher.plugins.api import Plugin, PluginCommand, PluginOption
+from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
 from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig
 from winlauncher.plugins.folders import ManifestError, OfferedPlugin, read_manifest
 from winlauncher.plugins.registry import PluginSource
-from winlauncher.settings import BOOST_RANGE, Settings
+from winlauncher.settings import BOOST_RANGE, PLUGIN_TIME_LIMIT_RANGE_MS, Settings
 from winlauncher.ui.messages import ERROR, INFO, message
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
@@ -222,9 +223,23 @@ class PluginCard(Card):
             parts.append(state.error)
         elif state.refreshed is None:
             parts.append("Not listed yet. Turn it on and save, then use Refresh now.")
+        parts.extend(self._search_status())
         self.status.setText(" ".join(parts))
         saved = self.scheduler.host.config(self.plugin.id, self.scheduler.settings().plugins)
         self.refresh_button.setEnabled(not refreshing and saved.enabled)
+
+    def _search_status(self) -> list[str]:
+        """How long its last search took, and whether it is too slow for every search."""
+        record = self.scheduler.host.search_record(self.plugin.id)
+        parts = []
+        if record.last_ms is not None:
+            parts.append(f"Its last search took {record.last_ms:.0f} ms.")
+        if record.left_out:
+            parts.append(
+                "Too slow for every search, so only its keywords search it until it lists "
+                "new items."
+            )
+        return parts
 
     def _run(self, command: PluginCommand) -> None:
         try:
@@ -289,12 +304,33 @@ class PluginPages(QObject):
             else None
         )
         self.install_sections = self._install_sections()
-        self.settings_sections: list[QWidget] = list(self.cards) or [
-            _note(
-                "No plugin is loaded. Install or activate one under Plugins; it loads at the "
-                "next start."
-            )
+        self.time_limit = _sized(
+            NumberField(PLUGIN_TIME_LIMIT_RANGE_MS, settings.plugin_time_limit_ms, "ms")
+        )
+        self.time_limit.setAccessibleName("Plugin time limit per search in milliseconds")
+        shared = Card()
+        shared.add_row(
+            "Time limit per search",
+            "Plugins search in the background, yet a slow one still makes typing lag. A "
+            f"plugin over this limit in {SLOW_SEARCHES_IN_A_ROW} searches in a row is left "
+            "out of ordinary searches until it lists new items; its keywords still search "
+            "it. 0 turns the limit off.",
+            _with_unit(self.time_limit, "ms"),
+        )
+        self.settings_sections: list[QWidget] = [
+            section_title("All plugins"),
+            shared,
+            section_title("Each plugin"),
         ]
+        self.settings_sections.extend(
+            self.cards
+            or [
+                _note(
+                    "No plugin is loaded. Install or activate one under Plugins; it loads at "
+                    "the next start."
+                )
+            ]
+        )
         scheduler.status_changed.connect(self.show_status)
         self.show_status()
 
@@ -353,8 +389,10 @@ class PluginPages(QObject):
         return (*(card.config() for card in self.cards), *kept)
 
     def apply_to(self, settings: Settings) -> Settings:
-        """`settings` with the edits of this page: plugins, sources and activations."""
-        edited = replace(settings, plugins=self.configs())
+        """`settings` with the edits of these pages: plugins, sources and activations."""
+        edited = replace(
+            settings, plugins=self.configs(), plugin_time_limit_ms=self.time_limit.value()
+        )
         if self.source_section is None:
             return edited
         return replace(
