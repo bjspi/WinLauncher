@@ -6,7 +6,6 @@ decides the term's score.
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -40,6 +39,9 @@ FUZZY_MAX_SCORE = 60
 
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _WORD = re.compile(r"[^\W_]+")
+# What `_word_starts` tests letter by letter, for ASCII names: after a character that
+# is no letter or digit, or a capital after a small letter.
+_ASCII_WORD_START = re.compile(r"(?<=[^A-Za-z0-9])(?=.)|(?<=[a-z])(?=[A-Z])", re.DOTALL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,11 +66,48 @@ class NameForms:
     @cached_property
     def words(self) -> list[str]:
         spaced = _CAMEL_CASE_BOUNDARY.sub(" ", self.original)
+        if spaced.isascii():  # Normalizing ASCII only lowers it; once for all words.
+            return _WORD.findall(spaced.lower())
         return [normalize(word) for word in _WORD.findall(spaced)]
 
     @cached_property
     def initials(self) -> str:
         return "".join(word[0] for word in self.words)
+
+    @cached_property
+    def fuzzy_layout(self) -> FuzzyLayout:
+        """Kept with the name, so items searched on every keystroke prepare it once."""
+        return FuzzyLayout.of(self.original)
+
+    def prepare(self) -> None:
+        """Compute every spelling now rather than during the first search."""
+        _ = self.initials, self.fuzzy_layout
+
+
+@dataclass(frozen=True, slots=True)
+class FuzzyLayout:
+    """What fuzzy scoring needs to know about one name, independent of the term."""
+
+    name: str  # Normalized.
+    letters: frozenset[str]
+    word_starts: frozenset[int]
+    found: dict[str, tuple[int, ...]]  # Filled by `positions` for the letters typed.
+
+    @classmethod
+    def of(cls, original: str) -> FuzzyLayout:
+        name = normalize(original)
+        return cls(name, frozenset(name), frozenset(_word_starts(original)), {})
+
+    def positions(self, letter: str) -> tuple[int, ...]:
+        """Every position of `letter` in the name, ascending."""
+        found = self.found.get(letter)
+        if found is None:
+            at, index = [], self.name.find(letter)
+            while index >= 0:
+                at.append(index)
+                index = self.name.find(letter, index + 1)
+            found = self.found[letter] = tuple(at)
+        return found
 
 
 def match_term(term: str, name: NameForms, path: str | None, fuzzy: bool) -> TextMatch | None:
@@ -98,7 +137,7 @@ def match_term(term: str, name: NameForms, path: str | None, fuzzy: bool) -> Tex
         return TextMatch(ABBREVIATION_SCORE, "Abbreviation")
     if path is not None and term in path:
         return TextMatch(PATH_CONTAINS_SCORE, "Path contains query")
-    if fuzzy_term and (score := fuzzy_score(term, name.original)) is not None:
+    if fuzzy_term and (score := fuzzy_score(term, name.original, name.fuzzy_layout)) is not None:
         return TextMatch(score, "Fuzzy match")
     return None
 
@@ -150,49 +189,52 @@ def _first_matching_folder(
     return None
 
 
-def fuzzy_score(term: str, original: str) -> float | None:
+def fuzzy_score(term: str, original: str, layout: FuzzyLayout | None = None) -> float | None:
     """Best in-order alignment of `term`'s letters in `original`, or None.
 
-    Dynamic programming over (term letter, name position) in O(len(term) ×
-    len(name)). Consecutive letters and word starts score higher; gaps cost a
-    little per skipped character. A running maximum keeps the best earlier
-    alignment, so no quadratic inner loop is needed.
+    Dynamic programming over (term letter, name position) that visits only the
+    positions holding that letter. Consecutive letters and word starts score
+    higher; gaps cost a little per skipped character. A running maximum keeps the
+    best earlier alignment, so no quadratic inner loop is needed. `layout` is
+    `original`'s, when the caller keeps it.
     """
-    name = normalize(original)
-    if not term or len(term) > len(name) or not set(term).issubset(name):
+    layout = layout or FuzzyLayout.of(original)
+    if not term or len(term) > len(layout.name) or not set(term).issubset(layout.letters):
         return None
-    word_starts = _word_starts(original)
     impossible = float("-inf")
-    previous = [impossible] * len(name)  # Best score ending at each position.
+    previous: dict[int, float] = {}  # Best score ending at each position, ascending.
     for letter_index, letter in enumerate(term):
-        current = [impossible] * len(name)
+        current: dict[int, float] = {}
+        earlier = list(previous.items())
+        taken = 0
         best_before = impossible  # Best previous score, adjusted for its gap.
-        for position, candidate in enumerate(name):
-            if position:
-                gap_adjusted = previous[position - 1] + (position - 1) * FUZZY_GAP_PENALTY
-                best_before = max(best_before, gap_adjusted)
-            if candidate != letter:
-                continue
-            bonus = FUZZY_WORD_START_BONUS if position in word_starts else 0
+        for position in layout.positions(letter):
+            bonus = FUZZY_WORD_START_BONUS if position in layout.word_starts else 0
             if letter_index == 0:
                 first = FUZZY_FIRST_LETTER - position * FUZZY_FIRST_LETTER_OFFSET_PENALTY
                 current[position] = first + bonus
                 continue
+            while taken < len(earlier) and earlier[taken][0] < position:
+                before, score = earlier[taken]
+                best_before = max(best_before, score + before * FUZZY_GAP_PENALTY)
+                taken += 1
+            if best_before == impossible:
+                continue
             after_gap = best_before - (position - 1) * FUZZY_GAP_PENALTY + FUZZY_LETTER_AFTER_GAP
-            consecutive = (
-                previous[position - 1] + FUZZY_CONSECUTIVE_LETTER if position else impossible
-            )
+            consecutive = previous.get(position - 1, impossible) + FUZZY_CONSECUTIVE_LETTER
             current[position] = max(after_gap, consecutive) + bonus
+        if not current:
+            return None
         previous = current
-    best = max(previous)
-    if not math.isfinite(best):
-        return None
+    best = max(previous.values())
     average = best / len(term) + FUZZY_SCORE_OFFSET
     return max(FUZZY_MIN_SCORE, min(FUZZY_MAX_SCORE, average))
 
 
 def _word_starts(original: str) -> set[int]:
     """Positions in the normalized name that start a word or a camel-case hump."""
+    if original.isascii():  # Normalizing then keeps every position.
+        return {0, *(match.start() for match in _ASCII_WORD_START.finditer(original))}
     starts = {0}
     for index in range(1, len(original)):
         before, char = original[index - 1], original[index]

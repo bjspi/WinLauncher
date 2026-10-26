@@ -35,7 +35,7 @@ from winlauncher.catalog.priority import (
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.platform.gesture import DoubleCtrlGesture
 from winlauncher.search.candidates import Candidate
-from winlauncher.search.matching import fuzzy_score
+from winlauncher.search.matching import FuzzyLayout, _word_starts, fuzzy_score
 from winlauncher.search.query import MatchMode
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import rank
@@ -208,6 +208,33 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertGreater(scores[1], scores[2])
         self.assertGreater(fuzzy_score("abc", "abc.txt"), fuzzy_score("abc", "a___b___c.txt"))
         self.assertIsNone(fuzzy_score("zz", "report.txt"))
+
+    def test_fuzzy_scores_the_same_with_a_kept_layout_and_for_any_alphabet(self):
+        """Plugin items keep each name's layout; ASCII names take a faster path."""
+        names = (
+            "HCP5G1P-3074 KPM sleep mode",
+            "VisualStudioCode.exe",
+            "a_b-c d",
+            "Löhne Übersicht",
+        )
+        for name in names:
+            layout = FuzzyLayout.of(name)
+            for term in ("sl", "hcp", "vsc", "abc", "cd", "lohne", "ub", "zz"):
+                self.assertEqual(fuzzy_score(term, name, layout), fuzzy_score(term, name))
+        # The ASCII path finds the word starts the letter-by-letter test finds.
+        self.assertEqual(_word_starts("ab_cdEf 1G"), {0, 3, 5, 8})
+        self.assertEqual(_word_starts("äb_cdEf 1G"), {0, 3, 5, 8})  # Not ASCII: the general path.
+        for term, name, score in (
+            ("abc", "abc.txt", 41.66666666666667),
+            ("abc", "a___b___c.txt", 41.599999999999994),
+            ("bdg", "Budget Report.txt", 39.43333333333333),
+            ("ssc", "StraßeCode", 39.166666666666664),
+            ("ba", "ab", None),
+            ("aa", "a", None),
+            ("", "name", None),
+        ):
+            self.assertEqual(fuzzy_score(term, name), score)
+            self.assertEqual(fuzzy_score(term, name, FuzzyLayout.of(name)), score)
 
     def test_abbreviations_camel_case_and_keyword_mode(self):
         self.file("VisualStudioCode.exe")

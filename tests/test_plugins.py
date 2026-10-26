@@ -31,6 +31,8 @@ from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.host import CACHE_FILE, PluginHost
 from winlauncher.plugins.registry import Discovery, PluginSource, discover_plugins
 from winlauncher.plugins.search import (
+    CHECKPOINT_INTERVAL_S,
+    CHECKPOINT_PAUSE_S,
     KeywordTarget,
     PluginHit,
     PluginQuery,
@@ -163,6 +165,8 @@ class CandidatePrePassTest(unittest.TestCase):
         "a-b-c",
         "12345",
         "Bernd",
+        "a\nb\nc",
+        "StraßeCode",
     )
 
     def items(self) -> list[PluginItem]:
@@ -176,7 +180,9 @@ class CandidatePrePassTest(unittest.TestCase):
         prepared = searchable_items(items)
         if not skip_pre_pass:
             return rank_items("p", "P", prepared, query(text), limit=50)
-        with patch("winlauncher.plugins.search._candidates", side_effect=lambda items, q, f: items):
+        with patch(
+            "winlauncher.plugins.search._candidates", side_effect=lambda items, q, f, c: items
+        ):
             return rank_items("p", "P", prepared, query(text), limit=50)
 
     def test_the_pre_pass_never_changes_a_result(self):
@@ -199,6 +205,9 @@ class CandidatePrePassTest(unittest.TestCase):
             "ä",
             "*code",
             "ann*",
+            "abc",
+            "sscd",
+            "*code alias",
         ]
         queries += ["".join(random.sample(word, len(word))) for word in words[:20]]
         queries += [random.choice(words)[:2] + random.choice("xyz") for _ in range(20)]
@@ -211,6 +220,56 @@ class CandidatePrePassTest(unittest.TestCase):
                         [(h.item.key, round(h.score, 6), h.reason) for h in fast],
                         [(h.item.key, round(h.score, 6), h.reason) for h in every],
                     )
+
+    def test_filtering_stops_when_cancelled_even_without_candidates(self):
+        prepared = searchable_items([ANNA, BERND, TEAM])
+        cancel = threading.Event()
+        checked = []
+
+        def reject_and_cancel(text: str) -> bool:
+            checked.append(text)
+            cancel.set()
+            return False
+
+        with patch("winlauncher.plugins.search._candidate_test", return_value=reject_and_cancel):
+            with patch("winlauncher.plugins.search._text_relevance") as match:
+                self.assertEqual(
+                    rank_items("p", "P", prepared, query("zz"), limit=10, cancel=cancel), []
+                )
+                match.assert_not_called()
+                self.assertEqual(len(checked), 1)
+
+    def test_cancellation_discards_hits_already_ranked(self):
+        prepared = searchable_items([ANNA, TEAM])
+        cancel = threading.Event()
+
+        def match_and_cancel(*args: object) -> tuple[float, str]:
+            cancel.set()
+            return 100, "Match"
+
+        with patch(
+            "winlauncher.plugins.search._text_relevance", side_effect=match_and_cancel
+        ) as match:
+            self.assertEqual(
+                rank_items("p", "P", prepared, query("anna"), limit=10, cancel=cancel), []
+            )
+            self.assertEqual(match.call_count, 1)
+
+    def test_filtering_and_matching_share_timed_checkpoints(self):
+        prepared = searchable_items([ANNA, BERND])
+        # Matching the first item spends the budget; the next candidate yields,
+        # including when every item is rejected by the filter.
+        for text in ("anna", "zz"):
+            with self.subTest(text=text):
+                with (
+                    patch(
+                        "winlauncher.plugins.search.time.perf_counter",
+                        side_effect=[0, 0, CHECKPOINT_INTERVAL_S, CHECKPOINT_INTERVAL_S],
+                    ),
+                    patch("winlauncher.plugins.search.time.sleep") as sleep,
+                ):
+                    rank_items("p", "P", prepared, query(text), limit=10)
+                    sleep.assert_called_once_with(CHECKPOINT_PAUSE_S)
 
     def test_a_plugin_declares_which_terms_name_its_items(self):
         """`HCP` has no digit, so only the plugin knows it is a ticket prefix."""
@@ -282,10 +341,17 @@ class PluginHostTest(unittest.TestCase):
         self.assertEqual(context.options, {"count": 3})  # Out of bounds: the default.
         self.assertEqual(context.data_dir, self.data / "plugin-data" / "fake")
         restarted = PluginHost(Discovery([FakePlugin()]), self.data)
-        restarted.load_cached()
+        self.assertTrue(restarted.load_cached())
         self.assertEqual(restarted.state("fake").items, (ANNA, BERND, TEAM))
         hits = restarted.search(query("bernd"), (self.config,), 10).hits
         self.assertEqual([hit.item for hit in hits], [BERND])
+        # Cached items wait for a worker to prepare their fuzzy forms; until then
+        # searching computes them itself, with the same hits either way.
+        fuzzy = restarted.search(query("brnd"), (self.config,), 10).hits
+        restarted.prepare_cached()
+        self.assertEqual(restarted.search(query("brnd"), (self.config,), 10).hits, fuzzy)
+        self.assertEqual([hit.item for hit in fuzzy], [BERND])
+        self.assertFalse(PluginHost(Discovery([FakePlugin()]), self.data / "none").load_cached())
 
     def test_failures_keep_the_last_items_but_setup_problems_drop_them(self):
         self.host.refresh("fake", self.config)
@@ -652,6 +718,18 @@ class PluginUiTest(unittest.TestCase):
     def test_refresh_catalog_also_refreshes_enabled_plugins(self):
         self.controller.rescan()
         self.assertEqual(self.tasks.count(self._category("PLUGIN")), 1)
+
+    def test_cached_forms_are_prepared_on_the_plugin_worker(self):
+        from winlauncher.ui.plugins import PluginScheduler
+
+        host = self.controller.plugins
+        scheduler = PluginScheduler(host, self.tasks, lambda: self.controller.settings)
+        self.addCleanup(scheduler.close)
+        with patch.object(host, "prepare_cached") as prepare:
+            scheduler.start()
+            prepare.assert_not_called()
+            self.tasks.finish(self._category("PLUGIN"))
+            prepare.assert_called_once_with()
 
     def test_the_keyword_lists_the_plugins_items_without_hiding_files(self):
         """A short keyword must not take its word away from the ordinary search."""

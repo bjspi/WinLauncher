@@ -251,11 +251,17 @@ prepared items before ranking, so a route costs no refresh of its own.
 Matching a plugin's items is the same text matching the catalog uses, so a chat
 named Anna ranks like a file named Anna and the scores can be merged. Its two
 costs are kept off the keystroke exactly as the catalog keeps them off: the
-normalized spellings of an item are prepared once per refresh (`SearchableItem`,
-built in `_set` only when the items are new ones), and a candidate pre-pass
-mirroring the candidate SQL — a substring test for a literal term, a compiled
-subsequence pattern for a fuzzy one, both running in C — decides which items reach
-the Python matcher at all. Each test is a superset of `match_term`, checked by a
+normalized spellings, word forms and fuzzy layouts of an item are prepared once
+per refresh (`SearchableItem`, built in `_set` only when the items are new ones).
+Cached items defer the word forms and layouts to a plugin worker after startup;
+searching before that finishes computes them on demand. Fuzzy scoring keeps word
+starts and letter positions per name and visits only matching letter positions.
+A candidate stream mirroring the candidate SQL uses a substring test for a literal
+term and successive `str.find` calls for a fuzzy one, avoiding regex backtracking.
+Filtering and matching share checkpoints: after about 5 ms of work, the worker
+sleeps for 1 ms so Qt's Python callbacks can run. Cancellation is checked for
+every item, even when the filter rejects all of them, and discards partial hits.
+Each candidate test is a superset of `match_term`, checked by a
 randomized parity test against ranking every item. This holds a few thousand items
 per plugin inside a keystroke; far beyond that a plugin would need its own Rust
 entry point, which is why plugin items are not in the catalog table: they have no
