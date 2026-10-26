@@ -78,7 +78,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.14.2"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.14.3"
 winlauncher --show
 ```
 
@@ -396,11 +396,12 @@ Telegram and a template for your own:
 
 | Source | You get | You click |
 | --- | --- | --- |
-| 🌐 A git repository — GitHub, your company's git server, SSH | A copy in your plugins folder, its Python packages, and update notices | **Install** · **Update** · **Uninstall** |
+| 🌐 A git repository — GitHub, your company's git server, SSH | A copy in your plugins folder, its Python packages, and update notices | **Install and activate** · **Update** · **Uninstall** |
 | 📁 A folder on this computer or a share | The plugin loads from where it lies — ideal while you write one | **Activate** · **Deactivate** |
 
 Choose a plugin under **Available plugins**, click, and restart when WinLauncher
-offers it: the plugin is on. Nothing from a source loads before you choose it, and a
+offers it: the plugin is on. Its keywords and options are under **Plugin
+settings**, one card per plugin that folds when you switch the plugin off. Nothing from a source loads before you choose it, and a
 plugin that fails to load or throws is listed as a problem and never takes
 WinLauncher down. Repositories need [git](https://git-scm.com/); private ones use
 your saved git credentials. [docs/plugins.md](docs/plugins.md) explains sources,

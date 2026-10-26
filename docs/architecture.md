@@ -61,8 +61,8 @@ flowchart TD
 | `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
-| `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugins settings page |
-| `ui/plugin_sources.py`, `ui/source_settings.py` | Periodic source checks, update notices, installs and activations; the source part of the Plugins page |
+| `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
+| `ui/plugin_sources.py`, `ui/source_settings.py` | Periodic source checks, update notices, installs and activations; the Plugins page: what sources offer, and the sources |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
 | `ui/widgets.py` | The settings look: tinted line icons, animated switches, cards with setting rows, info dialogs |
 | `ui/theme.py` | Light and dark colors, the stylesheet built from them, following the Windows color scheme; painters read `colors()` and refresh kept icons on `Theme.changed` |

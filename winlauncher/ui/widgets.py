@@ -240,6 +240,18 @@ class Card(QFrame):
         self._append(block)
         return block
 
+    def fold_under(self, switch: QCheckBox) -> None:
+        """Show only the first row while `switch` is off, such as a plugin's on switch.
+
+        Call it once all rows are added: it folds the rows the card has by then.
+        """
+        switch.toggled.connect(self._show_folded_rows)
+        self._show_folded_rows(switch.isChecked())
+
+    def _show_folded_rows(self, visible: bool) -> None:
+        for index in range(1, self._layout.count()):  # Row 0 holds the switch.
+            self._layout.itemAt(index).widget().setVisible(visible)
+
     def _append(self, widget: QWidget) -> None:
         if self._layout.count():
             divider = QFrame()

@@ -42,6 +42,8 @@ from winlauncher.ui.widgets import Card, EntryList, line_icon, pick_path
 
 SOURCE_EDITOR_HEIGHT = 72
 RESTART_NOW = "Restart now"
+# A remote plugin is on once installed; the label says so, as one step.
+INSTALL = "Install and activate"
 INSTALL_TEXTS = {
     InstallState.AVAILABLE: "Not installed",
     InstallState.INSTALLED: "Installed",
@@ -96,7 +98,7 @@ class SourceSection(QObject):
         self.details.setObjectName("rowDescription")
         self.details.setWordWrap(True)
         self.details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.main_button = QPushButton("Install")
+        self.main_button = QPushButton(INSTALL)
         self.main_button.clicked.connect(self.run_main_action)
         self.uninstall_button = QPushButton("Uninstall")
         self.uninstall_button.clicked.connect(self.uninstall_selected)
@@ -104,7 +106,8 @@ class SourceSection(QObject):
         card.add_block(
             "Available plugins",
             "Plugins of your sources below. Install one from a repository, or activate one "
-            "from a folder on this computer; it turns on at the next start.",
+            "from a folder on this computer; it turns on at the next start. Set it up under "
+            "Plugin settings.",
             self.list,
         )
         actions = _row(self.main_button, self.uninstall_button)
@@ -184,7 +187,7 @@ class SourceSection(QObject):
             self.main_button.setEnabled(idle)
             return
         update = offer.install is InstallState.UPDATE
-        self.main_button.setText(f"Update to {offer.version}" if update else "Install")
+        self.main_button.setText(f"Update to {offer.version}" if update else INSTALL)
         self.main_button.setEnabled(
             idle and offer.install in (InstallState.AVAILABLE, InstallState.UPDATE)
         )
@@ -254,7 +257,7 @@ class SourceSection(QObject):
 
     def _install(self, row: _Row) -> None:
         offer = row.offer
-        verb = "Update" if offer.install is InstallState.UPDATE else "Install"
+        verb = "Update" if offer.install is InstallState.UPDATE else INSTALL
         if self._confirm(f"{verb} {offer.name}?", row, verb):
             self.watcher.install(offer)
 

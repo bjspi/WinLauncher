@@ -75,13 +75,14 @@ by default. **Available plugins** above shows what they offer.
 
 | Source | Example | What you do |
 | --- | --- | --- |
-| A git repository | `https://github.com/bjspi/WinLauncher-Plugins.git`, `git@git.example.com:team/plugins.git` | **Install**, **Update**, **Uninstall** — the plugin is copied into `%USERPROFILE%\.WinLauncher\plugins\` |
+| A git repository | `https://github.com/bjspi/WinLauncher-Plugins.git`, `git@git.example.com:team/plugins.git` | **Install and activate**, **Update**, **Uninstall** — the plugin is copied into `%USERPROFILE%\.WinLauncher\plugins\` |
 | A folder | `D:\Work\plugins`, `\server\share\plugins` | **Activate**, **Deactivate** — the plugin loads from where it lies, so your edits apply at the next start |
 
 Nothing from a source loads until you install or activate it. Both first install
 the Python packages the plugin needs (`requires`, see below) into WinLauncher's
 environment, and the plugin is on from the next start; the page offers to restart
-right away. WinLauncher checks its sources every 6 hours and announces a new
+right away. Its keywords and options are then under **Settings → Plugin
+settings**, one card per plugin; switching one off folds its card. WinLauncher checks its sources every 6 hours and announces a new
 version of an installed plugin in a tray message.
 
 Repositories are fetched with git, so git must be installed. A private one works
