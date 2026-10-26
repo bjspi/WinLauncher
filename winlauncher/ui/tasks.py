@@ -24,9 +24,9 @@ class TaskCategory(StrEnum):
     INDEX = "index"
     ACTION = "action"
     PLUGIN = "plugin"  # Plugin refreshes and commands, which may wait for the network.
-    # Plugin catalog checks and installs: never behind a stuck plugin, and one at a time,
-    # so git never changes a catalog's clone twice at once.
-    PLUGIN_CATALOG = "plugin-catalog"
+    # Plugin source checks and installs: never behind a stuck plugin, and one at a time,
+    # so git never changes a source's clone twice at once.
+    PLUGIN_SOURCE = "plugin-source"
 
 
 _POOL_SIZES = {
@@ -35,7 +35,7 @@ _POOL_SIZES = {
     TaskCategory.INDEX: 1,
     TaskCategory.ACTION: 1,
     TaskCategory.PLUGIN: 2,
-    TaskCategory.PLUGIN_CATALOG: 1,
+    TaskCategory.PLUGIN_SOURCE: 1,
 }
 _Job = tuple[Future, Callable[[], Any]]
 

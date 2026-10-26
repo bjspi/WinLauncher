@@ -55,7 +55,7 @@ from winlauncher.settings import (
 )
 from winlauncher.ui.commands import CommandList
 from winlauncher.ui.messages import ERROR, WARNING, message
-from winlauncher.ui.plugin_catalogs import CatalogWatcher
+from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
@@ -413,7 +413,8 @@ class SettingsDialog(QDialog):
         website_icons: WebsiteIcons,
         plugins: PluginScheduler | None = None,
         plugin_folder: str = "",
-        plugin_catalogs: CatalogWatcher | None = None,
+        plugin_sources: SourceWatcher | None = None,
+        restart: Callable[[], None] | None = None,
     ):
         super().__init__(parent)
         self.original = settings
@@ -421,6 +422,7 @@ class SettingsDialog(QDialog):
         self.persist = save
         self.set_startup = set_startup
         self.startup_state = startup_state
+        self.restart_app = restart
         self.setObjectName("settings")
         self.setWindowTitle("WinLauncher settings")
         self.resize(DIALOG_SIZE)
@@ -436,7 +438,8 @@ class SettingsDialog(QDialog):
                 self._settings_without_plugins,
                 plugin_folder,
                 self,
-                plugin_catalogs,
+                plugin_sources,
+                self.save_and_restart if restart is not None else None,
             )
         self.pages = QStackedWidget()
         self.nav = QListWidget()
@@ -899,22 +902,28 @@ class SettingsDialog(QDialog):
             appearance=self.appearance.currentData(),
         )
 
-    def save(self) -> None:
+    def save(self) -> bool:
         """Validate and store the edits; the dialog stays open for further changes."""
         self.saved_message.clear()
         try:
             settings = self.read_settings()
         except ValueError as exc:
             message(self, "Check your settings", str(exc), WARNING)
-            return
+            return False
         try:
             if self.persist:
                 self.persist(settings)
         except OSError as exc:
             message(self, "Settings not saved", str(exc), ERROR)
-            return
+            return False
         self.result_settings = settings
         self.original = settings
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
         self.saved_message.setText("Settings saved.")
         self.saved_message_timer.start()
+        return True
+
+    def save_and_restart(self) -> None:
+        """Keep the edits, then restart WinLauncher, such as to load a new plugin."""
+        if self.save() and self.restart_app is not None:
+            self.restart_app()

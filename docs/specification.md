@@ -523,24 +523,24 @@ excluded patterns.
 
 ## Search plugins
 
-Plugins are found once at start. WinLauncher ships none; they are installed from
-a plugin catalog (below) or copied in. A plugin is a folder
+Plugins are loaded once at start, and WinLauncher ships none. A plugin is a folder
 `<name>/plugin.py` with an optional `<name>/plugin.toml` whose `version` is shown
-in its settings card; a loose `<name>.py` file is a plugin too. Such folders are
-searched in `<data>/plugins` first, then in each configured plugin path in order,
-and finally packages declaring entry points of the group `winlauncher.plugins` are
-loaded. Every `Plugin` subclass a module defines itself is one plugin. The first
-plugin claiming an id wins. A module that fails to import, an id that is not
-`[a-z0-9][a-z0-9_-]*`, an id already taken, an unreadable folder or manifest, and a
-folder with a manifest but no `plugin.py` are skipped and named on the Plugins
-settings page; a folder that is neither is ignored silently, an entry whose name
-starts with `_` is never loaded, and a configured path that does not exist is no
-error. Changed plugin paths take effect after a restart. Plugins without a settings
-entry are off.
+in its settings card; a loose `<name>.py` file is a plugin too. Packages declaring
+entry points of the group `winlauncher.plugins` load first, then every plugin of
+`<data>/plugins` (installed from a source or copied in by hand), then each plugin
+folder activated in a local source (`active_plugins`), from where it lies; nothing
+else is loaded. Every `Plugin` subclass a module defines itself is one plugin. The
+first plugin claiming an id wins. A module that fails to import, an id that is not
+`[a-z0-9][a-z0-9_-]*`, an id already taken, an unreadable folder or manifest, a
+folder with a manifest but no `plugin.py` and an activated folder that is gone are
+skipped and named on the Plugins settings page; a folder that is neither is
+ignored silently and an entry whose name starts with `_` is never loaded. A loaded
+plugin without a settings entry is on.
 
 The loader also rejects, with a message naming the mistake, a plugin that does not
 implement `refresh`, has no label, or declares a description, icon, keyword,
-`round_icons`, `refresh_minutes` or `options` that WinLauncher could not use — the
+keywords (or both of these), routes (ids `[a-z0-9][a-z0-9_-]*`, unique, with a
+label), `round_icons`, `refresh_minutes` or `options` that WinLauncher could not use — the
 settings page and every result row read these, so they are checked once instead of
 failing later. A `PluginItem` whose key or name is missing or whose other fields
 are not text fails its refresh. Settings buttons a plugin declares that are not
@@ -548,11 +548,14 @@ usable `PluginCommand` values are dropped. No plugin call runs on the GUI thread
 and the worker threads are daemons, so a plugin stuck in a call delays only other
 plugin work and never prevents WinLauncher from quitting.
 
-Settings store per plugin `id`, `enabled`, `keyword`, `in_search`,
-`refresh_minutes` (1–1440), `boost` (-100–100) and `options` (names to booleans,
-integers or strings; an invalid or missing value uses the plugin's default).
-Keywords of enabled plugins must differ from website keywords and from each other,
-ignoring case and accents.
+Settings store per plugin `id`, `enabled`, `keywords`, `routes` (route id to its
+keywords), `in_search`, `refresh_minutes` (1–1440), `boost` (-100–100) and
+`options` (names to booleans, integers or strings; an invalid or missing value uses
+the plugin's default). A plugin without an entry uses the keywords and route
+keywords it suggests; an entry of 0.13 or older with one `keyword` reads as that
+keyword. Keywords are letters, digits, `_` and `-`. Every keyword and route keyword
+of the enabled plugins must differ from website keywords and from each other,
+ignoring case and accents; a route the plugin no longer declares claims no word.
 
 An enabled plugin refreshes 4 s after start (or after it is enabled) if its cached
 list is older than its interval or the last refresh failed, then at its interval.
@@ -563,7 +566,8 @@ and repeated keys are dropped.
 
 Typed text that starts with an enabled plugin's keyword lists that plugin's items
 first, searched for the words behind the keyword; without any they come in the
-plugin's order. The same text still searches the catalog, so a short keyword never
+plugin's order. All keywords of a plugin work alike. A route's keyword does the
+same with only the items whose `routes` name that route. The same text still searches the catalog, so a short keyword never
 takes its word away: `tg` lists the chats and finds a file named `tg`. The prefix
 `@` asks for the plugin alone and leaves the catalog out, as in `@tg anna`; an `@`
 before anything else is ordinary search text. Plain word searches without filters,
@@ -591,34 +595,55 @@ default opens the item's target with `os.startfile`, and a failure is shown
 like other failed actions. The context menu offers Open in <label> and Copy
 Link; file actions and own menu commands do not apply.
 
-### Plugin catalogs
+Plugin files — `plugin.py`, `plugin.toml`, `catalog.toml` — are read as UTF-8,
+with or without a byte order mark, and otherwise as Windows-1252; a coding
+declaration in `plugin.py` comes first. Output of git and pip is decoded the same
+way, and pip and pipx run with `PYTHONIOENCODING=utf-8`.
 
-A plugin catalog is a git repository with a `catalog.toml` at its root naming the
-catalog (`name`, else its URL is shown) and the folder of its plugin folders
-(`plugins`, default `plugins`, which must lie inside the repository). Settings
-store the catalogs as `plugin_catalogs`, a list of URLs or folders that git can
-clone; the default is WinLauncher-Plugins. URLs that differ only in letter case, a
-trailing slash or `.git` are the same catalog and may not be listed twice.
+### Plugin sources
 
-The Plugins page lists every plugin folder a catalog offers (not those starting
-with `_` or without `plugin.py`) with its manifest's `name` (else the folder
-name), `version`, `description` and `requires`, and its state: not installed,
-installed, update available (the installed version differs), or blocked because
-`<data>/plugins` already holds a folder of that name that did not come from this
-catalog. A plugin with `requires` shows the command that installs those packages
-into WinLauncher's environment (`pipx inject` or `python -m pip install`).
-**Install** and **Update** ask for confirmation, then copy the folder into
-`<data>/plugins` with an `installed-from.txt` naming the catalog, replacing an
-older copy in one rename; **Remove** asks, then deletes the folder and keeps the
-plugin's settings and data. All three take effect after a restart, and an
-installed plugin stays off until it is turned on.
+Settings store `plugin_sources`, one entry per source; the default is
+WinLauncher-Plugins. An absolute drive or share path is a **local** source, read
+in place; anything else is a **remote** git repository (https, SSH or `file:`
+address). Entries that differ only in letter case, a trailing slash or `.git` are
+the same source and may not be listed twice. A source offers plugin folders in one
+of three layouts: a `catalog.toml` at its root naming the source (`name`, else its
+address is shown) and the folder of its plugins (`plugins`, default `plugins`,
+which must lie inside the source); the source being one plugin folder; or a folder
+of plugin folders. Folders starting with `_` or without `plugin.py` are not
+offered. Settings written by 0.12 or 0.13 are read as sources: their catalogs and
+plugin folders become sources, and every plugin those folders loaded is activated.
 
-Catalogs are checked 60 s after start, every 6 hours, on **Check now** and when a
-saved edit changes the list; git runs without a console and never prompts, giving
-up after 120 s. A catalog that cannot be checked keeps listing what its last clone
-offered, with the reason; a missing or invalid `catalog.toml` and unusable plugin
-manifests are named on the page. Clones of catalogs no longer listed are deleted.
-A new version of an installed plugin is announced once in a tray message.
+**Available plugins** on the Plugins page lists every offer with its manifest's
+`name` (else the folder name), `version`, `description` and `requires`, and its
+state. A remote plugin is not installed, installed, has an update (the installed
+version differs), or is blocked because `<data>/plugins` holds a folder of that
+name that did not come from this source; a local one is active or not. A state that
+changes at the next start says so. A plugin with `requires` shows the command that
+installs those packages into WinLauncher's environment (`pipx inject` for a pipx
+installation, else `python -m pip install` on WinLauncher's interpreter).
+
+- **Install** and **Update** (remote) ask for confirmation, install the packages,
+  then copy the folder into `<data>/plugins` with an `installed-from.txt` naming
+  the source, replacing an older copy in one rename. When the packages fail,
+  nothing is copied and the message names the command to run.
+- **Uninstall** (remote) asks, then deletes the folder; settings and data stay.
+- **Activate** (local) asks, installs the packages, then adds the folder to
+  `active_plugins`; **Deactivate** removes it. Both are edits of the settings,
+  saved with the others. An activated folder whose source is no longer listed is
+  dropped on save.
+
+Installed and activated plugins are on from the next start (their settings card
+is switched on if it was loaded before). After a change the page offers **Restart
+now**, which saves the settings first.
+
+Sources are read at start, then checked 60 s later, every 6 hours, on **Check
+now** and when a saved edit changes the list; git runs without a console and never
+prompts, giving up after 120 s, and package installations give up after 600 s. A
+remote source that cannot be checked keeps listing what its last clone offered,
+with the reason; an unreadable source, `catalog.toml` or manifest is named on the
+page. Clones of sources no longer listed are deleted. A new version of an
+installed plugin is announced once in a tray message.
 
 ## Tray, settings and autostart
 

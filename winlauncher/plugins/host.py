@@ -32,6 +32,7 @@ from winlauncher.plugins.api import (
 from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.registry import Discovery, PluginSource
 from winlauncher.plugins.search import (
+    KeywordTarget,
     PluginHit,
     PluginQuery,
     SearchableItem,
@@ -99,11 +100,14 @@ class PluginHost:
     @staticmethod
     def default_config(plugin: Plugin) -> PluginConfig:
         return PluginConfig(
-            plugin.id, keyword=plugin.keyword, refresh_minutes=plugin.refresh_minutes
+            plugin.id,
+            keywords=plugin.suggested_keywords(),
+            routes={route.id: route.keywords for route in plugin.routes},
+            refresh_minutes=plugin.refresh_minutes,
         )
 
     def config(self, plugin_id: str, configs: Sequence[PluginConfig]) -> PluginConfig:
-        """The user's configuration of the plugin, or its defaults (disabled)."""
+        """The user's configuration of the plugin, or its defaults."""
         found = next((config for config in configs if config.id == plugin_id), None)
         return found or self.default_config(self._entries[plugin_id].plugin)
 
@@ -114,9 +118,18 @@ class PluginHost:
             if (config := self.config(plugin_id, configs)).enabled
         ]
 
-    def keywords(self, configs: Sequence[PluginConfig]) -> dict[str, str]:
-        """Normalized keyword to plugin id, for the enabled plugins with a keyword."""
-        return {normalize(c.keyword): c.id for c in self.enabled(configs) if c.keyword}
+    def keywords(self, configs: Sequence[PluginConfig]) -> dict[str, KeywordTarget]:
+        """Normalized keyword to what it searches, for every enabled plugin.
+
+        A route the plugin no longer declares is left out, so its keyword is free.
+        """
+        found: dict[str, KeywordTarget] = {}
+        for config in self.enabled(configs):
+            declared = {route.id for route in self._entries[config.id].plugin.routes}
+            for keyword, route in config.keyword_routes().items():
+                if route is None or route in declared:
+                    found[normalize(keyword)] = KeywordTarget(config.id, route)
+        return found
 
     def context(
         self,
@@ -234,7 +247,9 @@ class PluginHost:
         """Hits of one plugin for a plugin query, or of every plugin in ordinary searches."""
         if isinstance(query, PluginQuery):
             config = self.config(query.plugin_id, configs)
-            return self._rank(config, query.search, limit) if config.enabled else []
+            if not config.enabled:
+                return []
+            return self._rank(config, query.search, limit, query.route)
         if not plugins_answer(query):
             return []
         hits: list[PluginHit] = []
@@ -243,12 +258,17 @@ class PluginHost:
                 hits.extend(self._rank(config, query, limit))
         return hits
 
-    def _rank(self, config: PluginConfig, query: SearchQuery, limit: int) -> list[PluginHit]:
+    def _rank(
+        self, config: PluginConfig, query: SearchQuery, limit: int, route: str | None = None
+    ) -> list[PluginHit]:
         entry = self._entries[config.id]
+        items = entry.searchable
+        if route is not None:
+            items = tuple(searchable for searchable in items if route in searchable.item.routes)
         return rank_items(
             config.id,
             entry.plugin.label,
-            entry.searchable,
+            items,
             query,
             boost=config.boost,
             limit=limit,
@@ -316,4 +336,5 @@ def _item_from_json(value: object) -> PluginItem:
         raise ValueError("cached item is no object")
     values = dict(value)
     values["keywords"] = tuple(values.get("keywords", ()))
+    values["routes"] = tuple(values.get("routes", ()))
     return PluginItem(**values)

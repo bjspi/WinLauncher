@@ -51,6 +51,7 @@ class PluginItem:
     keywords: tuple[str, ...] = ()  # Further words that find the item, such as a username.
     icon: str = ""  # An image file, such as a cached avatar; empty uses initials or the plugin's.
     title: str = ""  # Shown instead of "<label>: <name>" when set.
+    routes: tuple[str, ...] = ()  # Ids of the plugin's routes that list this item, if any.
     # Anything else `open` needs, as JSON values; kept in the item cache, never matched.
     data: Mapping[str, object] = field(default_factory=dict, compare=False)
 
@@ -63,12 +64,15 @@ class PluginItem:
         for field_name in ("target", "subtitle", "icon", "title"):
             if not isinstance(getattr(self, field_name), str):
                 raise ValueError(f"A plugin item's {field_name} must be text.")
-        keywords = tuple(self.keywords)
+        keywords, routes = tuple(self.keywords), tuple(self.routes)
         if not all(isinstance(keyword, str) for keyword in keywords):
             raise ValueError("A plugin item's keywords must be text.")
+        if not all(isinstance(route, str) for route in routes):
+            raise ValueError("A plugin item's routes must be route ids.")
         if not isinstance(self.data, Mapping) or not all(isinstance(key, str) for key in self.data):
             raise ValueError("A plugin item's data must map names to JSON values.")
         object.__setattr__(self, "keywords", keywords)
+        object.__setattr__(self, "routes", routes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +92,21 @@ class PluginOption:
         if self.bounds is not None and not self.bounds[0] <= stored <= self.bounds[1]:
             return self.default
         return stored
+
+
+@dataclass(frozen=True, slots=True)
+class PluginRoute:
+    """Keywords that search only part of a plugin's items.
+
+    A ticket plugin may list every ticket under `jira` and offer the route
+    `PluginRoute("bugs", "Bugs only", ("bug",))`: `bug login` then searches only
+    the items whose `routes` name `bugs`. The user may change its keywords.
+    """
+
+    id: str  # Stable: ties the user's keywords to the route. a-z, 0-9, _ and -.
+    label: str  # Shown in Settings, such as "Bugs only".
+    keywords: tuple[str, ...] = ()  # Suggested; the user's own replace them.
+    description: str = ""
 
 
 class Ask(Protocol):
@@ -129,7 +148,11 @@ class Plugin:
     id: ClassVar[str] = ""  # Settings key and data folder name: a-z, 0-9, _ and -.
     label: ClassVar[str] = ""  # Shown before each item's name, as in "Telegram: Anna".
     description: ClassVar[str] = ""
-    keyword: ClassVar[str] = ""  # Typed first, it searches only this plugin: "tg anna".
+    # Typed first, a keyword puts this plugin's items on top: "tg anna". All of them
+    # work alike, so a plugin may suggest synonyms; the user may change them.
+    keywords: ClassVar[tuple[str, ...]] = ()
+    keyword: ClassVar[str] = ""  # A single keyword, as older plugins declare it.
+    routes: ClassVar[tuple[PluginRoute, ...]] = ()  # Keywords for parts of the items.
     refresh_minutes: ClassVar[int] = 15
     icon: ClassVar[str] = ""  # Image file for items without an icon of their own.
     round_icons: ClassVar[bool] = False  # Avatars: crop icons to circles, initials without one.
@@ -139,6 +162,11 @@ class Plugin:
     # are. Case is ignored, and the other terms of the same query stay loose.
     literal_terms: ClassVar[tuple[str, ...]] = ()
     options: ClassVar[tuple[PluginOption, ...]] = ()
+
+    @classmethod
+    def suggested_keywords(cls) -> tuple[str, ...]:
+        """The keywords the plugin suggests, whichever way it declared them."""
+        return cls.keywords or ((cls.keyword,) if cls.keyword else ())
 
     def refresh(self, context: PluginContext) -> Iterable[PluginItem]:
         """Every item, most relevant (such as most recently used) first.

@@ -1,4 +1,4 @@
-"""What the user configures for plugins: each plugin's options and the plugin catalogs."""
+"""What the user configures for plugins: each plugin's options and the plugin sources."""
 
 from __future__ import annotations
 
@@ -7,22 +7,26 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 REFRESH_RANGE_MINUTES = (1, 1440)
-KEYWORD = re.compile(r"[\w-]*")  # Also checked for a plugin's own default keyword.
-# Git repositories offering plugins to install (see `winlauncher.plugins.catalog`).
-DEFAULT_CATALOGS = ("https://github.com/bjspi/WinLauncher-Plugins.git",)
+KEYWORD = re.compile(r"[\w-]+")  # Also checked for the keywords a plugin suggests.
+# Where plugins come from (see `winlauncher.plugins.sources`).
+DEFAULT_SOURCES = ("https://github.com/bjspi/WinLauncher-Plugins.git",)
 
 
-def catalog_key(url: str) -> str:
-    """`url` without the differences that name the same repository, for comparisons."""
-    key = url.strip().rstrip("/\\").casefold()
+def source_key(source: str) -> str:
+    """`source` without the differences that name the same place, for comparisons."""
+    key = source.strip().rstrip("/\\").casefold()
     return key.removesuffix(".git")
 
 
 @dataclass(frozen=True, slots=True)
 class PluginConfig:
     id: str
-    enabled: bool = False
-    keyword: str = ""  # Typed first, it searches only this plugin: "tg anna". Empty: none.
+    # Plugins load only once installed or activated, so a loaded plugin starts out on.
+    enabled: bool = True
+    # Typed first, each puts this plugin's items on top: "tg anna". Empty: none.
+    keywords: tuple[str, ...] = ()
+    # Keywords per route (`Plugin.routes`), each searching only that route's items.
+    routes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     in_search: bool = True  # Its items also appear among the results of ordinary searches.
     refresh_minutes: int = 15
     boost: int = 0  # Lifts or lowers its items against files, like a folder priority.
@@ -34,8 +38,13 @@ class PluginConfig:
             raise ValueError("Each plugin entry needs an id.")
         if type(self.enabled) is not bool or type(self.in_search) is not bool:
             raise ValueError(f"Plugin {self.id}: enabled and in_search must be JSON booleans.")
-        if not isinstance(self.keyword, str) or not KEYWORD.fullmatch(self.keyword):
-            raise ValueError(f"Plugin {self.id}: keywords may contain letters, numbers, _ and -.")
+        object.__setattr__(self, "keywords", self._keywords(self.keywords))
+        if not isinstance(self.routes, Mapping) or not all(
+            isinstance(route, str) for route in self.routes
+        ):
+            raise ValueError(f"Plugin {self.id}: routes must map route ids to keywords.")
+        routes = {route: self._keywords(words) for route, words in self.routes.items()}
+        object.__setattr__(self, "routes", routes)
         for name in ("refresh_minutes", "boost"):
             if type(getattr(self, name)) is not int:
                 raise ValueError(f"Plugin {self.id}: {name} must be an integer.")
@@ -49,5 +58,20 @@ class PluginConfig:
             raise ValueError(f"Plugin {self.id}: options must map names to simple values.")
         object.__setattr__(self, "options", dict(self.options))
 
-    def __hash__(self) -> int:  # Options are a dict; equality still compares them.
-        return hash((self.id, self.enabled, self.keyword, self.in_search, self.refresh_minutes))
+    def _keywords(self, words: object) -> tuple[str, ...]:
+        """`words` as a tuple of valid keywords; JSON stores them as a list."""
+        if not isinstance(words, list | tuple) or not all(
+            isinstance(word, str) and KEYWORD.fullmatch(word) for word in words
+        ):
+            raise ValueError(f"Plugin {self.id}: keywords may contain letters, numbers, _ and -.")
+        return tuple(words)
+
+    def keyword_routes(self) -> dict[str, str | None]:
+        """Every keyword of this plugin and the route it searches; None for all items."""
+        found: dict[str, str | None] = {keyword: None for keyword in self.keywords}
+        for route, keywords in self.routes.items():
+            found.update(dict.fromkeys(keywords, route))
+        return found
+
+    def __hash__(self) -> int:  # Options and routes are dicts; equality still compares them.
+        return hash((self.id, self.enabled, self.keywords, self.in_search, self.refresh_minutes))

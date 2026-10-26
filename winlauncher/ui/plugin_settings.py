@@ -19,18 +19,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from winlauncher.catalog.model import path_key
 from winlauncher.plugins.api import Plugin, PluginCommand, PluginOption
 from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig
 from winlauncher.plugins.registry import PluginSource
 from winlauncher.settings import BOOST_RANGE, Settings
-from winlauncher.ui.catalog_settings import CatalogSection
 from winlauncher.ui.messages import ERROR, INFO, message
-from winlauncher.ui.plugin_catalogs import CatalogWatcher
+from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
-from winlauncher.ui.settings import NumberField, PathList, _note, _sized, _with_unit
+from winlauncher.ui.settings import NumberField, _note, _sized, _split_commas, _with_unit
+from winlauncher.ui.source_settings import SourceSection
 from winlauncher.ui.widgets import Card, EntryList, ToggleSwitch, line_icon, section_title
 
-KEYWORD_FIELD_WIDTH = 88
+KEYWORD_FIELD_WIDTH = 160  # Room for a few keywords, separated by commas.
 TEXT_OPTION_WIDTH = 220
 
 
@@ -55,16 +56,22 @@ class PluginCard(Card):
         version = QLabel(f"Version {source.version}" if source.version else "No version")
         version.setObjectName("unit")
         self.add_row("Installed from", _source_location(source), version)
-        self.keyword = QLineEdit(config.keyword)
-        self.keyword.setFixedWidth(KEYWORD_FIELD_WIDTH)
-        self.keyword.setAccessibleName(f"{plugin.label} keyword")
+        self.keywords = _keywords_field(config.keywords, f"{plugin.label} keywords")
+        example = config.keywords[0] if config.keywords else "kw"
         self.add_row(
-            "Keyword",
-            f"Typed first it puts {plugin.label} on top, such as “{config.keyword or 'kw'} anna”; "
-            f"your files are still searched. “@{config.keyword or 'kw'} anna” answers from "
-            f"{plugin.label} alone, and the keyword by itself lists the most recent items.",
-            self.keyword,
+            "Keywords",
+            f"Typed first, one puts {plugin.label} on top, such as “{example} anna”; your "
+            f"files are still searched. “@{example} anna” answers from {plugin.label} alone, "
+            "and a keyword by itself lists the most recent items. Separate several with commas.",
+            self.keywords,
         )
+        self.route_keywords: dict[str, QLineEdit] = {}
+        for route in plugin.routes:
+            words = config.routes.get(route.id, route.keywords)
+            field = _keywords_field(words, f"{route.label} keywords")
+            self.route_keywords[route.id] = field
+            description = route.description or f"Typed first, it searches only “{route.label}”."
+            self.add_row(f"Keywords for {route.label}", description, field)
         self.in_search = ToggleSwitch(f"{plugin.label} items in every search")
         self.in_search.setChecked(config.in_search)
         self.add_row(
@@ -130,7 +137,10 @@ class PluginCard(Card):
         return PluginConfig(
             self.plugin.id,
             enabled=self.enabled.isChecked(),
-            keyword=self.keyword.text().strip(),
+            keywords=_split_commas(self.keywords.text()),
+            routes={
+                route: _split_commas(field.text()) for route, field in self.route_keywords.items()
+            },
             in_search=self.in_search.isChecked(),
             refresh_minutes=self.refresh_minutes.value(),
             boost=self.boost.value(),
@@ -144,8 +154,9 @@ class PluginCard(Card):
             return "Off"
         state = self.scheduler.host.state(self.plugin.id)
         parts = ["On"]
-        if saved.keyword:
-            parts.append(f"keyword {saved.keyword}")
+        if saved.keywords:
+            noun = "keyword" if len(saved.keywords) == 1 else "keywords"
+            parts.append(f"{noun} {', '.join(saved.keywords)}")
         if state.needs_setup:
             parts.append("needs setup")
         elif state.refreshed is not None:
@@ -205,12 +216,13 @@ class PluginPage(QObject):
         current: Callable[[], Settings],
         data_folder: str,
         parent: QObject,
-        catalogs: CatalogWatcher | None = None,
+        sources: SourceWatcher | None = None,
+        restart: Callable[[], None] | None = None,
     ):
         super().__init__(parent)  # Ends the status connection with the dialog.
         self.original = settings
         self.current = current  # The dialog's other edits, for commands run before saving.
-        host = scheduler.host
+        host = self.host = scheduler.host
         self.cards = [
             PluginCard(
                 plugin, host.config(plugin.id, settings.plugins), scheduler, self.edited_settings
@@ -225,8 +237,8 @@ class PluginPage(QObject):
         overview = Card()
         overview.add_block(
             "Installed plugins",
-            "Choose a plugin to set it up. Install more from a catalog below, or copy a "
-            "plugin folder into the plugin folder.",
+            "Choose a plugin to set it up. Add more under Available plugins below, or copy "
+            "a plugin folder into the plugin folder.",
             self.list,
         )
         if self.data_folder is not None:
@@ -237,19 +249,19 @@ class PluginPage(QObject):
         if host.problems:
             self.sections.append(_note("Not loaded: " + " ".join(host.problems)))
         self.sections.extend(self.cards)
-        self.catalog_section = (
-            CatalogSection(settings, catalogs, self) if catalogs is not None else None
+        self.source_section = (
+            SourceSection(settings, sources, self.loaded_folders, self.turn_on, restart, self)
+            if sources is not None
+            else None
         )
-        if self.catalog_section is not None:
-            self.sections.extend(self.catalog_section.sections)
-        self.sections.append(section_title("Where plugins come from"))
-        self.sections.append(self._folders_card(settings))
-        if self.catalog_section is not None:
-            self.sections.append(self.catalog_section.catalogs_card)
+        if self.source_section is not None:
+            self.sections.extend(self.source_section.sections)
+            self.sections.append(section_title("Where plugins come from"))
+            self.sections.append(self.source_section.sources_card)
         self.sections.append(
             _note(
-                "Plugins are loaded once at start: save, then restart WinLauncher from the "
-                "tray to pick up a new folder. Writing your own is documented in docs/plugins.md."
+                "Plugins are loaded once at start, so installing, activating or removing one "
+                "takes effect after a restart. Writing your own is documented in docs/plugins.md."
             )
         )
         scheduler.status_changed.connect(self.show_status)
@@ -257,18 +269,17 @@ class PluginPage(QObject):
         if self.cards:
             self.list.setCurrentRow(0)
 
-    def _folders_card(self, settings: Settings) -> Card:
-        """The folders searched beside the data directory's own, such as a cloned repo."""
-        self.folders = PathList(settings.plugin_paths, "Plugin folders")
-        card = Card()
-        card.add_block(
-            "Plugin folders",
-            "Searched after the folder above, each holding one subfolder per plugin "
-            "(plugin.py beside an optional plugin.toml). Point one at a cloned plugin "
-            "repository; keep private plugins in a folder you never push.",
-            self.folders,
-        )
-        return card
+    def loaded_folders(self) -> set[str]:
+        """Path keys of the folders the loaded plugins came from."""
+        folders = (self.host.source(card.plugin.id).folder for card in self.cards)
+        return {path_key(folder) for folder in folders if folder is not None}
+
+    def turn_on(self, folder: Path) -> None:
+        """Turn on the loaded plugins of `folder`, which was just installed or activated."""
+        for card in self.cards:
+            loaded_from = self.host.source(card.plugin.id).folder
+            if loaded_from is not None and path_key(loaded_from) == path_key(folder):
+                card.enabled.setChecked(True)
 
     def select(self, row: int) -> None:
         """Show the settings of the plugin in `row` only."""
@@ -291,14 +302,25 @@ class PluginPage(QObject):
         return (*(card.config() for card in self.cards), *kept)
 
     def apply_to(self, settings: Settings) -> Settings:
-        """`settings` with the edits of this page: plugins, plugin folders and catalogs."""
-        edited = replace(settings, plugins=self.configs(), plugin_paths=self.folders.paths())
-        if self.catalog_section is None:
+        """`settings` with the edits of this page: plugins, sources and activations."""
+        edited = replace(settings, plugins=self.configs())
+        if self.source_section is None:
             return edited
-        return replace(edited, plugin_catalogs=self.catalog_section.catalog_urls())
+        return replace(
+            edited,
+            plugin_sources=self.source_section.source_locations(),
+            active_plugins=self.source_section.active_plugins(),
+        )
 
     def edited_settings(self) -> Settings:
         return self.apply_to(self.current())
+
+
+def _keywords_field(words: tuple[str, ...], accessible_name: str) -> QLineEdit:
+    field = QLineEdit(", ".join(words))
+    field.setFixedWidth(KEYWORD_FIELD_WIDTH)
+    field.setAccessibleName(accessible_name)
+    return field
 
 
 def _source_location(source: PluginSource) -> str:
