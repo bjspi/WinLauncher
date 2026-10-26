@@ -48,6 +48,26 @@ memory it takes about 3 ms, and most of the remaining time is ranking and the
 exclusion checks of kept hits. The memory index takes 30 MiB for this catalog
 and reloads in about 100 ms after a catalog change.
 
+### Plugin timings in the log
+
+`winlauncher.log` in the data folder answers "which plugin makes it slow":
+
+- `Search finished: ... plugins=jira=42.1ms/6000items/60hits,telegram=0.3ms/12items/12hits`
+  — every search, each plugin's ranking time, the items it looked at and its hits;
+  `jira=left-out` for a plugin over the time limit.
+- `Plugin jira refreshed: items=6000 plugin_ms=2100 validate_ms=40 cache_ms=90
+  prepare_ms=20 total_ms=2250` — `plugin_ms` is the plugin's own code, the rest is
+  WinLauncher's work with its items. `refresh started`, `refresh cancelled` and
+  `cached items loaded` frame it.
+- `Plugin jira left out of ordinary searches: ...` (warning) and `... is tried in
+  ordinary searches again` when its items change.
+- `UI event loop delayed: 420 ms search_running=... indexing=... plugins_refreshing=jira`
+  — the GUI thread stalled, and what ran meanwhile.
+
+Ranking 6,000 ticket-like items took 4 ms (`hcp-12`), 22 ms (`export`) and 60–75 ms
+(`e`, `anna exp`, `xpt`) on a desktop CPU; filtering candidates is at most 16 ms of
+that, matching the rest.
+
 ## GitHub builds and releases
 
 [CI](https://github.com/bjspi/WinLauncher/actions/workflows/ci.yml) runs on pushes to

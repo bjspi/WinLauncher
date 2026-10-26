@@ -26,6 +26,7 @@ from winlauncher.plugins.api import (
     PluginRoute,
     SetupRequired,
 )
+from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
 from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.host import CACHE_FILE, PluginHost
 from winlauncher.plugins.registry import Discovery, PluginSource, discover_plugins
@@ -283,7 +284,7 @@ class PluginHostTest(unittest.TestCase):
         restarted = PluginHost(Discovery([FakePlugin()]), self.data)
         restarted.load_cached()
         self.assertEqual(restarted.state("fake").items, (ANNA, BERND, TEAM))
-        hits = restarted.search(query("bernd"), (self.config,), 10)
+        hits = restarted.search(query("bernd"), (self.config,), 10).hits
         self.assertEqual([hit.item for hit in hits], [BERND])
 
     def test_failures_keep_the_last_items_but_setup_problems_drop_them(self):
@@ -302,12 +303,55 @@ class PluginHostTest(unittest.TestCase):
     def test_disabled_plugins_and_file_queries_stay_silent(self):
         self.host.refresh("fake", self.config)
         off = PluginConfig("fake", enabled=False, keywords=("fk",))
-        self.assertEqual(self.host.search(query("anna"), (off,), 10), [])
-        self.assertEqual(self.host.search(PluginQuery("fake", query("")), (off,), 10), [])
-        self.assertEqual(self.host.search(query("anna type:file"), (self.config,), 10), [])
+        self.assertEqual(self.host.search(query("anna"), (off,), 10).hits, [])
+        self.assertEqual(self.host.search(PluginQuery("fake", query("")), (off,), 10).hits, [])
+        self.assertEqual(self.host.search(query("anna type:file"), (self.config,), 10).hits, [])
         hidden = PluginConfig("fake", enabled=True, in_search=False)
-        self.assertEqual(self.host.search(query("anna"), (hidden,), 10), [])
-        self.assertEqual(len(self.host.search(PluginQuery("fake", query("")), (hidden,), 10)), 3)
+        self.assertEqual(self.host.search(query("anna"), (hidden,), 10).hits, [])
+        listed = self.host.search(PluginQuery("fake", query("")), (hidden,), 10)
+        self.assertEqual(len(listed.hits), 3)
+
+    def test_a_plugin_too_slow_for_ordinary_searches_keeps_its_keyword(self):
+        self.host.refresh("fake", self.config)
+        clock = iter(float(tick) for tick in range(0, 1000, 1))  # Every reading 1 s later.
+        with patch("winlauncher.plugins.host.time.perf_counter", lambda: next(clock)):
+            for _ in range(SLOW_SEARCHES_IN_A_ROW - 1):
+                found = self.host.search(query("anna"), (self.config,), 10, time_limit_ms=30)
+                self.assertEqual(found.left_out, ())
+            with self.assertLogs("winlauncher.plugins.budget", "WARNING"):
+                self.host.search(query("anna"), (self.config,), 10, time_limit_ms=30)
+            found = self.host.search(query("anna"), (self.config,), 10, time_limit_ms=30)
+            self.assertEqual((found.hits, found.left_out), ([], ("fake",)))
+            self.assertEqual(found.summary(), "fake=left-out")
+            by_keyword = self.host.search(
+                PluginQuery("fake", query("anna")), (self.config,), 10, time_limit_ms=30
+            )
+            self.assertEqual(len(by_keyword.hits), 2)
+            no_limit = self.host.search(query("anna"), (self.config,), 10, time_limit_ms=0)
+            self.assertEqual(len(no_limit.hits), 2)
+        self.assertTrue(self.host.search_record("fake").left_out)
+        self.plugin.items = [ANNA]  # New items: it is measured afresh.
+        self.host.refresh("fake", self.config)
+        self.assertFalse(self.host.search_record("fake").left_out)
+        found = self.host.search(query("anna"), (self.config,), 10, time_limit_ms=30)
+        self.assertEqual([hit.item for hit in found.hits], [ANNA])
+        self.assertRegex(found.summary(), r"^fake=[\d.]+ms/1items/1hits$")
+
+    def test_a_search_typed_over_stops_and_keeps_no_hits(self):
+        self.host.refresh("fake", self.config)
+        cancel = threading.Event()
+        cancel.set()
+        found = self.host.search(query("anna"), (self.config,), 10, cancel=cancel)
+        self.assertEqual((found.hits, found.timings), ([], ()))
+
+    def test_a_refresh_logs_the_plugins_time_apart_from_winlaunchers(self):
+        with self.assertLogs("winlauncher.plugins.host", "INFO") as logs:
+            self.host.refresh("fake", self.config)
+        self.assertRegex(
+            logs.output[-1],
+            r"Plugin fake refreshed: items=3 plugin_ms=\d+ validate_ms=\d+ cache_ms=\d+ "
+            r"prepare_ms=\d+ total_ms=\d+",
+        )
         self.assertEqual(self.host.keywords((self.config,)), {"fk": KeywordTarget("fake")})
         # A loaded plugin was installed or activated on purpose, so it starts out on.
         self.assertEqual(self.host.keywords(()), {"fk": KeywordTarget("fake")})
@@ -644,7 +688,7 @@ class PluginUiTest(unittest.TestCase):
         self.addCleanup(dialog.deleteLater)
         card = dialog.plugin_pages.cards[0]
         self.assertIn("3 items", card.status.text())
-        self.assertEqual(dialog.plugin_pages.settings_sections, [card])
+        self.assertIn(card, dialog.plugin_pages.settings_sections)
         self.assertFalse(card.keywords.isVisibleTo(card))  # Folded until unfolded.
         card.fold.click()
         self.assertTrue(card.keywords.isVisibleTo(card))
@@ -656,7 +700,9 @@ class PluginUiTest(unittest.TestCase):
         self.assertTrue(card.keywords.isVisibleTo(card))
         card.keywords.setText("ff, fff")
         card.boost.setValue(20)
+        dialog.plugin_pages.time_limit.setValue(50)
         edited = dialog.read_settings()
+        self.assertEqual(edited.plugin_time_limit_ms, 50)
         config = edited.plugins[0]
         self.assertEqual(
             (config.keywords, config.boost, config.options), (("ff", "fff"), 20, {"count": 3})
@@ -701,7 +747,8 @@ class PluginUiTest(unittest.TestCase):
         self.assertTrue(card.fold.isChecked())
         self.assertTrue(card.keywords.isVisibleTo(card))
         remembered.write_text("not json", encoding="utf-8")
-        self.assertFalse(open_dialog().plugin_pages.cards[0].fold.isChecked())
+        with self.assertLogs("winlauncher.ui.plugin_settings", "WARNING"):
+            self.assertFalse(open_dialog().plugin_pages.cards[0].fold.isChecked())
 
 
 if __name__ == "__main__":

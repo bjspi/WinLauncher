@@ -33,6 +33,10 @@ RESULT_LIMIT_RANGE = (10, 200)
 DEFAULT_CONTENT_SEARCH_THREADS = 4
 CONTENT_SEARCH_THREADS_RANGE = (1, 16)
 BOOST_RANGE = (-100, 100)
+# How long one plugin may rank its items in an ordinary search (`plugins.budget`);
+# 0 turns the limit off. The catalog search itself takes 10-30 ms.
+DEFAULT_PLUGIN_TIME_LIMIT_MS = 30
+PLUGIN_TIME_LIMIT_RANGE_MS = (0, 1000)
 LEGACY_PLUGIN_FIELDS = ("plugin_paths", "plugin_catalogs")  # Replaced by plugin sources.
 # Excluded names; matching directories also exclude their whole subtree.
 DEFAULT_EXCLUDED_PATTERNS = (
@@ -168,6 +172,8 @@ class Settings:
     appearance: str = Appearance.SYSTEM.value  # An `Appearance`; a string in the JSON file.
     # The settings of loaded plugins; a plugin without an entry uses its defaults.
     plugins: tuple[PluginConfig, ...] = ()
+    # A plugin slower than this in ordinary searches is left out of them for a while.
+    plugin_time_limit_ms: int = DEFAULT_PLUGIN_TIME_LIMIT_MS
     # Where plugins come from: git repositories to install from, and local folders.
     plugin_sources: tuple[str, ...] = DEFAULT_SOURCES
     # Plugin folders of local sources, loaded from where they lie. Read once at start.
@@ -248,6 +254,11 @@ class Settings:
         )
         _require_range(
             self.max_results, RESULT_LIMIT_RANGE, "Result limit must be between {low} and {high}."
+        )
+        _require_range(
+            self.plugin_time_limit_ms,
+            PLUGIN_TIME_LIMIT_RANGE_MS,
+            "The plugin time limit must be between {low} and {high} ms.",
         )
 
     def _validate_paths(self) -> None:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "winlauncher"
-version = "0.14.4"
+version = "0.15.0"
 description = "Local file search and application launcher for Windows"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,7 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 # The Rust search engine wheel of this release; the release workflow checks the version.
 rust = [
-    "winlauncher_native @ https://github.com/bjspi/WinLauncher/releases/download/v0.14.4/winlauncher_native-0.14.4-cp311-abi3-win_amd64.whl ; sys_platform == 'win32' and python_version < '3.15'",
+    "winlauncher_native @ https://github.com/bjspi/WinLauncher/releases/download/v0.15.0/winlauncher_native-0.15.0-cp311-abi3-win_amd64.whl ; sys_platform == 'win32' and python_version < '3.15'",
 ]
 
 [project.gui-scripts]

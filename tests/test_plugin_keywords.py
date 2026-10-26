@@ -48,7 +48,7 @@ class KeywordsTest(unittest.TestCase):
 
     def search(self, text: str, configs=()) -> list[str]:
         found = plugin_query(text, self.host.keywords(configs))
-        return [hit.item.key for hit in self.host.search(found, configs, 10)]
+        return [hit.item.key for hit in self.host.search(found, configs, 10).hits]
 
     def test_suggested_keywords_and_routes_become_the_defaults(self):
         config = self.host.config("tickets", ())

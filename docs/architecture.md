@@ -55,6 +55,7 @@ flowchart TD
 | `plugins/sources.py` | Plugin sources: remote clones, local folders, what they offer, install and uninstall |
 | `plugins/packages.py` | A plugin's Python packages, installed with pipx or pip into WinLauncher's environment |
 | `plugins/host.py` | Each plugin's latest items and their cache, refresh, search, open and commands |
+| `plugins/budget.py` | Times each plugin's ranking; leaves plugins over the time limit out of ordinary searches |
 | `plugins/search.py` | Plugin keywords, which queries plugins answer, item ranking, merging with file hits |
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
 | `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |

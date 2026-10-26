@@ -313,10 +313,12 @@ class LauncherController(QObject):
         self._ui_tick = now
         if elapsed_ms > UI_DELAY_WARNING_MS:
             logger.warning(
-                "UI event loop delayed: %.0f ms search_running=%s indexing=%s",
+                "UI event loop delayed: %.0f ms search_running=%s indexing=%s "
+                "plugins_refreshing=%s",
                 elapsed_ms,
                 self.search.running is not None,
                 self.indexing.busy,
+                ",".join(self.plugins.refreshing()) or "-",
             )
 
     def _toggle_launcher(self) -> None:
