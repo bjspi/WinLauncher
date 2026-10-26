@@ -84,6 +84,7 @@ class PluginOption:
     default: OptionValue
     description: str = ""
     bounds: tuple[int, int] | None = None  # For whole numbers.
+    multiline: bool = False  # For text options: an editor that preserves line breaks.
 
     def value(self, stored: object) -> OptionValue:
         """`stored` if it is valid for this option, else the default."""

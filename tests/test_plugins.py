@@ -9,6 +9,7 @@ import re
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -542,6 +543,9 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             ({"options": [option]}, "tuple of PluginOption"),
             ({"options": (option,)}, "bounds that its default misses"),
             ({"options": (PluginOption("a", "A", 1.5),)}, "whole number or text default"),
+            ({"options": (PluginOption("a", "A", "", multiline=1),)}, "True or False"),
+            ({"options": (PluginOption("a", "A", 1, multiline=True),)}, "text default"),
+            ({"options": (PluginOption("a", "A", False, multiline=True),)}, "text default"),
             ({"options": (PluginOption("a", "A", 1), PluginOption("a", "B", 2))}, "twice"),
             ({"literal_terms": [r"HCP-\w*"]}, "tuple of regular expressions"),
             ({"literal_terms": (r"HCP-[",)}, "unterminated character set"),
@@ -785,6 +789,54 @@ class PluginUiTest(unittest.TestCase):
         self.assertEqual(
             (config.keywords, config.boost, config.options), (("ff", "fff"), 20, {"count": 3})
         )
+
+    def test_multiline_options_keep_line_breaks_through_settings_and_plugin_context(self):
+        from PySide6.QtWidgets import QLineEdit, QPlainTextEdit
+
+        from winlauncher.ui.settings import SettingsDialog
+
+        initial = "https://example.org/first;https://example.org/second\nhttps://example.org/third"
+        self.plugin.options = (
+            *self.plugin.options,
+            PluginOption("folders", "Source folders", "", multiline=True),
+            PluginOption("name", "Name", "Plain text"),
+        )
+        config = replace(self.controller.settings.plugins[0], options={"folders": initial})
+        settings = replace(self.controller.settings, plugins=(config,))
+
+        def open_dialog(current: Settings) -> SettingsDialog:
+            dialog = SettingsDialog(
+                current,
+                website_icons=self.controller.website_icons,
+                plugins=self.controller.plugin_refresh,
+            )
+            self.addCleanup(dialog.deleteLater)
+            return dialog
+
+        dialog = open_dialog(settings)
+        card = dialog.plugin_pages.cards[0]
+        box = card.findChild(QPlainTextEdit)
+        self.assertIsNotNone(box)
+        self.assertEqual(box.toPlainText(), initial)
+        self.assertEqual(box.accessibleName(), "Source folders")
+        self.assertEqual(box.lineWrapMode(), QPlainTextEdit.LineWrapMode.NoWrap)
+        self.assertTrue(
+            any(line.accessibleName() == "Name" for line in card.findChildren(QLineEdit))
+        )
+        changed = "https://example.org/überblick\n\nhttps://example.org/next;legacy\n"
+        box.setPlainText(changed)
+        path = SettingsFile(self.root.parent / "multiline-settings.json")
+        path.save(dialog.read_settings())
+        restored = path.load()
+        self.assertEqual(restored.plugins[0].options["folders"], changed)
+        self.assertEqual(
+            open_dialog(restored).plugin_pages.cards[0].findChild(QPlainTextEdit).toPlainText(),
+            changed,
+        )
+        context = self.controller.plugins.context("fake", restored.plugins[0])
+        self.assertEqual(context.options["folders"], changed)
+        box.clear()
+        self.assertEqual(dialog.read_settings().plugins[0].options["folders"], "")
 
     def test_the_card_shows_the_manifests_icon(self):
         from winlauncher.ui.plugin_settings import _plugin_icon

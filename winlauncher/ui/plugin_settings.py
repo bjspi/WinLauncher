@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QWidget,
 )
@@ -37,6 +38,7 @@ from winlauncher.ui.widgets import Card, ToggleSwitch, line_icon, section_title
 
 KEYWORD_FIELD_WIDTH = 160  # Room for a few keywords, separated by commas.
 TEXT_OPTION_WIDTH = 220
+TEXT_OPTION_HEIGHT = 96  # About five lines for a multiline option.
 logger = logging.getLogger(__name__)
 
 
@@ -182,6 +184,14 @@ class PluginCard(Card):
             field.setAccessibleName(option.label)
             self.options[option.key] = field.value
             self.add_row(option.label, option.description, field)
+        elif option.multiline:
+            box = QPlainTextEdit(str(value))
+            box.setFixedWidth(TEXT_OPTION_WIDTH)
+            box.setFixedHeight(TEXT_OPTION_HEIGHT)
+            box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+            box.setAccessibleName(option.label)
+            self.options[option.key] = box.toPlainText
+            self.add_row(option.label, option.description, box)
         else:
             line = QLineEdit(str(value))
             line.setFixedWidth(TEXT_OPTION_WIDTH)

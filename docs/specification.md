@@ -560,7 +560,11 @@ plugin that is off shows its header only.
 Settings store per plugin `id`, `enabled`, `keywords`, `routes` (route id to its
 keywords), `in_search`, `refresh_minutes` (1–1440), `boost` (-100–100) and
 `options` (names to booleans, integers or strings; an invalid or missing value uses
-the plugin's default). A plugin without an entry uses the keywords and route
+the plugin's default). Text options use a single-line field unless their
+`PluginOption` declares `multiline=True`; then a plain-text box without line
+wrapping preserves line breaks in the same string setting. Multiline applies
+only to text defaults and defaults to `False`; existing values are not split or
+converted. A plugin without an entry uses the keywords and route
 keywords it suggests; an entry of 0.13 or older with one `keyword` reads as that
 keyword. Keywords are letters, digits, `_` and `-`. Every keyword and route keyword
 of the enabled plugins must differ from website keywords and from each other,
