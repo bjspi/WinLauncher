@@ -43,6 +43,7 @@ from winlauncher.platform.shell import folder_shortcuts, indexed_application_roo
 from winlauncher.platform.startup import PACKAGE_PARENT, StartupShortcut
 from winlauncher.platform.store_apps import store_app_folder
 from winlauncher.platform.windows_tools import windows_tools_folder
+from winlauncher.plugins.catalog import CLONES_FOLDER, CatalogPlugin, PluginCatalogs
 from winlauncher.plugins.host import PluginHost
 from winlauncher.plugins.registry import discover_plugins
 from winlauncher.plugins.search import PluginHit
@@ -55,6 +56,7 @@ from winlauncher.ui import messages
 from winlauncher.ui.about import AboutDialog
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
+from winlauncher.ui.plugin_catalogs import CatalogWatcher
 from winlauncher.ui.plugins import PluginIcons, PluginScheduler
 from winlauncher.ui.result_rows import LauncherHit
 from winlauncher.ui.search_session import SearchSession
@@ -134,6 +136,13 @@ class LauncherController(QObject):
         )
         self.plugin_refresh = PluginScheduler(self.plugins, self.tasks, lambda: self.settings, self)
         self.plugin_refresh.items_changed.connect(self.search.refresh)
+        self.plugin_catalogs = CatalogWatcher(
+            PluginCatalogs(data_dir / CLONES_FOLDER, self.own_plugin_folder),
+            self.tasks,
+            lambda: self.settings,
+            self,
+        )
+        self.plugin_catalogs.updates_found.connect(self._plugin_updates_found)
         self.indexing = IndexScheduler(
             self.tasks,
             CatalogIndexer(self.store),
@@ -174,6 +183,7 @@ class LauncherController(QObject):
         self._warm_search_index()
         QTimer.singleShot(0, self.indexing.request_full)
         self.plugin_refresh.start()
+        self.plugin_catalogs.start()
 
     # Wiring -------------------------------------------------------------------
 
@@ -657,6 +667,7 @@ class LauncherController(QObject):
             website_icons=self.website_icons,
             plugins=self.plugin_refresh,
             plugin_folder=str(self.own_plugin_folder),
+            plugin_catalogs=self.plugin_catalogs,
         )
         dialog.finished.connect(self._settings_closed)
         dialog.show()
@@ -703,6 +714,8 @@ class LauncherController(QObject):
             self.indexing.restart_periodic_timer()
         if previous.plugins != settings.plugins:
             self.plugin_refresh.apply()
+        if previous.plugin_catalogs != settings.plugin_catalogs:
+            self.plugin_catalogs.apply()
 
     def _apply_window_settings(self, settings: Settings) -> None:
         theme().use(Appearance(settings.appearance))
@@ -826,6 +839,13 @@ class LauncherController(QObject):
                 f"Choose “Update to {latest.version}” in the tray menu to install it.",
             )
 
+    def _plugin_updates_found(self, plugins: list[CatalogPlugin]) -> None:
+        names = ", ".join(f"{plugin.name} {plugin.version}" for plugin in plugins)
+        self.tray.icon.showMessage(
+            "WinLauncher",
+            f"Plugin updates: {names}. Install them in Settings → Plugins.",
+        )
+
     def _update_finished(self, succeeded: bool, changed: bool, output: str) -> None:
         self.status.set_activity("")
         release, forced = self.update_release, self.updater.forced
@@ -914,6 +934,7 @@ class LauncherController(QObject):
         self.search.close()
         self.indexing.close()
         self.plugin_refresh.close()
+        self.plugin_catalogs.close()
         self._stop_keyboard()
         self._stop_monitor()
         self.updater.stop()

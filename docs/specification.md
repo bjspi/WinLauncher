@@ -523,7 +523,8 @@ excluded patterns.
 
 ## Search plugins
 
-Plugins are found once at start, and WinLauncher ships none. A plugin is a folder
+Plugins are found once at start. WinLauncher ships none; they are installed from
+a plugin catalog (below) or copied in. A plugin is a folder
 `<name>/plugin.py` with an optional `<name>/plugin.toml` whose `version` is shown
 in its settings card; a loose `<name>.py` file is a plugin too. Such folders are
 searched in `<data>/plugins` first, then in each configured plugin path in order,
@@ -589,6 +590,35 @@ Ctrl+1…9 hides the bar and runs the plugin's `open` on the action worker. The
 default opens the item's target with `os.startfile`, and a failure is shown
 like other failed actions. The context menu offers Open in <label> and Copy
 Link; file actions and own menu commands do not apply.
+
+### Plugin catalogs
+
+A plugin catalog is a git repository with a `catalog.toml` at its root naming the
+catalog (`name`, else its URL is shown) and the folder of its plugin folders
+(`plugins`, default `plugins`, which must lie inside the repository). Settings
+store the catalogs as `plugin_catalogs`, a list of URLs or folders that git can
+clone; the default is WinLauncher-Plugins. URLs that differ only in letter case, a
+trailing slash or `.git` are the same catalog and may not be listed twice.
+
+The Plugins page lists every plugin folder a catalog offers (not those starting
+with `_` or without `plugin.py`) with its manifest's `name` (else the folder
+name), `version`, `description` and `requires`, and its state: not installed,
+installed, update available (the installed version differs), or blocked because
+`<data>/plugins` already holds a folder of that name that did not come from this
+catalog. A plugin with `requires` shows the command that installs those packages
+into WinLauncher's environment (`pipx inject` or `python -m pip install`).
+**Install** and **Update** ask for confirmation, then copy the folder into
+`<data>/plugins` with an `installed-from.txt` naming the catalog, replacing an
+older copy in one rename; **Remove** asks, then deletes the folder and keeps the
+plugin's settings and data. All three take effect after a restart, and an
+installed plugin stays off until it is turned on.
+
+Catalogs are checked 60 s after start, every 6 hours, on **Check now** and when a
+saved edit changes the list; git runs without a console and never prompts, giving
+up after 120 s. A catalog that cannot be checked keeps listing what its last clone
+offered, with the reason; a missing or invalid `catalog.toml` and unusable plugin
+manifests are named on the page. Clones of catalogs no longer listed are deleted.
+A new version of an installed plugin is announced once in a tray message.
 
 ## Tray, settings and autostart
 

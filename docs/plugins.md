@@ -52,23 +52,63 @@ Telegram: Team Annahme        Group  ·  3 unread
 ## Where plugins come from
 
 WinLauncher ships no plugin itself. A plugin is a folder holding its `plugin.py`
-and, next to it, a `plugin.toml` naming its version:
+and, next to it, a `plugin.toml`:
 
 ```text
 telegram\
-    plugin.toml      version = "1.0.0"
+    plugin.toml      version, name, description, required packages
     plugin.py        one or more Plugin subclasses
     assets\          icons and whatever else it needs
 ```
 
-Such folders are searched in
+### Install from a catalog
 
-1. `%USERPROFILE%\.WinLauncher\plugins\`, always — the place for private plugins
-   and for single plugins you copied in, and
+**Settings → Plugins → Available plugins** lists what your plugin catalogs offer,
+with **Install**, **Update** and **Remove**. A catalog is a git repository;
+[WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins) is configured
+by default. Installing copies the plugin's folder into
+`%USERPROFILE%\.WinLauncher\plugins\`; restart from the tray, then turn it on.
+WinLauncher checks the catalogs every 6 hours and announces a new version of an
+installed plugin in a tray message. A plugin that needs Python packages shows the
+command that installs them.
+
+Catalogs are fetched with git, so git must be installed. Under **Plugin
+catalogs** you can add your own, one per line: an `https://` or SSH address, or a
+folder such as a network share. A private repository works once git can reach it
+with your saved credentials — clone it once in a terminal if git has to ask for a
+password; WinLauncher itself never prompts.
+
+### Your own catalog
+
+Any repository becomes a catalog with a `catalog.toml` at its root:
+
+```toml
+name = "Team plugins"     # Shown in Settings; the URL when missing.
+plugins = "plugins"       # The folder holding one subfolder per plugin.
+```
+
+Each plugin folder in it describes itself in its `plugin.toml`, which WinLauncher
+reads without running the plugin:
+
+```toml
+version = "1.2.0"         # Raise it with every change: installed copies get the update.
+name = "Jira"
+description = "Your open tickets; choosing one opens it in the browser."
+requires = ["jira>=3.8"]  # Python packages beside WinLauncher, as pip requirements.
+```
+
+Folders starting with `_`, such as a template, are not offered. Updates and
+removal only touch plugin folders that were installed from that catalog, so a
+private plugin of the same name in your plugin folder is left alone.
+
+### Plugin folders
+
+Plugin folders are searched in
+
+1. `%USERPROFILE%\.WinLauncher\plugins\`, always — where catalogs install to,
+   and the place for private plugins and single plugins you copied in, and
 2. every folder listed under **Settings → Plugins → Plugin folders**, in order —
-   point one at a clone of a plugin repository, such as
-   [WinLauncher-Plugins](https://github.com/bjspi/WinLauncher-Plugins) with the
-   Telegram plugin.
+   point one at a clone of a plugin repository you work on.
 
 A loose `<name>.py` file in those folders is a plugin too, for a quick one of your
 own without any folder. Installed packages may declare plugins as entry points of

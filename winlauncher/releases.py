@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -90,3 +90,15 @@ def install_command(kind: Installation, release: Release) -> str:
         # `pipx upgrade` keeps the pinned tag, so the release is installed again.
         return f"pipx install --force {requirement}"
     return f"python -m pip install --upgrade {requirement}"
+
+
+def requirements_command(
+    kind: Installation, requirements: Sequence[str], python: Path = Path(sys.executable)
+) -> str:
+    """The command that installs a plugin's Python packages beside WinLauncher."""
+    quoted = " ".join(f'"{requirement}"' for requirement in requirements)
+    if kind is Installation.PIPX:
+        return f"pipx inject winlauncher {quoted}"
+    # The tray app runs on pythonw.exe; pip wants the console interpreter beside it.
+    console = python.with_name("python.exe") if python.name.casefold() == "pythonw.exe" else python
+    return f'"{console}" -m pip install {quoted}'

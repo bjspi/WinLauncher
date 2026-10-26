@@ -1,4 +1,4 @@
-"""What the user configured for one plugin; stored in the settings file."""
+"""What the user configures for plugins: each plugin's options and the plugin catalogs."""
 
 from __future__ import annotations
 
@@ -8,6 +8,14 @@ from dataclasses import dataclass, field
 
 REFRESH_RANGE_MINUTES = (1, 1440)
 KEYWORD = re.compile(r"[\w-]*")  # Also checked for a plugin's own default keyword.
+# Git repositories offering plugins to install (see `winlauncher.plugins.catalog`).
+DEFAULT_CATALOGS = ("https://github.com/bjspi/WinLauncher-Plugins.git",)
+
+
+def catalog_key(url: str) -> str:
+    """`url` without the differences that name the same repository, for comparisons."""
+    key = url.strip().rstrip("/\\").casefold()
+    return key.removesuffix(".git")
 
 
 @dataclass(frozen=True, slots=True)
