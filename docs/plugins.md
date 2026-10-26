@@ -226,6 +226,20 @@ class Notes(Plugin):
   should stop when `context.cancel` is set. `context.log` writes to
   WinLauncher's log.
 
+### Multiline text options
+
+Text options normally use a single-line field. Set `multiline=True` for a text
+box without line wrapping, for example a list of source URLs:
+
+```python
+options = (PluginOption("folders", "Source folders", "", multiline=True),)
+```
+
+The value in `context.options["folders"]` is still a string, including its line
+breaks. WinLauncher does not split entries or convert existing semicolon-separated
+values; the plugin decides which separators to accept. The default is `False`,
+and `multiline=True` requires a string default.
+
 ### Keywords and routes
 
 `keywords` are the plugin's suggestions; the user's own replace them in Settings.

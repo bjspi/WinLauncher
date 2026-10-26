@@ -187,6 +187,10 @@ def _options_problem(options: object) -> str | None:
             return f"the option {option.key} needs a True/False, whole number or text default."
         if option.bounds is not None and not _usable_bounds(option):
             return f"the option {option.key} has bounds that its default misses."
+        if type(option.multiline) is not bool:
+            return f"the option {option.key} multiline must be True or False."
+        if option.multiline and not isinstance(option.default, str):
+            return f"the option {option.key} multiline needs a text default."
     return None
 
 

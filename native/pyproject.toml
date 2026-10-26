@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "winlauncher-native"
-version = "0.15.1"
+version = "0.15.2"
 description = "Optional Rust acceleration for WinLauncher search"
 requires-python = ">=3.11,<3.15"  # Unicode tables exist for 3.11-3.14.
 license = "MIT"
