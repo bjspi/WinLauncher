@@ -666,6 +666,22 @@ installed plugin is announced once in a tray message.
 
 ## Tray, settings and autostart
 
+On Windows x64, WinLauncher runs inside its own small `winlauncher.exe` host with
+the WinLauncher icon and file description, so Windows can identify it separately
+from Python in notification-area settings. Python and Qt remain in the existing
+installation; the host does not bundle or extract them. Other architectures use
+the existing Python entry point.
+
+Starting an older Python entry point automatically installs or refreshes the host
+in `~/.local/bin` (or `XDG_BIN_HOME`), adds that directory to the user PATH if needed,
+and hands the elected application instance to it. New terminals find the command;
+already open terminals may need reopening. Owned pip/pipx command shims in that
+folder are migrated; unrelated commands and other installations are left alone.
+Autostart, Restart, plugin-installation restarts and update restarts use the host.
+Python package tools continue using the real interpreter. A host setup failure is
+logged and falls back to Python. Windows may require enabling the new tray entry
+once because its executable path changed.
+
 The tray menu offers Search, Refresh catalog, Settings, Start with Windows, Index
 status, Clear search history, Check for updates, About, Restart and Quit. A single
 click opens the launcher. Restart starts a replacement process that waits for the
@@ -733,6 +749,9 @@ tray and the settings dialog. The checkbox applies immediately in either place,
 because it changes a file outside the settings document. A failure shows a message
 and restores the checkbox to the actual shortcut state. An unrelated shortcut with
 the same name is never replaced or deleted.
+An existing owned shortcut is migrated to the host without changing its saved
+arguments or custom data directory. An absent shortcut stays absent, and a Windows
+Startup-app disable state is preserved because the shortcut filename stays the same.
 
 Settings is a window of its own, not modal and without an owner, so the search bar
 can come in front of it and stays usable, for example to try a new context-menu

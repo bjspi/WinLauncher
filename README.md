@@ -82,6 +82,11 @@ pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v
 winlauncher --show
 ```
 
+On Windows x64, the first start installs a small WinLauncher EXE with its own
+name and icon in `~/.local/bin`, migrates an existing WinLauncher autostart shortcut,
+and uses it for future starts and restarts. Python stays in its existing environment;
+no Rust compiler is needed. Windows may ask you to show the new tray entry once.
+
 The `[rust]` extra downloads the matching Rust search engine wheel from the
 GitHub release — no compiler needed. When a new release is out, WinLauncher says
 so and shows the command to install it: the same line with the new tag and

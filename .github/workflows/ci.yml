@@ -29,6 +29,23 @@ jobs:
       - run: python -m pip install ruff
       - run: python -m ruff check winlauncher tests tools native/tools
       - run: python -m ruff format --check winlauncher tests tools native/tools
+      - run: python tools/build_loader.py --check
+
+  loader:
+    name: Windows loader
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: loader
+      # Release packages reuse the committed host. App version bumps never rebuild it.
+      - run: cargo fmt --manifest-path loader/Cargo.toml --check
+      - run: cargo clippy --manifest-path loader/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path loader/Cargo.toml --locked
 
   native-wheel:
     name: Rust engine wheel
@@ -147,7 +164,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [lint, native-wheel, tests-without-extension, tests, packages]
+    needs: [lint, loader, native-wheel, tests-without-extension, tests, packages]
     runs-on: ubuntu-latest
     steps:
       - name: Every job succeeded

@@ -33,6 +33,7 @@ include = ["winlauncher*"]
 
 [tool.setuptools.package-data]
 "winlauncher.ui" = ["assets/*.svg"]
+"winlauncher.platform" = ["bin/*.exe", "bin/*.json"]
 
 [tool.ruff]
 line-length = 100
