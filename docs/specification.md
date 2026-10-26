@@ -550,8 +550,12 @@ plugin work and never prevents WinLauncher from quitting.
 
 Settings has two plugin pages. **Plugins** gets plugins: what the sources offer,
 the problems of the last start, the source list and the plugin folder. **Plugin
-settings** holds one card per loaded plugin, all on one page; a card's first row
-is the plugin's on switch, and while it is off the card folds to that row.
+settings** holds one card per loaded plugin, all on one page. A card's header shows
+the plugin's icon (the manifest's `icon`, else the plugin's own, else a plug), its
+name and description, a chevron and the on switch. The other rows are folded at
+first; the chevron or a click on the header unfolds them, and which cards are
+unfolded is remembered at once in `<data>/plugin-cards.json`, apart from Save. A
+plugin that is off shows its header only.
 
 Settings store per plugin `id`, `enabled`, `keywords`, `routes` (route id to its
 keywords), `in_search`, `refresh_minutes` (1–1440), `boost` (-100–100) and

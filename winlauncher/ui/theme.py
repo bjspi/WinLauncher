@@ -252,6 +252,9 @@ QToolButton#menuButton::menu-indicator { image: none; width: 0; }
 QToolButton#settingsButton { background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 7px; }
 QToolButton#settingsButton:hover { background: $tool_hover; }
 QToolButton#settingsButton:focus { border-color: $accent; }
+QToolButton#foldButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px; }
+QToolButton#foldButton:hover { background: $tool_hover; }
+QToolButton#foldButton:focus { border-color: $accent; }
 QToolButton#scope { background: $scope; color: $scope_text; border: 1px solid transparent; border-radius: 11px; padding: 3px 10px; font-size: 9pt; }
 QToolButton#scope:hover { background: $scope_hover; }
 QToolButton#scope:focus { border-color: $accent; }

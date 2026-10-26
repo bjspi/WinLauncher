@@ -81,6 +81,7 @@ HIDDEN_SCOPE_CLEANUP_MS = 500
 DETAILS_HEIGHT = 120  # Scan errors and problems in the index status dialog.
 # Explorer follows the result where arrow-key repeats stop, not every row passed.
 EXPLORER_SELECT_DELAY_MS = 120
+PLUGIN_CARDS_FILE = "plugin-cards.json"  # Which plugin settings cards show their details.
 
 _Event = TypeVar("_Event")
 
@@ -669,6 +670,7 @@ class LauncherController(QObject):
             plugins=self.plugin_refresh,
             plugin_folder=str(self.own_plugin_folder),
             plugin_sources=self.plugin_sources,
+            plugin_cards=self.data_dir / PLUGIN_CARDS_FILE,
             restart=self.restart,
         )
         dialog.finished.connect(self._settings_closed)

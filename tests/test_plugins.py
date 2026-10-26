@@ -645,11 +645,15 @@ class PluginUiTest(unittest.TestCase):
         card = dialog.plugin_pages.cards[0]
         self.assertIn("3 items", card.status.text())
         self.assertEqual(dialog.plugin_pages.settings_sections, [card])
+        self.assertFalse(card.keywords.isVisibleTo(card))  # Folded until unfolded.
+        card.fold.click()
         self.assertTrue(card.keywords.isVisibleTo(card))
-        card.enabled.setChecked(False)  # Turned off, the card folds to its switch.
+        card.enabled.setChecked(False)  # Turned off, the card folds to its header.
         self.assertFalse(card.keywords.isVisibleTo(card))
         self.assertTrue(card.enabled.isVisibleTo(card))
+        self.assertFalse(card.fold.isEnabled())
         card.enabled.setChecked(True)
+        self.assertTrue(card.keywords.isVisibleTo(card))
         card.keywords.setText("ff, fff")
         card.boost.setValue(20)
         edited = dialog.read_settings()
@@ -657,6 +661,47 @@ class PluginUiTest(unittest.TestCase):
         self.assertEqual(
             (config.keywords, config.boost, config.options), (("ff", "fff"), 20, {"count": 3})
         )
+
+    def test_the_card_shows_the_manifests_icon(self):
+        from winlauncher.ui.plugin_settings import _plugin_icon
+        from winlauncher.ui.widgets import line_icon
+
+        folder = self.root.parent / "jira"
+        (folder / "assets").mkdir(parents=True)
+        (folder / "plugin.py").write_text("", encoding="utf-8")
+        (folder / "plugin.toml").write_text('icon = "assets/jira.svg"', encoding="utf-8")
+        (folder / "assets" / "jira.svg").write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" '
+            'height="8"/></svg>',
+            encoding="utf-8",
+        )
+        plug = line_icon("plug").cacheKey()
+        source = PluginSource("jira", folder / "plugin.py")
+        self.assertNotEqual(_plugin_icon(self.plugin, source).cacheKey(), plug)
+        self.assertEqual(_plugin_icon(self.plugin, PluginSource("fake")).cacheKey(), plug)
+
+    def test_unfolded_cards_are_remembered_across_dialogs(self):
+        from winlauncher.ui.settings import SettingsDialog
+
+        remembered = self.root.parent / "plugin-cards.json"
+
+        def open_dialog() -> SettingsDialog:
+            dialog = SettingsDialog(
+                self.controller.settings,
+                website_icons=self.controller.website_icons,
+                plugins=self.controller.plugin_refresh,
+                plugin_cards=remembered,
+            )
+            self.addCleanup(dialog.deleteLater)
+            return dialog
+
+        open_dialog().plugin_pages.cards[0].fold.click()
+        self.assertEqual(json.loads(remembered.read_text(encoding="utf-8")), ["fake"])
+        card = open_dialog().plugin_pages.cards[0]
+        self.assertTrue(card.fold.isChecked())
+        self.assertTrue(card.keywords.isVisibleTo(card))
+        remembered.write_text("not json", encoding="utf-8")
+        self.assertFalse(open_dialog().plugin_pages.cards[0].fold.isChecked())
 
 
 if __name__ == "__main__":

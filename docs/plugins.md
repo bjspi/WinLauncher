@@ -82,7 +82,8 @@ Nothing from a source loads until you install or activate it. Both first install
 the Python packages the plugin needs (`requires`, see below) into WinLauncher's
 environment, and the plugin is on from the next start; the page offers to restart
 right away. Its keywords and options are then under **Settings → Plugin
-settings**, one card per plugin; switching one off folds its card. WinLauncher checks its sources every 6 hours and announces a new
+settings**, one card per plugin with its icon; unfold a card to see them. A card
+that is off shows only its header. WinLauncher checks its sources every 6 hours and announces a new
 version of an installed plugin in a tray message.
 
 Repositories are fetched with git, so git must be installed. A private one works

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -10,7 +12,7 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 from winlauncher.catalog.model import path_key
 from winlauncher.plugins.api import Plugin, PluginCommand, PluginOption
 from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig
+from winlauncher.plugins.folders import ManifestError, OfferedPlugin, read_manifest
 from winlauncher.plugins.registry import PluginSource
 from winlauncher.settings import BOOST_RANGE, Settings
 from winlauncher.ui.messages import ERROR, INFO, message
@@ -29,10 +32,50 @@ from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.settings import NumberField, _note, _sized, _split_commas, _with_unit
 from winlauncher.ui.source_settings import SourceSection
-from winlauncher.ui.widgets import Card, ToggleSwitch, section_title
+from winlauncher.ui.widgets import Card, ToggleSwitch, line_icon, section_title
 
 KEYWORD_FIELD_WIDTH = 160  # Room for a few keywords, separated by commas.
 TEXT_OPTION_WIDTH = 220
+logger = logging.getLogger(__name__)
+
+
+class UnfoldedCards:
+    """The plugins whose card shows its details, remembered across starts.
+
+    How the page looks is no setting: it is written at once, apart from Save and
+    Cancel. A file that cannot be read or written only loses what was remembered.
+    """
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.plugin_ids = self._read()
+
+    def __contains__(self, plugin_id: str) -> bool:
+        return plugin_id in self.plugin_ids
+
+    def remember(self, plugin_id: str, unfolded: bool) -> None:
+        if unfolded:
+            self.plugin_ids.add(plugin_id)
+        else:
+            self.plugin_ids.discard(plugin_id)
+        if self.path is None:
+            return
+        try:
+            self.path.write_text(json.dumps(sorted(self.plugin_ids)), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Unfolded plugin cards could not be saved: %s", exc)
+
+    def _read(self) -> set[str]:
+        if self.path is None or not self.path.is_file():
+            return set()
+        try:
+            stored = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("Unfolded plugin cards could not be read: %s", exc)
+            return set()
+        if not isinstance(stored, list):
+            return set()
+        return {plugin_id for plugin_id in stored if isinstance(plugin_id, str)}
 
 
 class PluginCard(Card):
@@ -44,6 +87,7 @@ class PluginCard(Card):
         config: PluginConfig,
         scheduler: PluginScheduler,
         edited_settings: Callable[[], Settings],
+        unfolded: UnfoldedCards,
     ):
         super().__init__(plugin.label)
         self.plugin, self.scheduler = plugin, scheduler
@@ -51,8 +95,12 @@ class PluginCard(Card):
         self.original = config
         self.enabled = ToggleSwitch(f"Use the {plugin.label} plugin")
         self.enabled.setChecked(config.enabled)
-        self.add_row(plugin.label, plugin.description, self.enabled)
         source = scheduler.host.source(plugin.id)
+        self.fold = self.add_header(
+            _plugin_icon(plugin, source), plugin.label, plugin.description, self.enabled
+        )
+        self.fold.setChecked(plugin.id in unfolded)
+        self.fold.toggled.connect(partial(unfolded.remember, plugin.id))
         version = QLabel(f"Version {source.version}" if source.version else "No version")
         version.setObjectName("unit")
         self.add_row("Installed from", _source_location(source), version)
@@ -110,8 +158,16 @@ class PluginCard(Card):
             self.command_buttons.append(button)
         self.add_row("Status", "", actions)
         self.add_block("", "", self.status)
-        self.fold_under(self.enabled)
+        self.enabled.toggled.connect(self._show_details)
+        self.fold.toggled.connect(self._show_details)
+        self._show_details()
         self.show_status()
+
+    def _show_details(self) -> None:
+        """Details show while unfolded; a plugin that is off shows its header only."""
+        on = self.enabled.isChecked()
+        self.fold.setEnabled(on)
+        self.show_details(on and self.fold.isChecked())
 
     def _add_option(self, option: PluginOption, value: object) -> None:
         if isinstance(value, bool):
@@ -208,14 +264,21 @@ class PluginPages(QObject):
         parent: QObject,
         sources: SourceWatcher | None = None,
         restart: Callable[[], None] | None = None,
+        unfolded_file: Path | None = None,
     ):
+        """`unfolded_file` remembers which cards show their details; None forgets it."""
         super().__init__(parent)  # Ends the status connection with the dialog.
         self.original = settings
         self.current = current  # The dialog's other edits, for commands run before saving.
         host = self.host = scheduler.host
+        unfolded = UnfoldedCards(unfolded_file)
         self.cards = [
             PluginCard(
-                plugin, host.config(plugin.id, settings.plugins), scheduler, self.edited_settings
+                plugin,
+                host.config(plugin.id, settings.plugins),
+                scheduler,
+                self.edited_settings,
+                unfolded,
             )
             for plugin in host.plugins
         ]
@@ -318,3 +381,20 @@ def _source_location(source: PluginSource) -> str:
     if source.path is not None:
         return str(source.path)
     return f"Installed package {source.origin}"
+
+
+def _plugin_icon(plugin: Plugin, source: PluginSource) -> QIcon:
+    """The manifest's icon, as under Available plugins; else the plugin's own, else a plug."""
+    for path in (_manifest_icon(source), plugin.icon):
+        if path and not (icon := QIcon(str(path))).isNull():
+            return icon
+    return line_icon("plug")
+
+
+def _manifest_icon(source: PluginSource) -> Path | None:
+    if source.folder is None:
+        return None
+    try:
+        return OfferedPlugin(source.folder, read_manifest(source.folder)).icon
+    except ManifestError:
+        return None
