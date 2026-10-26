@@ -696,6 +696,12 @@ click opens the launcher. Restart starts a replacement process that waits for th
 running one to release its instance lock, so two keyboard hooks never run at once. Clear search
 history asks for confirmation first and keeps favorites.
 
+Autostart reads and writes its per-user `.lnk` through Windows' `IShellLink` and
+`IPersistFile`, without Windows Script Host. Its description, launch arguments
+and working directory remain unchanged. Writes
+replace the file atomically; failed saves, unreadable files and unrelated
+shortcuts preserve the original file.
+
 Updates follow release tags (`vX.Y.Z`), never unreleased commits, because only a
 release ships the matching prebuilt Rust engine. When git is installed, WinLauncher
 asks the remote for its tags (`git ls-remote`) shortly after start and every 30
