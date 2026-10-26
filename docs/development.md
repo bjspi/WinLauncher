@@ -17,6 +17,14 @@ WinLauncher starts quietly in the tray; press <kbd>Ctrl</kbd> <kbd>Ctrl</kbd> to
 Starting it again opens the running instance's search bar, unless the second start
 uses `--background`.
 
+## Local Rust build files
+
+Debug builds omit debug symbols and incremental compiler state to keep disk use
+small. After local Rust checks, remove their temporary files with
+`cargo clean --manifest-path native/Cargo.toml --profile dev`. This keeps release
+builds and installed Python extensions. The next Rust check recompiles its dependencies.
+Build output is excluded from Git and cloud backup.
+
 ## Search performance
 
 `tools\benchmark_search.py` times a fixed list of queries against a catalog file
