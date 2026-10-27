@@ -1384,10 +1384,15 @@ class UiFlowTest(unittest.TestCase):
         with (
             patch("winlauncher.ui.controller.QProcess.startDetached", return_value=True) as start,
             patch("winlauncher.ui.controller.QApplication.instance") as application,
+            patch(
+                "winlauncher.ui.controller.application_command",
+                side_effect=lambda arguments: ["host.exe", *arguments],
+            ),
         ):
             c.restart()
         _program, arguments, _cwd = start.call_args.args
-        self.assertEqual(arguments[:3], ["-m", "winlauncher", "--replace"])
+        self.assertEqual(_program, "host.exe")
+        self.assertEqual(arguments[0], "--replace")
         self.assertIn(str(c.data_dir), arguments)
         self.assertIn("--no-hooks", arguments)
         self.assertIn("--show", arguments)  # The launcher was open, so it reopens.

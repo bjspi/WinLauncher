@@ -34,6 +34,7 @@ def child(data: Path) -> None:
     QTimer.singleShot(12000, app.quit)
     with (
         patch.object(entry, "QApplication", return_value=app),
+        patch.object(entry, "_migrate_launcher", return_value=False),
         patch.object(LauncherWindow, "present", present),
     ):
         if os.environ.get("WINLAUNCHER_TEST_START_BARRIER"):

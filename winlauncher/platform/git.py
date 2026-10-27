@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from winlauncher.platform.startup import PACKAGE_PARENT
+from winlauncher.platform.launcher import PACKAGE_PARENT
 
 GIT_QUERY_TIMEOUT_SECONDS = 10
 # A release's changes stay readable in a text box; a huge diff is cut off.

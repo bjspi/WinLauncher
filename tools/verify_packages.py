@@ -19,6 +19,7 @@ PRIVATE_FOLDERS = {".analysis", ".git", ".venv", "__pycache__", ".runtime"}
 PRIVATE_NAMES = {".nobackup", ".no-backup"}
 PRIVATE_SUFFIXES = {".exe", ".dll", ".gzf", ".pyc", ".sqlite3", ".log", ".png"}
 REQUIRED_NAMES = {"LICENSE", "THIRD_PARTY_NOTICES.md"}
+PUBLIC_ARTIFACTS = {"winlauncher/platform/bin/winlauncher-host.exe", "docs/images/icon.png"}
 SDIST_SAMPLES = ("docs/architecture.md", "docs/specification.md", "tests/test_ui_flow.py")
 NATIVE_LICENSES = {"LICENSE", "THIRD_PARTY_LICENSES.txt"}
 
@@ -51,7 +52,9 @@ def check_no_private_artifacts(files: dict[str, bytes]) -> None:
         path = Path(name)
         assert not PRIVATE_FOLDERS.intersection(path.parts), f"Private folder: {name}"
         assert path.name not in PRIVATE_NAMES, f"Backup marker: {name}"
-        assert path.suffix not in PRIVATE_SUFFIXES, f"Binary or private artifact: {name}"
+        assert path.suffix not in PRIVATE_SUFFIXES or name in PUBLIC_ARTIFACTS, (
+            f"Binary or private artifact: {name}"
+        )
 
 
 def check_licenses(files: dict[str, bytes]) -> None:
@@ -64,6 +67,10 @@ def verify(archive: Path) -> int:
     if archive.suffix == ".whl":
         files = wheel_files(archive)
         sources = [p.relative_to(ROOT).as_posix() for p in (ROOT / "winlauncher").rglob("*.py")]
+        sources += [
+            "winlauncher/platform/bin/winlauncher-host.exe",
+            "winlauncher/platform/bin/winlauncher-host.json",
+        ]
         check_sources_current(files, sources)
     else:
         files = sdist_files(archive)
@@ -93,6 +100,11 @@ def verify_native(archive: Path) -> int:
 
 
 def main() -> int:
+    from build_loader import OUTPUT, check_current
+
+    check_current()
+    for path in build_paths():
+        assert path not in OUTPUT.read_bytes(), "The loader contains a local build path"
     for archive in sorted((ROOT / "dist").glob("winlauncher_native-*.whl")):
         count = verify_native(archive)
         print(f"Verified {archive.name}: {count} files, licenses, no local build paths")

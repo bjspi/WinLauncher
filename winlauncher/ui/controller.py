@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import os
 import queue
-import sys
 import time
 from collections.abc import Iterator
 from dataclasses import replace
@@ -39,8 +38,9 @@ from winlauncher.platform.gesture import (
     ViewKind,
 )
 from winlauncher.platform.git import release_changes
+from winlauncher.platform.launcher import PACKAGE_PARENT, application_command
 from winlauncher.platform.shell import folder_shortcuts, indexed_application_roots
-from winlauncher.platform.startup import PACKAGE_PARENT, StartupShortcut
+from winlauncher.platform.startup import StartupShortcut
 from winlauncher.platform.store_apps import store_app_folder
 from winlauncher.platform.windows_tools import windows_tools_folder
 from winlauncher.plugins.host import PluginHost
@@ -913,13 +913,14 @@ class LauncherController(QObject):
 
     def restart(self) -> None:
         """Start a replacement that waits for this process's lock, then quit."""
-        arguments = ["-m", "winlauncher", "--replace", "--data-dir", str(self.data_dir)]
+        arguments = ["--replace", "--data-dir", str(self.data_dir)]
         if self.window.isVisible():
             arguments.append("--show")
         if not self.hooks_requested:
             arguments.append("--no-hooks")
         self._stop_keyboard()  # Never run two global keyboard hooks at once.
-        if not QProcess.startDetached(sys.executable, arguments, str(PACKAGE_PARENT)):
+        command = application_command(arguments)
+        if not QProcess.startDetached(command[0], command[1:], str(PACKAGE_PARENT)):
             self._start_keyboard()
             messages.message(
                 self.window,
