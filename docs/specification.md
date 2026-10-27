@@ -707,6 +707,12 @@ Python package tools continue using the real interpreter. A host setup failure i
 logged and falls back to Python. Windows may require enabling the new tray entry
 once because its executable path changed.
 
+Host setup also installs `WinLauncher.lnk` in the current user's Start-menu
+Programs folder. It uses the host's icon and `--show`, so Windows-key search opens
+the launcher or shows an already running instance. This shortcut remains when
+autostart is disabled. Unchanged links are not rewritten; unrelated or unreadable
+links are preserved, and failed saves leave the original intact.
+
 The tray menu offers Search, Refresh catalog, Settings, Start with Windows, Index
 status, Clear search history, Check for updates, About, Restart and Quit. A single
 click opens the launcher. Restart starts a replacement process that waits for the

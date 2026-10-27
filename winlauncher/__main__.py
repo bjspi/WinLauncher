@@ -38,7 +38,7 @@ from winlauncher.platform.launcher import (
     install_launcher,
     running_in_host,
 )
-from winlauncher.platform.startup import StartupShortcut
+from winlauncher.platform.startup import StartupShortcut, install_start_menu_shortcut
 from winlauncher.settings import Appearance
 from winlauncher.ui.controller import LauncherController
 from winlauncher.ui.messages import ERROR, PRIMARY, WARNING, message, show_message
@@ -237,11 +237,15 @@ def _serve_show_requests(server: QLocalServer, controller: LauncherController) -
 
 
 def _migrate_launcher(data_dir: Path) -> bool:
-    """Repair PATH/autostart, then hand a legacy Python start to the branded host."""
+    """Repair PATH and shortcuts, then hand a legacy Python start to the branded host."""
     try:
         host = install_launcher()
         if host is None:
             return False
+        try:
+            install_start_menu_shortcut(host)
+        except OSError:
+            logging.exception("Could not install the Start-menu shortcut; keeping the original")
         try:
             StartupShortcut(data_dir).migrate()
         except OSError:

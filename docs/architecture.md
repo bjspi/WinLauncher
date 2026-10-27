@@ -103,7 +103,9 @@ pip and Python subprocesses use that interpreter. Application starts use
 parsing, and Python's exit code becomes the process exit code.
 
 The elected instance finishes a pending update, installs or refreshes the host,
-migrates an owned Startup shortcut, and hands a legacy Python start to the host.
+installs the Start-menu shortcut through `platform/startup.py`, migrates an owned
+Startup shortcut, and hands a legacy Python start to the host. The Start-menu link
+uses `--show` and remains available when automatic startup is disabled.
 The replacement waits for the same data-directory lock. Migration preserves the
 shortcut's original arguments and custom data directory, never enables absent
 autostart, and never replaces an unrelated command or shortcut. Updating a running

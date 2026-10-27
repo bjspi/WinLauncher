@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from winlauncher.platform import launcher
+from winlauncher.platform import launcher, startup
 from winlauncher.platform.shortcuts import load_shortcut, write_target_shortcut
 from winlauncher.platform.startup import SHORTCUT_DESCRIPTION, StartupShortcut
 
@@ -144,6 +144,48 @@ class AutostartTest(unittest.TestCase):
                 self.startup.migrate()
                 self.assertFalse(self.startup.is_enabled())
                 self.assertEqual(self.startup.path.read_bytes(), before)
+
+    def test_start_menu_shortcut_opens_search_and_survives_disabling_autostart(self):
+        host = self.folder / "winlauncher.exe"
+        programs = self.folder / "programs"
+        with patch.object(startup, "_user_programs_folder", return_value=programs):
+            startup.install_start_menu_shortcut(host)
+            path = programs / startup.SHORTCUT_NAME
+            link = load_shortcut(path)
+            self.assertEqual(Path(link.GetPath(0)[0]), host)
+            self.assertEqual(link.GetArguments(), "--show")
+            self.assertEqual(link.GetIconLocation(), (str(host), 0))
+            del link
+            modified = path.stat().st_mtime_ns
+            startup.install_start_menu_shortcut(host)
+            self.assertEqual(path.stat().st_mtime_ns, modified)
+            self.assertFalse(self.startup.is_enabled())
+            self.startup.set_enabled(True)
+            self.startup.set_enabled(False)
+            self.assertTrue(path.exists())
+
+    def test_start_menu_shortcut_preserves_foreign_unreadable_and_failed_saves(self):
+        import pywintypes
+
+        host = self.folder / "winlauncher.exe"
+        path = self.folder / startup.SHORTCUT_NAME
+        with patch.object(startup, "_user_programs_folder", return_value=self.folder):
+            write_target_shortcut(path, sys.executable, description=startup.START_MENU_DESCRIPTION)
+            for content in (path.read_bytes(), b"Not a Windows shortcut"):
+                path.write_bytes(content)
+                with self.assertRaises(OSError):
+                    startup.install_start_menu_shortcut(host)
+                self.assertEqual(path.read_bytes(), content)
+            write_target_shortcut(path, str(host), description=startup.START_MENU_DESCRIPTION)
+            before = path.read_bytes()
+            with patch(
+                "winlauncher.platform.shortcuts._save",
+                side_effect=pywintypes.com_error(-2147467259, "Save failed", None, None),
+            ):
+                with self.assertRaisesRegex(OSError, "Save failed"):
+                    startup.install_start_menu_shortcut(host)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(list(self.folder.iterdir()), [path])
 
 
 if __name__ == "__main__":
