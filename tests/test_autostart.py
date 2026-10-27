@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from winlauncher.platform import launcher
 from winlauncher.platform.shortcuts import load_shortcut, write_target_shortcut
 from winlauncher.platform.startup import SHORTCUT_DESCRIPTION, StartupShortcut
 
@@ -22,6 +23,9 @@ class AutostartTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="winlauncher-startup-link-")
         self.addCleanup(temporary.cleanup)
         self.folder = Path(temporary.name).resolve()
+        environment = patch.dict(os.environ, XDG_BIN_HOME=str(self.folder / "bin"))
+        environment.start()
+        self.addCleanup(environment.stop)
         self.data = self.folder / "data with spaces"
         self.startup = StartupShortcut(self.data, startup_folder=self.folder)
         pythoncom.CoInitialize()
@@ -89,6 +93,57 @@ class AutostartTest(unittest.TestCase):
                 self.startup.set_enabled(True)
         self.assertEqual(self.startup.path.read_bytes(), before)
         self.assertEqual(list(self.folder.iterdir()), [self.startup.path])
+
+    def test_migration_preserves_data_arguments_and_does_not_enable_absent_autostart(self):
+        with patch.object(launcher, "_add_to_user_path"):
+            host = launcher.install_launcher()
+        if host is None:
+            self.skipTest("The host is unavailable on this architecture")
+        self.startup.migrate()
+        self.assertFalse(self.startup.path.exists())
+        path = self.startup.path
+        before = subprocess.list2cmdline(
+            ["-m", "winlauncher", "--background", "--data-dir", str(self.data), "--no-hooks"]
+        )
+        write_target_shortcut(
+            path,
+            str(launcher.windowless_python()),
+            before,
+            description=SHORTCUT_DESCRIPTION,
+            working_directory=str(self.folder),
+        )
+        # This start uses another data directory: migration must keep the saved one.
+        with patch("win32com.client.Dispatch", side_effect=AssertionError("WScript loaded")):
+            StartupShortcut(self.folder / "other data", startup_folder=self.folder).migrate()
+        shortcut = load_shortcut(path)
+        self.assertEqual(Path(shortcut.GetPath(0)[0]), host)
+        self.assertEqual(shortcut.GetArguments(), before.removeprefix("-m winlauncher "))
+        self.assertEqual(Path(shortcut.GetWorkingDirectory()), self.folder)
+        self.assertEqual(shortcut.GetIconLocation(), (str(host), 0))
+        self.assertTrue(self.startup.is_enabled())
+        del shortcut
+        unchanged = path.stat().st_mtime_ns
+        self.startup.migrate()
+        self.assertEqual(path.stat().st_mtime_ns, unchanged)
+        self.startup.set_enabled(False)
+        self.assertFalse(path.exists())
+
+    def test_migration_leaves_unrelated_and_similarly_named_modules_untouched(self):
+        with patch.object(launcher, "_add_to_user_path"):
+            if launcher.install_launcher() is None:
+                self.skipTest("The host is unavailable on this architecture")
+        for description, arguments in (
+            ("Another application", "-m winlauncher --background"),
+            (SHORTCUT_DESCRIPTION, "-m winlauncher-other --background"),
+        ):
+            with self.subTest(description=description, arguments=arguments):
+                write_target_shortcut(
+                    self.startup.path, sys.executable, arguments, description=description
+                )
+                before = self.startup.path.read_bytes()
+                self.startup.migrate()
+                self.assertFalse(self.startup.is_enabled())
+                self.assertEqual(self.startup.path.read_bytes(), before)
 
 
 if __name__ == "__main__":

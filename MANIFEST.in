@@ -1,6 +1,10 @@
 include README.md LICENSE THIRD_PARTY_NOTICES.md Start-WinLauncher.ps1
 recursive-include docs *.md
+include docs/images/icon.png
 recursive-include winlauncher/ui/assets *.svg
+recursive-include winlauncher/platform/bin *.exe *.json
+recursive-include loader *.rs *.toml *.lock *.rc
+prune loader/target
 recursive-include tools *.py
 recursive-include tests *.py
 global-exclude .nobackup .no-backup

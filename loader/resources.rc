@@ -1,0 +1,29 @@
+1 ICON "winlauncher.ico"
+
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0
+FILEOS 0x40004L
+FILETYPE 1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "WinLauncher\0"
+            VALUE "FileVersion", "1.0.0\0"
+            VALUE "InternalName", "winlauncher-host\0"
+            VALUE "OriginalFilename", "winlauncher.exe\0"
+            VALUE "ProductName", "WinLauncher\0"
+            VALUE "ProductVersion", "1.0.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
+WINLAUNCHER_HOST RCDATA { L"bjspi.WinLauncher.Host.1\0" }

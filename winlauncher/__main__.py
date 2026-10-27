@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import logging
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -30,6 +31,14 @@ from winlauncher.install import (
     take_pending_reinstall,
 )
 from winlauncher.platform.git import checkout_root
+from winlauncher.platform.launcher import (
+    NO_CONSOLE,
+    PACKAGE_PARENT,
+    application_command,
+    install_launcher,
+    running_in_host,
+)
+from winlauncher.platform.startup import StartupShortcut
 from winlauncher.settings import Appearance
 from winlauncher.ui.controller import LauncherController
 from winlauncher.ui.messages import ERROR, PRIMARY, WARNING, message, show_message
@@ -157,10 +166,16 @@ def _finish_update(root: Path, data_dir: Path) -> None:
     process.errorOccurred.connect(waiting.quit)  # A failed start emits no `finished`.
     QTimer.singleShot(REINSTALL_TIMEOUT_MS, process.kill)
     process.start(sys.executable, reinstall_arguments())
-    waiting.exec()
+    # FailedToStart can be emitted synchronously, before the event loop begins.
+    if process.state() != QProcess.ProcessState.NotRunning:
+        waiting.exec()
     progress.close()
     output = bytes(process.readAll().data()).decode("utf-8", errors="replace").strip()
-    succeeded = process.exitStatus() == QProcess.ExitStatus.NormalExit and process.exitCode() == 0
+    succeeded = (
+        process.error() != QProcess.ProcessError.FailedToStart
+        and process.exitStatus() == QProcess.ExitStatus.NormalExit
+        and process.exitCode() == 0
+    )
     logging.info("Update reinstall finished: succeeded=%s output=%s", succeeded, output)
     if succeeded:
         finish_reinstall(data_dir)
@@ -173,7 +188,7 @@ def _finish_update(root: Path, data_dir: Path) -> None:
         f"To finish it now, run:\n{reinstall_command(root)}",
         [("OK", PRIMARY)],
         WARNING,
-        details=output or "No output from pip.",
+        details=output or process.errorString(),
     )
 
 
@@ -219,6 +234,31 @@ def _serve_show_requests(server: QLocalServer, controller: LauncherController) -
                 receive(client)
 
     server.newConnection.connect(accept_clients)
+
+
+def _migrate_launcher(data_dir: Path) -> bool:
+    """Repair PATH/autostart, then hand a legacy Python start to the branded host."""
+    try:
+        host = install_launcher()
+        if host is None:
+            return False
+        try:
+            StartupShortcut(data_dir).migrate()
+        except OSError:
+            logging.exception("Could not migrate the Startup shortcut; keeping the original")
+        if running_in_host(host):
+            return False
+        arguments = list(sys.argv[1:])
+        if "--replace" not in arguments:
+            arguments.append("--replace")
+        subprocess.Popen(
+            application_command(arguments), cwd=PACKAGE_PARENT, creationflags=NO_CONSOLE
+        )
+        logging.info("Handing the application to its Windows host: %s", host)
+        return True
+    except OSError:
+        logging.exception("Could not install or start the Windows host; continuing with Python")
+        return False
 
 
 def main() -> int:
@@ -268,6 +308,8 @@ def main() -> int:
         )
         if take_pending_reinstall(data_dir) and (root := checkout_root()) is not None:
             _finish_update(root, data_dir)
+        if _migrate_launcher(data_dir):
+            return 0
         server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         if not server.listen(instance):
             raise OSError(server.errorString())

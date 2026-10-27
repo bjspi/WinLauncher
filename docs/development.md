@@ -20,10 +20,46 @@ uses `--background`.
 ## Local Rust build files
 
 Debug builds omit debug symbols and incremental compiler state to keep disk use
-small. After local Rust checks, remove their temporary files with
-`cargo clean --manifest-path native/Cargo.toml --profile dev`. This keeps release
-builds and installed Python extensions. The next Rust check recompiles its dependencies.
-Build output is excluded from Git and cloud backup.
+small. Run `python tools/check.py` for the normal local checks (Ruff, both Rust
+crates and both Python search engines). Its `finally` block removes both crates'
+debug builds even after a failed check. After standalone Rust checks, use
+`cargo clean --manifest-path native/Cargo.toml --profile dev` and the same command
+with `loader/Cargo.toml`. Release builds, installed Python extensions and backup
+markers stay in place. The next Rust check recompiles its dependencies.
+Build output is excluded from Git and cloud backup; CI retains its build cache.
+
+## Windows loader
+
+The small Rust host has its own version (`1.0.0` initially). Do not bump it for
+ordinary application releases. Its prebuilt Windows x64 template is committed in
+`winlauncher/platform/bin`, like pip's launcher stubs, and ships in wheels and
+source distributions. It works without the optional Rust search engine.
+
+After changing `loader/`, the build script or `docs/images/icon.png`, rebuild on
+Windows with Rust/MSVC and the Windows SDK installed:
+
+```powershell
+python tools/build_loader.py
+python tools/build_loader.py --check
+cargo fmt --manifest-path loader/Cargo.toml --check
+cargo clippy --manifest-path loader/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path loader/Cargo.toml --locked
+python -m unittest discover -s tests -p test_loader.py -v
+```
+
+Commit the template and its JSON fingerprint with the source change. The
+fingerprint covers the host sources/build instructions/icon, normalizes text line
+endings, and checks the binary digest. CI checks freshness and tests Rust and the
+actual host on Python 3.11–3.14; packaging reuses the template instead of recompiling
+it for every app release. The binary has no third-party Rust dependencies.
+
+Runtime setup configures a copy at `~/.local/bin/winlauncher.exe`; it records the
+interpreter, DLL and package paths as Windows resources. The actual host's image
+path identifies it; `sys.executable` intentionally remains Python. Tests isolate
+PATH and Startup changes, exercise Unicode/quoting, venvs, Qt and Python children,
+replace a running host, and cover legacy start → pending update → host → Restart.
+On Windows, Qt's process pipes need a normal desktop process environment; a
+restricted sandbox may reject them before process creation.
 
 ## Search performance
 
