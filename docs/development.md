@@ -62,6 +62,8 @@ PATH and Startup changes, exercise Unicode/quoting, venvs, Qt and Python childre
 replace a running host, and cover legacy start → pending update → host → Restart.
 On Windows, Qt's process pipes need a normal desktop process environment; a
 restricted sandbox may reject them before process creation.
+Host tests clear `PYTHONFAULTHANDLER` in windowless children because CPython's
+startup fault handler requires stderr; the parent test suite keeps crash diagnostics.
 
 ## Search performance
 

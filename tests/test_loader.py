@@ -55,8 +55,12 @@ class LoaderTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.folder = Path(temporary.name).resolve()
         self.bin = self.folder / "bin"
+        # CPython's startup fault handler needs stderr, which windowless children lack.
         self.patch_env = patch.dict(
-            os.environ, XDG_BIN_HOME=str(self.bin), QT_QPA_PLATFORM="offscreen"
+            os.environ,
+            XDG_BIN_HOME=str(self.bin),
+            QT_QPA_PLATFORM="offscreen",
+            PYTHONFAULTHANDLER="",
         )
         self.patch_env.start()
         self.addCleanup(self.patch_env.stop)
@@ -315,6 +319,7 @@ class LoaderMigrationTest(unittest.TestCase):
                 XDG_BIN_HOME=str(command_bin),
                 LOADER_TEST_STATE=str(folder),
                 PYTHONPATH=os.pathsep.join([str(folder), str(PROJECT)]),
+                PYTHONFAULTHANDLER="",
             )
             process = subprocess.Popen(
                 [
