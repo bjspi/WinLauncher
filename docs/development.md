@@ -52,6 +52,8 @@ fingerprint covers the host sources/build instructions/icon, normalizes text lin
 endings, and checks the binary digest. CI checks freshness and tests Rust and the
 actual host on Python 3.11–3.14; packaging reuses the template instead of recompiling
 it for every app release. The binary has no third-party Rust dependencies.
+The build uses the installed PySide6 to embed smoothly scaled icon images from
+16 to 256 pixels, including common Windows display-scaling sizes.
 
 Runtime setup configures a copy at `~/.local/bin/winlauncher.exe`; it records the
 interpreter, DLL and package paths as Windows resources. The actual host's image

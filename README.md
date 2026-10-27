@@ -78,14 +78,15 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.15.4"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.15.5"
 winlauncher --show
 ```
 
 On Windows x64, the first start installs a small WinLauncher EXE with its own
-name and icon in `~/.local/bin`, migrates an existing WinLauncher autostart shortcut,
+name and icon in `~/.local/bin`, adds a Start-menu shortcut, migrates an existing WinLauncher autostart shortcut,
 and uses it for future starts and restarts. Python stays in its existing environment;
 no Rust compiler is needed. Windows may ask you to show the new tray entry once.
+Press the Windows key and search for WinLauncher to open it, even with autostart disabled.
 
 The `[rust]` extra downloads the matching Rust search engine wheel from the
 GitHub release — no compiler needed. When a new release is out, WinLauncher says

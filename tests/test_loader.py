@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -167,6 +168,7 @@ class LoaderTest(unittest.TestCase):
 
     def test_executable_has_stable_winlauncher_metadata_and_icon(self):
         import win32api
+        from PySide6.QtGui import QImage
 
         path = str(launcher.TEMPLATE.resolve())
         version = win32api.GetFileVersionInfo(path, "\\StringFileInfo\\040904b0\\FileDescription")
@@ -176,7 +178,21 @@ class LoaderTest(unittest.TestCase):
         )
         module = win32api.LoadLibraryEx(path, 0, launcher.LOAD_LIBRARY_AS_DATAFILE)
         try:
-            self.assertTrue(win32api.EnumResourceNames(module, 14))
+            groups = win32api.EnumResourceNames(module, 14)
+            self.assertEqual(len(groups), 1)
+            group = win32api.LoadResource(module, 14, groups[0])
+            sizes = set()
+            for offset in range(6, len(group), 14):
+                width, height, _, _, _, _, _, resource = struct.unpack_from(
+                    "<BBBBHHIH", group, offset
+                )
+                dimensions = (width or 256, height or 256)
+                sizes.add(dimensions)
+                image = QImage.fromData(win32api.LoadResource(module, 3, resource))
+                self.assertEqual((image.width(), image.height()), dimensions)
+            self.assertEqual(
+                sizes, {(size, size) for size in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)}
+            )
         finally:
             win32api.FreeLibrary(module)
 
@@ -278,6 +294,7 @@ class LoaderMigrationTest(unittest.TestCase):
                 state = Path(os.environ["LOADER_TEST_STATE"])
                 launcher._add_to_user_path = lambda folder: (state / "path-updated").touch()
                 startup._user_startup_folder = lambda: state / "startup"
+                startup._user_programs_folder = lambda: state / "programs"
                 code = "import json,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps({'python':sys.executable}))"
                 install.reinstall_arguments = lambda: ["-c", code, str(state / "update.json")]
                 original = LauncherController.__init__
@@ -353,6 +370,10 @@ class LoaderMigrationTest(unittest.TestCase):
                         '"' + str(folder / "custom autostart data") + '"', link.GetArguments()
                     )
                     self.assertNotIn("-m winlauncher", link.GetArguments())
+                    del link
+                    link = load_shortcut(folder / "programs" / "WinLauncher.lnk")
+                    self.assertEqual(Path(link.GetPath(0)[0]), command_bin / launcher.HOST_NAME)
+                    self.assertEqual(link.GetArguments(), "--show")
                     del link
                 finally:
                     pythoncom.CoUninitialize()

@@ -1,4 +1,4 @@
-"""Manage WinLauncher's per-user Windows Startup shortcut.
+"""Manage WinLauncher's per-user Windows Startup and Start-menu shortcuts.
 
 The shortcut file itself is the source of truth. WinLauncher only ever changes a
 shortcut it recognizes as its own and refuses to touch an unrelated one.
@@ -29,6 +29,7 @@ from winlauncher.platform.shortcuts import load_shortcut, write_target_shortcut
 
 SHORTCUT_NAME = "WinLauncher.lnk"
 SHORTCUT_DESCRIPTION = "WinLauncher startup shortcut"
+START_MENU_DESCRIPTION = "WinLauncher application shortcut"
 MODULE_ARGUMENTS = ("-m", "winlauncher", "--background")
 
 _Result = TypeVar("_Result")
@@ -120,32 +121,57 @@ class StartupShortcut:
         return ShortcutState.OWNED if shortcut.owned else ShortcutState.UNRELATED
 
     def _write_shortcut(self, shortcut: _Shortcut | None = None) -> None:
-        """Save into a private temporary folder, then atomically replace the shortcut."""
-        path = self.path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="winlauncher-", dir=path.parent) as folder:
-            temporary = Path(folder) / path.name
-            _with_shortcut(lambda: self._save_shortcut(temporary, shortcut))
-            os.replace(temporary, path)
-
-    def _save_shortcut(self, target: Path, saved: _Shortcut | None) -> None:
-        if saved is None:
+        if shortcut is None:
             command = self._launch_command()
-            saved = _Shortcut(
+            shortcut = _Shortcut(
                 command[0],
                 subprocess.list2cmdline(command[1:]),
                 SHORTCUT_DESCRIPTION,
                 str(PACKAGE_PARENT),
                 (command[0], 0),
             )
-        write_target_shortcut(
-            target,
-            saved.target,
-            saved.arguments,
-            icon=saved.icon,
-            description=saved.description,
-            working_directory=saved.directory,
-        )
+        _write_shortcut(self.path, shortcut)
+
+
+def install_start_menu_shortcut(host: Path) -> None:
+    """Keep a searchable launch command even when automatic startup is disabled."""
+    path = _user_programs_folder() / SHORTCUT_NAME
+    shortcut = _Shortcut(
+        str(host), "--show", START_MENU_DESCRIPTION, str(PACKAGE_PARENT), (str(host), 0)
+    )
+    if path.exists():
+        current = _with_shortcut(lambda: _read_shortcut(path))
+        if current.description != START_MENU_DESCRIPTION or Path(current.target) != host:
+            raise OSError(f"Refusing to change an unrelated shortcut: {path}")
+        if current == shortcut:
+            return
+    _write_shortcut(path, shortcut)
+
+
+def _write_shortcut(path: Path, shortcut: _Shortcut) -> None:
+    """Save privately, then atomically replace the shortcut; failures keep the original."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="winlauncher-", dir=path.parent) as folder:
+        temporary = Path(folder) / path.name
+        _with_shortcut(lambda: _save_shortcut(temporary, shortcut))
+        os.replace(temporary, path)
+
+
+def _save_shortcut(target: Path, shortcut: _Shortcut) -> None:
+    write_target_shortcut(
+        target,
+        shortcut.target,
+        shortcut.arguments,
+        icon=shortcut.icon,
+        description=shortcut.description,
+        working_directory=shortcut.directory,
+    )
+
+
+def _user_programs_folder() -> Path:
+    from win32comext.shell import shell, shellcon
+
+    return Path(shell.SHGetKnownFolderPath(shellcon.FOLDERID_Programs))
 
 
 def _user_startup_folder() -> Path:
@@ -182,6 +208,6 @@ def _call_shortcut(action: Callable[[], _Result]) -> _Result:
     try:
         return action()
     except pywintypes.com_error as exc:
-        message = f"Windows could not access the Startup shortcut: {exc.strerror}"
+        message = f"Windows could not access the shortcut: {exc.strerror}"
     # Raised outside the except block, so no traceback keeps COM objects alive.
     raise OSError(message)

@@ -27,6 +27,7 @@ SOURCES = (
     "tools/build_loader.py",
     "docs/images/icon.png",
 )
+ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
 
 
 def source_hash() -> str:
@@ -63,6 +64,38 @@ def resource_compiler() -> Path:
     return max(candidates, key=lambda path: tuple(map(int, path.parents[1].name.split("."))))
 
 
+def write_icon(path: Path) -> None:
+    """Give Windows native sizes instead of relying on its icon resampling."""
+    from PySide6.QtCore import QBuffer, QIODevice, Qt
+    from PySide6.QtGui import QImage
+
+    source = QImage(str(ROOT / "docs/images/icon.png"))
+    if source.isNull() or source.width() < max(ICON_SIZES) or source.height() < max(ICON_SIZES):
+        raise ValueError("The host icon must be at least 256 by 256 pixels.")
+    entries = bytearray()
+    images = bytearray()
+    offset = 6 + 16 * len(ICON_SIZES)
+    for size in ICON_SIZES:
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        scaled = source.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        if not scaled.save(buffer, "PNG"):
+            raise OSError(f"Cannot encode the {size}px host icon.")
+        png = bytes(buffer.data())
+        dimension = size if size < 256 else 0
+        entries.extend(
+            struct.pack("<BBBBHHII", dimension, dimension, 0, 0, 1, 32, len(png), offset)
+        )
+        images.extend(png)
+        offset += len(png)
+    path.write_bytes(struct.pack("<HHH", 0, 1, len(ICON_SIZES)) + entries + images)
+
+
 def build() -> None:
     """Compile the resource and dependency-free Rust host without local build paths."""
     staging = LOADER / "target" / "resources"
@@ -70,11 +103,7 @@ def build() -> None:
     marker = LOADER / "target" / ".nobackup"
     if not marker.exists():
         marker.touch()
-    png = (ROOT / "docs/images/icon.png").read_bytes()
-    # An ICO may contain a PNG directly; the existing 256px app icon needs no conversion.
-    header = struct.pack("<HHH", 0, 1, 1)
-    entry = struct.pack("<BBBBHHII", 0, 0, 0, 0, 1, 32, len(png), 22)
-    (staging / "winlauncher.ico").write_bytes(header + entry + png)
+    write_icon(staging / "winlauncher.ico")
     # Cargo does not track linker-input contents; a changed name forces relinking.
     resource = staging / f"winlauncher-{source_hash()[:16]}.res"
     subprocess.run(
