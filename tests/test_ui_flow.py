@@ -314,6 +314,10 @@ class UiFlowTest(unittest.TestCase):
     def test_footer_hint_follows_what_enter_acts_on(self):
         self.show_file_result()
         self.assertIn("Ctrl+C copy file", self.window.hint.text())
+        folder = self.root / "hinted"
+        folder.mkdir()
+        self.window.set_results([SearchHit(CatalogItem(folder, ItemKind.FOLDER), 1, "Fixture")], 1)
+        self.assertIn("Tab search inside", self.window.hint.text())
         self.window.set_results([WebsiteTarget("Example", "ex", "https://example.org/")], 1)
         self.assertIn("open in browser", self.window.hint.text())
         self.window.query.setText("2 + 2")
@@ -975,7 +979,8 @@ class UiFlowTest(unittest.TestCase):
                 monitor.assert_not_called()
                 with patch("winlauncher.search.service.select_native", return_value=None) as select:
                     self.tasks.finish(TaskCategory.SEARCH)
-                select.assert_called_once_with()
+                # A scoped search ranks direct entries and deeper matches separately.
+                self.assertEqual(select.call_count, 2)
                 dialog.deleteLater()
 
     def test_hiding_cancels_running_and_debounced_searches(self):
@@ -1088,6 +1093,39 @@ class UiFlowTest(unittest.TestCase):
             self.assertEqual(row.location, str(folder))
             self.assertEqual(row.target, str(document))
             self.assertIsNone(row.file_hit.label)
+
+    def test_tab_searches_inside_the_selected_folder_and_keys_leave_it_again(self):
+        outside = self.root.parent / "Outside roots"
+        nested = outside / "Reports"
+        nested.mkdir(parents=True)
+        (outside / "budget.xlsx").touch()
+        (nested / "q3.pdf").touch()
+        self.window.query.setText(str(outside) + "\\")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.NAVIGATION)
+        rows = [self.window.results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(2)]
+        self.assertEqual(rows[0].file_hit.item.path, nested)  # Folders first.
+        QTest.keyClick(self.window.query, Qt.Key.Key_Tab)
+        self.assertEqual(self.window.scope, nested)
+        self.assertEqual(self.window.query.text(), "")
+        self.assertIn("Reports", self.window.clear_scope.text())
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        # Outside the indexed roots, the chip still lists the folder's live entries.
+        self.assertEqual(self.window.selected_hit().item.path, nested / "q3.pdf")
+        self.assertEqual(self.window.selected_row().location, "")
+        QTest.keyClick(self.window.query, Qt.Key.Key_Tab)
+        self.assertEqual(self.window.scope, nested)  # A file is no folder to enter.
+        QTest.keyClick(self.window.query, Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(self.window.scope, outside)
+        self.window.query.setText("budget")
+        QTest.keyClick(self.window.query, Qt.Key.Key_Backspace)
+        self.assertEqual(self.window.scope, outside)  # Backspace edits typed text first.
+        self.window.query.clear()
+        QTest.keyClick(self.window.query, Qt.Key.Key_Backspace)
+        self.assertIsNone(self.window.scope)
+        self.assertIsNone(self.window.result_scope)
+        self.assertFalse(self.window.clear_scope.isVisible())
 
     def test_explorer_typing_opens_live_folder_in_original_window_on_one_click(self):
         self.window.hide()

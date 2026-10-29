@@ -249,10 +249,12 @@ class Notes(Plugin):
         return [PluginItem(str(f), f.stem, target=str(f), subtitle=str(f.parent)) for f in files]
 ```
 
-- `PluginItem(key, name, target, subtitle, keywords, icon, title, routes, data)`:
+- `PluginItem(key, name, target, subtitle, keywords, icon, title, routes, data, breadcrumbs)`:
   - `key` identifies the item across refreshes.
   - `name` is matched and shown after the label; `title` replaces the whole
     "Label: name" text.
+  - `subtitle` is muted text beside the name. `breadcrumbs` replaces it with the
+    item's location as parts, outermost first (see below).
   - `keywords` also find the item (a username, an email address), a little below
     name matches.
   - `icon` is an image file, such as a cached avatar.
@@ -271,6 +273,31 @@ class Notes(Plugin):
   `context.options` holds the validated values of `options`. A long refresh
   should stop when `context.cancel` is set. `context.log` writes to
   WinLauncher's log.
+
+### Long locations: breadcrumbs
+
+A URL such as
+`https://contoso.sharepoint.com/sites/Finance/Shared%20Documents/Forms/AllItems.aspx?id=…`
+is a poor subtitle: shortened in the middle by characters, it keeps the host
+and the query string, which nobody reads. Give the meaningful parts instead and
+leave out technical ones (`sites`, `Shared Documents`, `Forms`, view pages, ids):
+
+```python
+PluginItem(
+    key=drive_item_id,
+    name="Q3 report.xlsx",
+    target=web_url,  # Opening and copying still use the full URL.
+    breadcrumbs=("Contoso Finance", "Documents", "Controlling", "2026", "Q3"),
+)
+```
+
+The row shows `Contoso Finance › Documents › Controlling › 2026 › Q3`. When that
+does not fit, whole middle parts give way first, so the outermost part (where)
+and the innermost ones (how deep) stay readable:
+`Contoso Finance › … › 2026 › Q3`, then `… › Q3`. Only then are characters
+elided. Each part must be non-empty text; `breadcrumbs` takes precedence over
+`subtitle`, and the full joined text is read to screen readers. Breadcrumbs are
+only shown, never matched: put words users type into `name` or `keywords`.
 
 ### Multiline text options
 

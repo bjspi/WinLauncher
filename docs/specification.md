@@ -458,6 +458,16 @@ shortcut that opens that row. Messages (no matches, invalid query, failures),
 the result count and persistent problems appear below the results only when
 present. The bar can be dragged by its empty areas.
 
+Tab on a selected folder row (including `%NAME%` suggestions and folders found by
+direct navigation) makes that folder the scope chip and clears the query; the
+footer hint says so for folder rows. A search within the chip works like the
+Explorer bar's: live direct entries first, then catalog matches from subfolders,
+with locations relative to the folder, so a folder outside the indexed roots
+still lists its contents. Shift+Tab moves the chip to the parent folder, and
+Backspace in the empty field or a click on the chip removes it. On other rows,
+without a chip, and in the Explorer bar, these keys keep their usual meaning.
+Every newly shown launcher starts without a chip.
+
 Typing in Explorer opens a smaller one-line variant docked to the bottom right of
 that Explorer window, over the date and type columns rather than the names; it
 grows upwards and shows each result's subfolder relative to the searched folder.

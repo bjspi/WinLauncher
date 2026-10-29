@@ -48,11 +48,17 @@ from winlauncher.plugins.search import (
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.settings import Settings, SettingsFile, settings_from_json
+from winlauncher.ui.result_rows import result_row, shortened_breadcrumbs
 from winlauncher.websites import WebsiteShortcut
 
 ANNA = PluginItem("u1", "Anna Schmidt", target="tg://resolve?domain=anna", keywords=("annas",))
 BERND = PluginItem("u2", "Bernd Weber", target="tg://resolve?domain=bernd")
-TEAM = PluginItem("g1", "Team Annahme", target="tg://privatepost?channel=5")
+TEAM = PluginItem(
+    "g1",
+    "Team Annahme",
+    target="tg://privatepost?channel=5",
+    breadcrumbs=("Contoso", "Teams", "Annahme"),
+)
 
 
 class FakePlugin(Plugin):
@@ -591,6 +597,8 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             ({"subtitle": None}, "subtitle must be text"),
             ({"icon": Path("a.jpg")}, "icon must be text"),
             ({"keywords": (1,)}, "keywords must be text"),
+            ({"breadcrumbs": ("Site", " ")}, "breadcrumbs must be non-empty text"),
+            ({"breadcrumbs": ("Site", 3)}, "breadcrumbs must be non-empty text"),
             ({"data": [("a", 1)]}, "data must map names"),
         ):
             with self.subTest(expected=expected), self.assertRaises(ValueError) as caught:
@@ -958,6 +966,39 @@ class PluginUiTest(unittest.TestCase):
         remembered.write_text("not json", encoding="utf-8")
         with self.assertLogs("winlauncher.ui.plugin_settings", "WARNING"):
             self.assertFalse(open_dialog().plugin_pages.cards[0].fold.isChecked())
+
+
+class BreadcrumbTest(unittest.TestCase):
+    """Long plugin locations shorten by whole parts, keeping where and how deep."""
+
+    PARTS = ("Contoso", "Finance", "Controlling", "2026", "Q3", "Reports")
+
+    def shortened(self, width: int) -> str:
+        return shortened_breadcrumbs(self.PARTS, lambda text: len(text) <= width)
+
+    def test_middle_parts_go_first_then_only_the_last_part_remains(self):
+        full = " › ".join(self.PARTS)
+        self.assertEqual(self.shortened(len(full)), full)
+        self.assertEqual(
+            self.shortened(len(full) - 1), "Contoso › … › Controlling › 2026 › Q3 › Reports"
+        )
+        self.assertEqual(self.shortened(30), "Contoso › … › Q3 › Reports")
+        self.assertEqual(self.shortened(20), "… › Reports")
+        self.assertEqual(
+            shortened_breadcrumbs(("Site", "Library"), lambda _text: False), "Site › Library"
+        )
+
+    def test_breadcrumbs_replace_the_subtitle_of_a_plugin_row(self):
+        item = replace(TEAM, subtitle="https://contoso.sharepoint.com/sites/teams/annahme")
+        row = result_row(PluginHit("fake", "Fake", item, 1, ""), None, None)
+        self.assertEqual(row.location, "Contoso › Teams › Annahme")
+        self.assertEqual(row.location_parts, ("Contoso", "Teams", "Annahme"))
+        self.assertIn("Contoso › Teams › Annahme", row.accessible_text)
+        plain = result_row(
+            PluginHit("fake", "Fake", replace(item, breadcrumbs=()), 1, ""), None, None
+        )
+        self.assertEqual(plain.location, item.subtitle)
+        self.assertEqual(plain.location_parts, ())
 
 
 if __name__ == "__main__":
