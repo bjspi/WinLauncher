@@ -184,11 +184,19 @@ learned items through the path identity index.
 
 ## Rust search engine
 
-Explicit environment/home shortcuts are handled first by `search/navigation.py`:
-one directory is enumerated on the search worker, with existing exclusions,
-priority/ranking rules and result limits. No catalog or Rust candidate read is
-needed. Known directory variables are suggested without exposing arbitrary
-environment values; `in:` expands variables for catalog queries as well.
+Absolute paths and explicit environment/home shortcuts are handled first by
+`search/navigation.py`. The parser and syntax highlighting share a purely
+syntactic navigation check. Exact targets are read without enumerating their
+parent; browsing and prefix completion enumerate only one directory on the search
+worker, with existing exclusions, priority/ranking rules and result limits.
+No catalog or Rust candidate read is needed. Known directory variables are
+suggested without exposing arbitrary environment values; `in:` expands variables
+for catalog queries as well. Frozen navigation matches carry the item, explanation
+and optional alias explicitly. `SearchHit.navigation_alias` passes that alias to
+`ui/result_rows.py`, which displays `%NAME%` and its full resolved path for variable
+suggestions and exact references. Catalog identity and every file action continue
+to use the real target; aliases are neither inferred from explanations nor stored
+in the catalog.
 
 `search/native_engine.py` imports the extension once (`native_availability`),
 checks `API_VERSION` and selects the Unicode tables of the running interpreter

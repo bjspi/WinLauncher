@@ -45,7 +45,7 @@ class SearchQuery:
     modified_after: float | None = None
     modified_before: float | None = None
     score_mode: ScoreMode = ScoreMode.COMBINED
-    navigation: str | None = None  # Explicit environment/home path; resolved on a worker.
+    navigation: str | None = None  # Absolute path or environment/home shortcut; worker resolves it.
     min_size: int | None = None  # Inclusive byte bounds; folders have no searchable size.
     max_size: int | None = None
     content_text: str | None = None  # Case-insensitive fnmatch text; native backend only.

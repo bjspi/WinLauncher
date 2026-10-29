@@ -143,7 +143,7 @@ extensions and exclusions ignore accents.
 | `type:file`, `type:folder`, `type:dir`, `type:app` | Restrict item kind; overrides the UI kind button. `t:` is shorthand for `type:` |
 | `ext:pdf,txt`, `ext:pdf;txt`, `ext:(jpg,png)`, `ext:doc*` | Any listed extension/fnmatch pattern, case-insensitive, optional leading dots and list parentheses; `,` and `;` separate |
 | `in:"D:\Work Projects"` | Restrict to descendants of this absolute folder |
-| `D:\`, `D:\Work\`, `"D:\Work Projects\"` | An absolute folder ending with a separator acts as `in:` |
+| `report D:\Work\`, `"D:\Work Projects\" report` | An absolute folder token ending with a separator acts as `in:` within a search; a leading unquoted absolute path navigates directly |
 | `path:projects/reports` | Match parent folder components in that order; intervening components allowed |
 | `reports\ 2024`, `work\client\ proposal` | A relative token ending with `\` or `/` acts as `path:` |
 | `name:annual` | Match the stem only, excluding the extension and parent path |
@@ -173,12 +173,12 @@ extensions and exclusions ignore accents.
 | `low:true` | Include low results even when ordinary/high results exist |
 
 An Explorer session supplies the default folder scope. An explicit `in:` or an
-absolute folder token ending with a separator overrides it; such a token expands
+absolute folder token ending with a separator within a search overrides it; such a token expands
 variables like `in:`. The scope directory itself is excluded from its descendant
 results. Folder-path matching uses the selected keyword/fuzzy matcher on each
 parent component. Unknown prefixes remain literal text, which allows ordinary
-paths containing colons; a path such as `C:\Work` without a trailing separator
-stays search text, and a token of separators alone is a term.
+paths containing colons within a search (`report C:\Work`). A leading unquoted
+absolute path instead enters direct navigation. A token of separators alone is a term.
 
 A token starting with `!` or `-` and longer than that character is an exclusion,
 including quoted text (`-"old version"`). A lone `!` or `-`, and a dash inside a
@@ -272,17 +272,30 @@ Alt+2 and Alt+3. Clicking the active toggle again or using Alt+0 restores All.
 Typed kind filters update toggle/menu state. Selecting a toggle removes typed
 `type:`/`t:` overrides while preserving other query tokens and quoted values.
 
-Leading `%VARIABLE%` and `~`/`~/`/`~\` enter direct path navigation. An exact
-existing path returns the file/folder; a trailing separator lists its direct
-children, and an incomplete last component completes names by prefix. `%` and an
+Leading absolute paths (drive paths and UNC shares), `%VARIABLE%` and
+`~`/`~/`/`~\` enter direct path navigation, even outside indexed roots. The whole
+trimmed input is one path, including spaces and any text that would otherwise be
+a filter; no surrounding quotes are required or removed. For a catalog search
+with terms and filters, use `in:"D:\Work" report` instead of `D:\Work\ report`.
+Drive-relative paths (`C:Work`), root-relative paths (`\Work`) and incomplete UNC
+server names do not enter direct navigation.
+An exact existing path returns the file/folder without enumerating its parent;
+a trailing separator lists its direct children, and an incomplete last component
+completes names by prefix. A pasted file path can be opened directly or revealed
+with Show in containing folder / Ctrl+Enter, without a catalog entry. `%` and an
 incomplete name suggest every `%NAME%` that starts with the typed text and names an
 existing folder: environment variables whose value is a folder (so values such as
 tokens never appear) and Windows known folders without a variable, such as
 `%DESKTOP%`, `%DOWNLOADS%`, `%STARTUP%`, `%SENDTO%`, `%FONTS%` or `%SAVEDGAMES%`.
 The platform layer resolves known folders through Windows, so redirected folders
 are followed; names reaching the same folder appear once. Environment variables win
-over known-folder names. Unknown completed names and relative expansion values
-report an error. Resolution and enumeration run on a search worker, obey
+over known-folder names. Suggestions and exact `%NAME%` references show the
+uppercase alias as their title and the full resolved target as their location,
+tooltip and accessible description. Suggestions sort by alias within their
+priority band. A trailing separator or subpath restores normal file/folder names.
+Actions and favorites always use the real target path, never the displayed alias.
+Unknown completed names and relative expansion values report an error.
+Resolution and enumeration run on a search worker, obey
 type, priority and exclusion rules, support cancellation and the result limit,
 and do not recursively scan or add entries to the catalog. Filesystem reads are
 skipped for excluded subtrees. `in:` also expands environment/home variables.

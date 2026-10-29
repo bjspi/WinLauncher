@@ -999,6 +999,92 @@ class UiFlowTest(unittest.TestCase):
             self.tasks.finish(TaskCategory.ACTION)
         self.launch.assert_called_once_with(folder, "navigate:~/.toolbox", explorer=None)
 
+    def test_absolute_unindexed_file_can_be_revealed_from_menu_and_keyboard(self) -> None:
+        catalog_count = self.controller.store.count()
+        folder = self.root.parent / "Shared files"
+        folder.mkdir()
+        document = folder / "Shared report.txt"
+        document.write_text("fixture", encoding="utf-8")
+
+        def choose_reveal(menu: QMenu, _point: object) -> None:
+            action = next(a for a in menu.actions() if a.text() == "Show in containing folder")
+            action.trigger()
+
+        for action in ("menu", "keyboard", "keypad"):
+            with self.subTest(action=action):
+                self.reveal.reset_mock()
+                self.window.show()
+                self.window.activateWindow()
+                self.window.query.setFocus()
+                self.app.processEvents()
+                self.window.query.setText(str(document))
+                self.controller.search.run()
+                with patch(
+                    "winlauncher.search.service.select_native",
+                    side_effect=AssertionError("An absolute file must bypass catalog search"),
+                ):
+                    self.tasks.finish(TaskCategory.SEARCH)
+                self.assertEqual(self.window.results.count(), 1)
+                self.assertEqual(self.window.selected_hit().item.path, document)
+                if action == "menu":
+                    with patch("winlauncher.ui.window.Menu.exec", choose_reveal):
+                        point = self.window.results.visualItemRect(
+                            self.window.results.item(0)
+                        ).center()
+                        self.window.context_menu(point)
+                else:
+                    key = Qt.Key.Key_Return if action == "keyboard" else Qt.Key.Key_Enter
+                    QTest.keyClick(self.window.query, key, Qt.KeyboardModifier.ControlModifier)
+                self.tasks.finish(TaskCategory.ACTION)
+                self.reveal.assert_called_once_with(document)
+                self.launch.assert_not_called()
+                self.assertFalse(self.window.isVisible())
+        self.assertEqual(self.controller.store.count(), catalog_count)
+
+    def test_variable_rows_show_alias_and_full_path_but_actions_use_target(self) -> None:
+        folder = self.root.parent / "Variable target"
+        folder.mkdir()
+        document = folder / "notes.txt"
+        document.write_text("fixture", encoding="utf-8")
+        original_clipboard = self.app.clipboard().text()
+        self.addCleanup(lambda: self.app.clipboard().setText(original_clipboard))
+        alias = "%WINLAUNCHER_TEST_ALIAS%"
+        with patch.dict(os.environ, WINLAUNCHER_TEST_ALIAS=str(folder)):
+            for text in ("%winlauncher_test_ali", alias.lower()):
+                with self.subTest(text=text):
+                    self.window.query.setText(text)
+                    self.controller.search.run()
+                    self.tasks.finish(TaskCategory.SEARCH)
+                    row = self.window.selected_row()
+                    self.assertEqual(row.name, alias)
+                    self.assertEqual(row.location, str(folder))
+                    self.assertEqual(row.target, str(folder))
+                    self.assertEqual(row.file_hit.item.name, folder.name)
+                    self.assertIn(alias, row.tooltip)
+                    self.assertIn(str(folder), row.tooltip)
+                    self.assertIn(alias, row.accessible_text)
+                    self.assertIn(str(folder), row.accessible_text)
+                    self.window.copy_target()
+                    self.assertEqual(self.app.clipboard().text(), str(folder))
+            self.window.open_selected()
+            self.tasks.finish(TaskCategory.ACTION)
+            self.launch.assert_called_once_with(
+                folder, parse_query(alias).history_key, explorer=None
+            )
+            self.window.show()
+            self.window.reveal_selected()
+            self.tasks.finish(TaskCategory.ACTION)
+            self.reveal.assert_called_once_with(folder)
+            self.window.show()
+            self.window.query.setText(alias + "\\")
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            row = self.window.selected_row()
+            self.assertEqual(row.name, document.name)
+            self.assertEqual(row.location, str(folder))
+            self.assertEqual(row.target, str(document))
+            self.assertIsNone(row.file_hit.navigation_alias)
+
     def test_explorer_typing_opens_live_folder_in_original_window_on_one_click(self):
         self.window.hide()
         folder = self.root / "toolbox-cli"

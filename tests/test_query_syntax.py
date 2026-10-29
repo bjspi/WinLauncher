@@ -181,25 +181,26 @@ class FolderShorthandTest(unittest.TestCase):
             parse_query(r"work\client\ proposal"), parse_query("path:work/client proposal")
         )
 
-    def test_absolute_folder_with_trailing_separator_scopes_like_in(self):
+    def test_absolute_folder_within_search_scopes_like_in(self):
         explorer = Path(r"C:\Explorer")
         for text, scope in (
-            (r"D:\ report", Path("D:\\")),
-            (r"D:\Work\ report", Path(r"D:\Work")),
+            ("report D:\\", Path("D:\\")),
+            ("report D:\\Work\\", Path(r"D:\Work")),
             (r'"D:\Work Projects\" report', Path(r"D:\Work Projects")),
-            (r"\\server\share\Team\ report", Path(r"\\server\share\Team")),
-            ("D:/Work/ report", Path(r"D:\Work")),
+            ("report \\\\server\\share\\Team\\", Path(r"\\server\share\Team")),
+            ("report D:/Work/", Path(r"D:\Work")),
         ):
             with self.subTest(text=text):
                 query = parse_query(text, scope=explorer)
                 self.assertEqual(query.scope, scope)
                 self.assertEqual((query.terms, query.folder_parts), (("report",), ()))
-        self.assertEqual(parse_query(r"D:\Work\ report"), parse_query(r'in:"D:\Work" report'))
+        self.assertEqual(parse_query("report D:\\Work\\"), parse_query(r'in:"D:\Work" report'))
 
-    def test_paths_without_trailing_separator_and_bare_separators_stay_text(self):
+    def test_relative_paths_and_bare_separators_stay_text(self):
         for text, terms in (
-            (r"C:\Work", (r"c:\work",)),
-            (r"C:\Work report", (r"c:\work", "report")),
+            (r"C:Work", (r"c:work",)),
+            (r"\Work", (r"\work",)),
+            (r"\\server", (r"\\server",)),
             ("\\", ("\\",)),
             ("//", ("//",)),
             ("a/b", ("a/b",)),
@@ -208,6 +209,25 @@ class FolderShorthandTest(unittest.TestCase):
                 query = parse_query(text)
                 self.assertEqual(query.terms, terms)
                 self.assertEqual((query.folder_parts, query.scope), ((), None))
+
+    def test_leading_absolute_paths_use_the_whole_input_for_navigation(self) -> None:
+        for text in (
+            "C:\\",
+            r"C:\Work",
+            r"C:\Work report",
+            r"C:\Work\ report ext:pdf",
+            "D:/Work Projects/",
+            r"\\server\share",
+            "\\\\server\\share\\",
+            r"\\server\share\Work Projects\report.pdf",
+        ):
+            with self.subTest(text=text):
+                query = parse_query(f"  {text}  ", scope=Path(r"C:\Explorer"))
+                self.assertEqual(query.navigation, text)
+                self.assertEqual(query.terms, ())
+                self.assertEqual(query.extensions, ())
+                self.assertIsNone(query.scope)
+                self.assertEqual(query_spans(text), ())
 
 
 class ExclusionTest(unittest.TestCase):

@@ -707,7 +707,8 @@ class BusinessRulesTest(unittest.TestCase):
         query = parse_query("ext:txt ext:.MD,txt path:a/b path:c")
         self.assertEqual(query.extensions, ("txt", "md"))
         self.assertEqual(query.folder_parts, ("a", "b", "c"))
-        self.assertEqual(parse_query(r"C:\Work report").terms, (r"c:\work", "report"))
+        self.assertEqual(parse_query(r"C:\Work report").navigation, r"C:\Work report")
+        self.assertEqual(parse_query(r"report C:\Work").terms, ("report", r"c:\work"))
         for text, expected in (
             ("match:exact", "match: expects one of keyword, fuzzy"),
             ("sort:size", "sort: expects one of score, name, modified"),
