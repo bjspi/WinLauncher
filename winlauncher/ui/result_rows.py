@@ -6,6 +6,7 @@ actions that exist for one kind only dispatch on `ResultRow.hit`.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,8 @@ from winlauncher.websites import WebsiteTarget
 LauncherHit: TypeAlias = SearchHit | WebsiteTarget | PluginHit
 WEBSITE_REASON = "Opens in your default browser"
 MISSING_LABEL = "Deleted"
+BREADCRUMB_SEPARATOR = " › "
+ELLIPSIS = "…"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,8 @@ class ResultRow:
     tooltip: str
     accessible_text: str
     metadata: str = ""  # Size or date, shown when the query filters by them.
+    # Breadcrumbs behind `location`; a narrow row drops whole middle parts first.
+    location_parts: tuple[str, ...] = ()
     pinned: bool = False
     # In an Explorer search: the entry lies directly in the searched folder.
     direct: bool = False
@@ -76,19 +81,40 @@ def _website_row(website: WebsiteTarget) -> ResultRow:
 
 
 def _plugin_row(hit: PluginHit) -> ResultRow:
+    """A plugin item; its breadcrumbs, when given, replace the subtitle."""
     item = hit.item
+    location = BREADCRUMB_SEPARATOR.join(item.breadcrumbs) or item.subtitle
     tooltip = "\n".join(part for part in (item.target, f"Opens in {hit.label}", hit.reason) if part)
     return ResultRow(
         hit=hit,
         name=hit.title,
-        location=item.subtitle,
+        location=location,
+        location_parts=item.breadcrumbs,
         target=item.target or f"{hit.plugin_id}:{item.key}",
         target_noun="Link",
         detail=tooltip,
         tooltip=tooltip,
-        accessible_text=f"{hit.title}, {hit.label}\n{item.subtitle}".rstrip(),
+        accessible_text=f"{hit.title}, {hit.label}\n{location}".rstrip(),
         opens_in=hit.label,
     )
+
+
+def shortened_breadcrumbs(parts: Sequence[str], fits: Callable[[str], bool]) -> str:
+    """The longest breadcrumb text that `fits`, shortened by whole parts.
+
+    The outermost part names the place (a site, a share) and the innermost parts
+    say where in it, so the middle goes first: all parts, else the first part, an
+    ellipsis and as many trailing parts as fit, else the ellipsis and the last
+    part. The caller elides characters if even that is too wide.
+    """
+    full = BREADCRUMB_SEPARATOR.join(parts)
+    if len(parts) <= 2 or fits(full):
+        return full
+    for kept in range(len(parts) - 2, 0, -1):
+        shortened = BREADCRUMB_SEPARATOR.join((parts[0], ELLIPSIS, *parts[-kept:]))
+        if fits(shortened):
+            return shortened
+    return BREADCRUMB_SEPARATOR.join((ELLIPSIS, parts[-1]))
 
 
 @dataclass(frozen=True, slots=True)

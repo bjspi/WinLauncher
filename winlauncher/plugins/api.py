@@ -57,6 +57,9 @@ class PluginItem:
     routes: tuple[str, ...] = ()  # Ids of the plugin's routes that list this item, if any.
     # Anything else `open` needs, as JSON values; kept in the item cache, never matched.
     data: Mapping[str, object] = field(default_factory=dict, compare=False)
+    # Where the item lives, outermost first, such as ("Contoso", "Finance", "Q3"). Shown
+    # instead of `subtitle`; a narrow row drops whole middle parts, never the first.
+    breadcrumbs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Reject an item the launcher could not show, so a refresh fails, not a search."""
@@ -68,6 +71,9 @@ class PluginItem:
             if not isinstance(getattr(self, field_name), str):
                 raise ValueError(f"A plugin item's {field_name} must be text.")
         keywords, routes = tuple(self.keywords), tuple(self.routes)
+        breadcrumbs = tuple(self.breadcrumbs)
+        if not all(isinstance(part, str) and part.strip() for part in breadcrumbs):
+            raise ValueError("A plugin item's breadcrumbs must be non-empty text.")
         if not all(isinstance(keyword, str) for keyword in keywords):
             raise ValueError("A plugin item's keywords must be text.")
         if not all(isinstance(route, str) for route in routes):
@@ -76,6 +82,7 @@ class PluginItem:
             raise ValueError("A plugin item's data must map names to JSON values.")
         object.__setattr__(self, "keywords", keywords)
         object.__setattr__(self, "routes", routes)
+        object.__setattr__(self, "breadcrumbs", breadcrumbs)
 
 
 @dataclass(frozen=True, slots=True)

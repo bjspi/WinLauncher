@@ -182,6 +182,14 @@ beat the weakest kept hit is skipped before text matching, and disk-based marker
 checks run only for hits that would be kept. Empty default queries (optionally with a type filter) read only
 learned items through the path identity index.
 
+The window's scope chip, set by an Explorer session or by Tab on a folder row,
+always produces an `explorer` query: live direct entries first, then catalog
+matches below (`SearchService._search_explorer_folder`). The window owns the
+keys and the chip; `ui/search_session.py` only reads `window.scope`.
+`ui/result_rows.py` turns hits into display rows; plugin `breadcrumbs` become
+`ResultRow.location_parts`, which the row delegate shortens by whole parts
+(`shortened_breadcrumbs`) before eliding characters.
+
 ## Rust search engine
 
 Absolute paths and explicit environment/home shortcuts are handled first by

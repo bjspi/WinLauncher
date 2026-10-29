@@ -76,7 +76,7 @@ from winlauncher.ui.icons import ResultIcons
 from winlauncher.ui.menus import Menu
 from winlauncher.ui.plugins import PluginIcons
 from winlauncher.ui.query_syntax import QuerySyntax
-from winlauncher.ui.result_rows import LauncherHit, ResultRow, result_row
+from winlauncher.ui.result_rows import LauncherHit, ResultRow, result_row, shortened_breadcrumbs
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.widgets import line_icon
@@ -111,6 +111,7 @@ NUMBERED_ROWS = 9  # Ctrl+1 … Ctrl+9 open these rows.
 SEPARATOR_INSET = 12  # Horizontal inset of the line before subfolder matches.
 SEPARATOR_GAP = 9  # Extra height above that row; the line runs through its middle.
 MISSING_OPACITY = 0.45  # Icon and text of a result whose file no longer exists.
+LOCATION_POINTS = 8  # Font size of the muted location and metadata text.
 HINT_SPACING = 8  # Between the shortcut hint and the kind filter buttons.
 # Symbols the bar draws; Segoe UI lacks some, and Windows searches every installed
 # font for a fallback the first time one is measured, which takes 100-300 ms.
@@ -230,7 +231,10 @@ class ResultDelegate(QStyledItemDelegate):
         baseline = text.top() + 41 if self.rows.two_lines else text.center().y() + 6
         metadata = result.metadata
         metadata_width = (
-            min(text.width(), QFontMetrics(QFont("Segoe UI", 8)).horizontalAdvance(metadata) + 12)
+            min(
+                text.width(),
+                QFontMetrics(QFont("Segoe UI", LOCATION_POINTS)).horizontalAdvance(metadata) + 12,
+            )
             if metadata
             else 0
         )
@@ -239,11 +243,11 @@ class ResultDelegate(QStyledItemDelegate):
         location_area = text.adjusted(0, 0, -metadata_width, 0)
         if self.rows.two_lines:
             self._paint_name(painter, text, result.name, baseline=text.top() + 23)
-            self._paint_folder(painter, location_area, result.location, baseline=baseline)
+            self._paint_location(painter, location_area, result, baseline=baseline)
         else:
             name_end = self._paint_name(painter, location_area, result.name, baseline=baseline)
             location = location_area.adjusted(name_end - text.left() + 12, 0, 0, 0)
-            self._paint_folder(painter, location, result.location, baseline=baseline)
+            self._paint_location(painter, location, result, baseline=baseline)
         painter.restore()
 
     def _icon(self, hit: LauncherHit) -> QIcon:
@@ -276,11 +280,24 @@ class ResultDelegate(QStyledItemDelegate):
             x += metrics.horizontalAdvance(segment)
         return x
 
+    def _paint_location(
+        self, painter: QPainter, area: QRect, result: ResultRow, *, baseline: int
+    ) -> None:
+        """Breadcrumbs drop whole middle parts first; any text then elides in the middle."""
+        location = result.location
+        if result.location_parts and area.width() > 0:
+            metrics = QFontMetrics(QFont("Segoe UI", LOCATION_POINTS))
+            location = shortened_breadcrumbs(
+                result.location_parts,
+                lambda text: metrics.horizontalAdvance(text) <= area.width(),
+            )
+        self._paint_folder(painter, area, location, baseline=baseline)
+
     @staticmethod
     def _paint_folder(painter: QPainter, area: QRect, folder: str, *, baseline: int) -> None:
         if not folder or area.width() <= 0:
             return
-        font = QFont("Segoe UI", 8)
+        font = QFont("Segoe UI", LOCATION_POINTS)
         painter.setFont(font)
         painter.setPen(QColor(colors().faint))
         text = QFontMetrics(font).elidedText(folder, Qt.TextElideMode.ElideMiddle, area.width())
@@ -334,6 +351,8 @@ def _shortcut_hint(
         return "↵ enter as file name"
     if explorer:
         return "↵ open · ↑↓ select in Explorer"
+    if row.file_hit.item.kind == ItemKind.FOLDER and not row.missing:
+        return "↵ open · Tab search inside · Ctrl+↵ show in folder · Ctrl+1–9"
     return "↵ open · Ctrl+↵ show in folder · Ctrl+C copy file · Ctrl+1–9"
 
 
@@ -763,7 +782,44 @@ class LauncherWindow(QWidget):
         if watched is self.query and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             self._move_selection(1 if event.key() == Qt.Key.Key_Down else -1)
             return True
+        return watched is self.query and self._folder_search_key(event)
+
+    def _folder_search_key(self, event: QKeyEvent) -> bool:
+        """Tab searches inside the selected folder, Shift+Tab inside the chip's parent
+        and Backspace in the empty field everywhere again.
+
+        Only the launcher bar does this; the Explorer bar's folder is the Explorer
+        window's. Without a folder to act on, the keys keep their usual meaning.
+        """
+        if self.explorer_mode:
+            return False
+        key = event.key()
+        modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if key == Qt.Key.Key_Tab and modifiers == Qt.KeyboardModifier.NoModifier:
+            return self._search_inside(self._selected_folder())
+        if self.scope is None:
+            return False
+        if key == Qt.Key.Key_Backtab:
+            return self._search_inside(self.scope.parent)
+        if key == Qt.Key.Key_Backspace and not self.query.text():
+            self.set_scope(None)
+            return True
         return False
+
+    def _selected_folder(self) -> Path | None:
+        row = self.selected_row()
+        hit = row.file_hit if row is not None else None
+        if hit is None or row.missing or hit.item.kind != ItemKind.FOLDER:
+            return None
+        return hit.item.path
+
+    def _search_inside(self, folder: Path | None) -> bool:
+        """Make `folder` the scope chip and start over with an empty query."""
+        if folder is None:
+            return False
+        self._replace_query("")
+        self.set_scope(folder)
+        return True
 
     def _command_key(self, event: QKeyEvent) -> bool:
         """Modifier+Enter or Ctrl+Modifier+1–9: run the command with that shortcut."""
@@ -1047,6 +1103,8 @@ class LauncherWindow(QWidget):
             self._set_explorer_mode(False, None)
             self._place_on_cursor_screen()
         self._show_scope(folder)
+        if not self.explorer_mode:
+            self.result_scope = folder
         self.query_changed.emit()
         self.query.setFocus()
 
@@ -1061,7 +1119,8 @@ class LauncherWindow(QWidget):
             110 if self.explorer_mode else 220,
         )
         self.clear_scope.setText(f"in {name}   ✕")
-        self.clear_scope.setToolTip(f"Searching in {folder}. Click to search everywhere.")
+        keys = "" if self.explorer_mode else "\nShift+Tab: parent folder · Backspace: everywhere"
+        self.clear_scope.setToolTip(f"Searching in {folder}. Click to search everywhere.{keys}")
         self.clear_scope.show()
 
     # Window placement -----------------------------------------------------------

@@ -206,6 +206,7 @@ built-in keys and Ctrl+Alt is AltGr on many keyboards.
 | <kbd>Ctrl</kbd>+<kbd>G</kbd> in an Open/Save dialog | Jump to the folder of the last used Explorer window |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Select a result |
 | <kbd>Enter</kbd> | Open the selected result |
+| <kbd>Tab</kbd> on a folder | Search inside that folder; <kbd>Shift</kbd>+<kbd>Tab</kbd> moves to its parent, <kbd>Backspace</kbd> in the empty field searches everywhere again |
 | <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>Ctrl</kbd>+<kbd>9</kbd> | Open the numbered result |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Show the result in its folder |
 | <kbd>Alt</kbd>+<kbd>Enter</kbd> / <kbd>Alt</kbd>+click / <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> | Run your own command whose shortcut is Alt (also Shift or Alt+Shift) |
