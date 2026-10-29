@@ -271,14 +271,22 @@ report low:true                         include low-priority results
 %LOCALAPPDATA%                          open local application data
 ~/                                      list the user directory's direct children
 ~/.config                               open this folder even outside indexed roots
+D:\Work\                                list this folder's direct children without indexing
+D:\Work\Shared report.pdf               find this file directly, even outside indexed roots
 ```
+
+Paste an absolute file path and use **Ctrl+Enter** or **Show in containing folder**
+to open its folder with the file selected. Absolute paths use the same direct
+navigation as `~/`; spaces belong to the path. For a catalog search within a
+folder, use `in:"D:\Work" report`. `%` suggestions and exact references such as
+`%TEMP%` show the variable name and its full resolved path; `%TEMP%\` lists its contents.
 
 | Filter | Meaning |
 | --- | --- |
 | `type:file` · `type:folder` · `type:dir` · `type:app` | Item kind; `t:` is shorthand for `type:` |
 | `"exact phrase"` | Contiguous text only, without initials or fuzzy matching |
 | `ext:pdf,txt` · `ext:pdf;txt` · `ext:(jpg,png)` · `ext:doc*` | Extensions/patterns, combined with OR (repeatable) |
-| `in:"C:\Folder"` · `C:\Folder\` | Descendants of an absolute folder |
+| `in:"C:\Folder"` · `report C:\Folder\` | Search descendants of an absolute folder |
 | `path:a/b` · `a\b\` | Parent folders in this order (repeatable) |
 | `name:text` | Match the file name without extension |
 | `!text` · `-text` | Reject paths containing `text` |

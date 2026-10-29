@@ -96,12 +96,17 @@ class QueryFiltersTest(unittest.TestCase):
         self.assertEqual(parse_query("type:file t:dir"), parse_query("type:folder"))
         self.assertEqual(parse_query("t:dir type:app"), parse_query("type:app"))
         self.assertEqual(without_type_filter("t typed:dir"), "t typed:dir")
-        text = r"T:\Work t:dir"
-        self.assertEqual(parse_query(text), parse_query(r"T:\Work type:folder"))
-        self.assertEqual(without_type_filter(text), r"T:\Work")
+        text = r"report T:\Work t:dir"
+        self.assertEqual(parse_query(text), parse_query(r"report T:\Work type:folder"))
+        self.assertEqual(without_type_filter(text), r"report T:\Work")
         for text in ("t:", "t:unknown"):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, "t: expects"):
                 parse_query(text)
+
+    def test_type_filter_buttons_preserve_literal_navigation_text(self) -> None:
+        for text in (r"T:\Work t:dir", r"C:\My Projects\ type:file", "~/My Folder t:dir"):
+            with self.subTest(text=text):
+                self.assertEqual(without_type_filter(text), text)
 
     def test_size_units_decimals_spacing_and_strict_boundaries(self):
         for text, lower, upper in (

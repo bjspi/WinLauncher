@@ -3,9 +3,9 @@
 Tokens are separated by whitespace; double quotes group words, and a quoted term
 matches only as contiguous text. Backslashes and apostrophes are literal, so
 Windows paths and names like "mom's" survive. A token `key:value` is a filter
-only when `key` is a known filter name; any other colon-containing token (for
-example `C:\\Work`) is ordinary search text. A leading `!` or `-` excludes, and a
-trailing separator (`reports\\`, `D:\\Work\\`) names a folder.
+only when `key` is a known filter name. A leading absolute path, `%` or home
+shortcut enters direct navigation instead. A leading `!` or `-` excludes, and a
+trailing separator within a search (`reports\\`, `D:\\Work\\`) names a folder.
 """
 
 from __future__ import annotations
@@ -160,7 +160,9 @@ def query_spans(text: str) -> tuple[QuerySpan, ...]:
 
 
 def _is_navigation(stripped: str) -> bool:
-    return stripped.startswith(("%", "~/", "~\\")) or stripped == "~"
+    return (
+        stripped.startswith(("%", "~/", "~\\")) or stripped == "~" or Path(stripped).is_absolute()
+    )
 
 
 def _query_tokens(text: str) -> Iterator[_Token]:
@@ -241,6 +243,8 @@ def _check_raw_text(text: str) -> None:
 
 def without_type_filter(text: str) -> str:
     """Remove typed kind overrides when a user selects a different UI filter."""
+    if _is_navigation(text.strip()):
+        return text
     tokens = _split_tokens(text)
     kept = [
         token

@@ -59,10 +59,13 @@ class PriorityBand(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class SearchHit:
+    """A ranked filesystem target with an optional explicit navigation alias."""
+
     item: CatalogItem
     score: float
     reason: str
     band: PriorityBand = PriorityBand.NORMAL
+    navigation_alias: str | None = None  # The explicit %NAME% whose target this hit represents.
 
     @property
     def low_priority(self) -> bool:

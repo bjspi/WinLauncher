@@ -1,4 +1,4 @@
-"""Explicit Windows environment/home paths, without recursive indexing."""
+"""Absolute Windows paths and environment/home shortcuts, without recursive indexing."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 import stat
 import threading
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from winlauncher.catalog import long_paths
@@ -17,10 +17,22 @@ from winlauncher.catalog.model import CatalogItem, ItemKind, normalize, path_key
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.search.candidates import Candidate
 from winlauncher.search.query import SearchQuery
+from winlauncher.search.query_parser import FOLDER_SEPARATORS
 from winlauncher.search.ranking import Ranker, SearchHit
 from winlauncher.settings import Settings
 
 _VARIABLE = re.compile(r"%([^%]+)%")
+PATH_SHORTCUT_REASON = "Path shortcut"
+PATH_COMPLETION_REASON = "Path completion"
+
+
+@dataclass(frozen=True, slots=True)
+class _NavigationMatch:
+    """A filesystem target and its navigation label, before search policy is applied."""
+
+    item: CatalogItem
+    reason: str
+    alias: str | None = None
 
 
 def search_paths(
@@ -30,16 +42,19 @@ def search_paths(
     store: CatalogStore,
     shortcuts: Mapping[str, Path] | None = None,
 ) -> list[SearchHit]:
-    """Resolve `%NAME%`, `~` and the paths below them; `shortcuts` adds `%NAME%` folders
-    beyond the environment variables."""
+    """Resolve absolute paths and shortcuts on a worker, preserving search policy.
+
+    `shortcuts` adds `%NAME%` folders beyond the environment variables.
+    """
     shortcuts = shortcuts or {}
     exclusions, priorities = settings.exclusions(), settings.priorities()
     ranker = Ranker(replace(query, navigation=None, scope=None))
 
     def hits() -> Iterator[SearchHit]:
-        for item, reason in _path_items(query.navigation, shortcuts, exclusions, cancel):
+        for match in _path_items(query.navigation, shortcuts, exclusions, cancel):
             if cancel is not None and cancel.is_set():
                 return
+            item = match.item
             candidate = Candidate.from_item(item)
             priority = priorities.evaluate(candidate)
             if not ranker.eligible(candidate, priority):
@@ -50,9 +65,11 @@ def search_paths(
             if ranking is not None:
                 hit = ranking.hit(item)
                 explanation = (
-                    reason + " · " + hit.reason if ranking.reasons or hit.low_priority else reason
+                    match.reason + " · " + hit.reason
+                    if ranking.reasons or hit.low_priority
+                    else match.reason
                 )
-                yield replace(hit, reason=explanation)
+                yield replace(hit, reason=explanation, navigation_alias=match.alias)
 
     kept = heapq.nsmallest(
         settings.max_results,
@@ -60,7 +77,7 @@ def search_paths(
         key=lambda h: (
             h.band,
             h.item.kind != ItemKind.FOLDER,
-            h.item.name.casefold(),
+            (h.navigation_alias or h.item.name).casefold(),
             str(h.item.path),
         ),
     )
@@ -88,7 +105,8 @@ def _path_items(
     shortcuts: Mapping[str, Path],
     exclusions: ExclusionPolicy,
     cancel: threading.Event | None,
-) -> Iterator[tuple[CatalogItem, str]]:
+) -> Iterator[_NavigationMatch]:
+    """Read an exact target or one directory; aliases describe only the shortcut itself."""
     if cancel is not None and cancel.is_set():
         return
     if text.startswith("%") and "%" not in text[1:]:
@@ -97,9 +115,11 @@ def _path_items(
     path = Path(_expand(text, shortcuts).replace("\\", os.sep)).expanduser()
     if not path.is_absolute():
         raise ValueError("The expanded shortcut must be an absolute path.")
-    browsing = text.endswith(("/", "\\"))
+    browsing = text.endswith(FOLDER_SEPARATORS)
     if not browsing and os.path.lexists(long_paths.os_path(path)):
-        yield _item(path), "Path shortcut"
+        variable = _VARIABLE.fullmatch(text)
+        alias = f"%{variable[1].upper()}%" if variable is not None else None
+        yield _NavigationMatch(_item(path), PATH_SHORTCUT_REASON, alias)
         return
     parent, prefix = (path, "") if browsing else (path.parent, normalize(path.name))
     if not exclusions.allows(parent, directory=True) or not os.path.isdir(
@@ -112,14 +132,16 @@ def _path_items(
                 return
             if normalize(entry.name).startswith(prefix):
                 try:
-                    yield _item(long_paths.ordinary_path(entry.path)), "Path completion"
+                    yield _NavigationMatch(
+                        _item(long_paths.ordinary_path(entry.path)), PATH_COMPLETION_REASON
+                    )
                 except FileNotFoundError:
                     continue  # A temporary file may disappear during enumeration.
 
 
 def _folder_names(
     prefix: str, shortcuts: Mapping[str, Path], cancel: threading.Event | None
-) -> Iterator[tuple[CatalogItem, str]]:
+) -> Iterator[_NavigationMatch]:
     """Every `%NAME%` that starts with `prefix` and names an existing folder.
 
     Environment variables count only when their value is a folder, so values such
@@ -139,7 +161,8 @@ def _folder_names(
         key = path_key(path)
         if key not in seen and path.is_dir():
             seen.add(key)
-            yield _item(path), f"Windows folder: %{name}%"
+            alias = f"%{name}%"
+            yield _NavigationMatch(_item(path), f"Windows folder: {alias}", alias)
 
 
 def _expand(text: str, shortcuts: Mapping[str, Path]) -> str:

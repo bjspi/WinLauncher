@@ -93,21 +93,24 @@ def _plugin_row(hit: PluginHit) -> ResultRow:
 
 def _file_row(hit: SearchHit, query: SearchQuery | None, scope: Path | None) -> ResultRow:
     item = hit.item
+    name = hit.navigation_alias or item.name
+    location = str(item.path) if hit.navigation_alias else _location(item.path.parent, scope)
+    description = f"{hit.navigation_alias}\n{item.path}" if hit.navigation_alias else str(item.path)
     metadata = _metadata(item, query)
     size = QLocale().formattedDataSize(item.size)
     favorite = ", favorite" if item.pinned else ""
     details = f"\n{metadata}" if metadata else ""
     return ResultRow(
         hit=hit,
-        name=item.name,
-        location=_location(item.path.parent, scope),
+        name=name,
+        location=location,
         target=str(item.path),
         target_noun="Path",
         detail=(
-            f"{item.path}\n{size}  ·  Modified {format_modified(item.modified)}  ·  {hit.reason}"
+            f"{description}\n{size}  ·  Modified {format_modified(item.modified)}  ·  {hit.reason}"
         ),
-        tooltip=f"{item.path}\n{hit.reason}\nRelevance: {hit.score:.1f}",
-        accessible_text=f"{item.name}, {item.kind.value}{favorite}{details}\n{item.path}",
+        tooltip=f"{description}\n{hit.reason}\nRelevance: {hit.score:.1f}",
+        accessible_text=f"{name}, {item.kind.value}{favorite}{details}\n{item.path}",
         metadata=metadata,
         pinned=item.pinned,
         direct=scope is not None and item.path.parent == scope,

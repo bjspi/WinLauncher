@@ -1,4 +1,4 @@
-"""Home and environment shortcuts browse directly while preserving exclusions."""
+"""Absolute paths and home/environment shortcuts browse while preserving exclusions."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from winlauncher.catalog.priority import NamePriority
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.service import SearchService
-from winlauncher.settings import DEFAULT_EXCLUDED_PATTERNS, Settings
+from winlauncher.settings import DEFAULT_EXCLUDED_PATTERNS, RESULT_LIMIT_RANGE, Settings
 
 
 class PathNavigationTest(unittest.TestCase):
@@ -93,6 +93,85 @@ class PathNavigationTest(unittest.TestCase):
         self.assertIn(self.toolbox / "nested", self.paths("~/.toolbox/"))
         self.assertEqual(self.paths("%USERPROFILE%/missing/"), [])
 
+    def test_absolute_targets_bypass_catalog_search_and_directory_enumeration(self) -> None:
+        report = self.home / "My Documents" / "Shared report.txt"
+        report.write_text("fixture", encoding="utf-8")
+        for target in (self.home, self.toolbox, report):
+            for text in (str(target), str(target).swapcase(), target.as_posix()):
+                with (
+                    self.subTest(text=text),
+                    patch(
+                        "winlauncher.search.service.select_native",
+                        side_effect=AssertionError("Navigation must bypass catalog search"),
+                    ),
+                    patch(
+                        "winlauncher.search.navigation.long_paths.scandir",
+                        side_effect=AssertionError("Exact targets need no directory enumeration"),
+                    ),
+                ):
+                    hits = self.service.search(parse_query(text), self.settings)
+                    self.assertEqual([hit.item.path for hit in hits], [target])
+                    self.assertIsNone(hits[0].navigation_alias)
+        self.assertEqual(self.service.store.count(), 0)
+
+    def test_absolute_paths_browse_and_complete_only_direct_children(self) -> None:
+        nested = self.toolbox / "nested"
+        nested.mkdir()
+        for separator in ("/", "\\"):
+            with self.subTest(separator=separator):
+                root = str(self.home) + separator
+                self.assertIn(self.toolbox, self.paths(root))
+                self.assertIn(self.home / "notes.txt", self.paths(root))
+                self.assertNotIn(nested, self.paths(root))
+                self.assertEqual(self.paths(root + ".to"), [self.toolbox])
+                self.assertEqual(self.paths(root + "My Doc"), [self.home / "My Documents"])
+                self.assertEqual(self.paths(root + "missing"), [])
+                self.assertEqual(self.paths(root + "missing" + separator), [])
+                self.assertIn(nested, self.paths(str(self.toolbox) + separator))
+        self.assertEqual(self.service.store.count(), 0)
+
+    def test_alias_metadata_identifies_variables_without_changing_targets(self) -> None:
+        for text, alias, target in (
+            ("%dev", "%DEVTOOLS%", self.toolbox),
+            ("%devtools%", "%DEVTOOLS%", self.toolbox),
+            ("%TEMP%", "%TEMP%", self.home / "Temporary"),
+            ("%tmp%", "%TMP%", self.home / "Temporary"),
+        ):
+            with self.subTest(text=text):
+                hit = self.service.search(parse_query(text), self.settings)[0]
+                self.assertEqual(hit.navigation_alias, alias)
+                self.assertEqual(hit.item.path, target)
+                self.assertEqual(hit.item.name, target.name)
+        for text in ("~/", "%USERPROFILE%/", "%USERPROFILE%/.toolbox"):
+            with self.subTest(text=text):
+                hits = self.service.search(parse_query(text), self.settings)
+                self.assertTrue(hits)
+                self.assertTrue(all(hit.navigation_alias is None for hit in hits))
+
+    def test_aliases_sort_by_name_and_preserve_environment_precedence(self) -> None:
+        alpha = self.home / "Zulu folder"
+        zulu = self.home / "Alpha folder"
+        alpha.mkdir()
+        zulu.mkdir()
+        self.service = SearchService(
+            self.service.store, lambda: {"NAV_ALPHA": zulu, "NAV_EXTRA": self.toolbox}
+        )
+        with patch.dict(
+            os.environ,
+            NAV_ALPHA=str(alpha),
+            NAV_ZULU=str(zulu),
+            NAV_DUPLICATE=str(alpha),
+            NAV_SECRET="not-a-path",
+        ):
+            hits = self.service.search(parse_query("%nav_"), self.settings)
+            self.assertEqual(
+                [hit.navigation_alias for hit in hits],
+                ["%NAV_ALPHA%", "%NAV_EXTRA%", "%NAV_ZULU%"],
+            )
+            self.assertEqual([hit.item.path for hit in hits], [alpha, self.toolbox, zulu])
+            hits = self.service.search(parse_query("%nav_alpha%"), self.settings)
+            self.assertEqual(hits[0].item.path, alpha)
+
     def test_folder_names_complete_by_prefix_from_variables_and_shortcuts(self):
         downloads = self.home / "Downloads"
         downloads.mkdir()
@@ -167,3 +246,33 @@ class PathNavigationTest(unittest.TestCase):
         self.assertTrue(self.service.search(query, self.settings)[0].item.pinned)
         self.service.store.set_favorite(self.toolbox, False)
         self.assertFalse(self.service.search(query, self.settings)[0].item.pinned)
+
+    def test_absolute_navigation_preserves_policy_limits_cancellation_and_favorites(self) -> None:
+        excluded = self.home / "__pycache__"
+        excluded.mkdir()
+        with patch(
+            "winlauncher.search.navigation.long_paths.scandir",
+            side_effect=AssertionError("Excluded subtree must not be read"),
+        ):
+            self.assertEqual(self.paths(str(excluded) + os.sep), [])
+        (self.toolbox / ".nobackup").touch()
+        self.assertEqual(self.paths(str(self.toolbox)), [])
+        self.assertNotIn(self.toolbox, self.paths(str(self.home) + os.sep))
+        ignored = replace(
+            self.settings, name_priorities=(NamePriority("notes", search_priority="ignored"),)
+        )
+        self.assertEqual(self.paths(str(self.home / "notes.txt"), settings=ignored), [])
+        limit = RESULT_LIMIT_RANGE[0]
+        for index in range(limit + 1):
+            (self.home / f"result-{index}").mkdir()
+        limited = replace(self.settings, max_results=limit)
+        self.assertEqual(len(self.paths(str(self.home) + os.sep, settings=limited)), limit)
+        query = replace(parse_query(str(self.home) + os.sep), kind=ItemKind.FILE)
+        hits = self.service.search(query, self.settings)
+        self.assertEqual([hit.item.path for hit in hits], [self.home / "notes.txt"])
+        cancel = threading.Event()
+        cancel.set()
+        self.assertEqual(self.paths(str(self.home) + os.sep, cancel=cancel), [])
+        self.service.store.set_favorite(self.home / "notes.txt", True)
+        hits = self.service.search(parse_query(str(self.home / "notes.txt")), self.settings)
+        self.assertTrue(hits[0].item.pinned)
