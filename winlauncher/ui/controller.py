@@ -490,12 +490,12 @@ class LauncherController(QObject):
 
     def open_item(self, hit: LauncherHit, history_key: str) -> None:
         if isinstance(hit, PluginHit):
-            self.window.hide()
+            self.window.close_after_action()
             config = self.plugins.config(hit.plugin_id, self.settings.plugins)
             self._run_action(partial(self.plugins.open, hit, config))
             return
         if isinstance(hit, WebsiteTarget):
-            self.window.hide()
+            self.window.close_after_action()
             if not QDesktopServices.openUrl(QUrl(hit.url)):
                 self._action_failed("The website could not be opened in your default browser.")
             return
@@ -505,7 +505,7 @@ class LauncherController(QObject):
             self.indexing.request_folder(hit.item.path.parent)
             return
         dialog, explorer = self._dialog_target(), self._explorer_target()
-        self.window.hide()
+        self.window.close_after_action()
         if dialog is not None:
             work = partial(self.actions.choose_in_dialog, hit.item.path, history_key, dialog)
         else:
@@ -562,14 +562,14 @@ class LauncherController(QObject):
             self._action_failed(str(exc))
             return
         if ran:
-            self.window.hide()
+            self.window.close_after_action()
 
     def run_menu_command(self, hit: SearchHit, command: MenuCommand) -> None:
-        self.window.hide()
+        self.window.close_after_action()
         self._run_action(partial(self.actions.run_command, command, hit.item.path))
 
     def reveal_item(self, hit: SearchHit) -> None:
-        self.window.hide()
+        self.window.close_after_action()
         self._run_action(partial(self.actions.reveal, hit.item.path))
 
     def favorite_item(self, hit: SearchHit) -> None:

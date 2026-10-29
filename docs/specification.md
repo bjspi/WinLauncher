@@ -458,6 +458,13 @@ shortcut that opens that row. Messages (no matches, invalid query, failures),
 the result count and persistent problems appear below the results only when
 present. The bar can be dragged by its empty areas.
 
+A pin button between the settings button and the application icon (or Ctrl+P)
+keeps the launcher bar open: opening a result by Enter, click or Ctrl+1…9,
+Show in containing folder, the shell menu and custom commands then leave it
+visible, and focus leaving it does not start the auto-hide timer. Escape, the
+global shortcut and the tray still hide it. The pin lasts until it is turned off
+or WinLauncher exits; the Explorer bar has no pin.
+
 Tab on a selected folder row (including `%NAME%` suggestions and folders found by
 direct navigation) makes that folder the scope chip and clears the query; the
 footer hint says so for folder rows. A search within the chip works like the
