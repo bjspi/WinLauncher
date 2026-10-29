@@ -229,6 +229,20 @@ class FolderShorthandTest(unittest.TestCase):
                 self.assertIsNone(query.scope)
                 self.assertEqual(query_spans(text), ())
 
+    def test_quoted_absolute_paths_navigate_and_device_paths_stay_searches(self) -> None:
+        for text, target in (
+            (r'"C:\Work\Shared report.pdf"', r"C:\Work\Shared report.pdf"),
+            (r'  "\\server\share\a b\"  ', "\\\\server\\share\\a b\\"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(parse_query(text).navigation, target)
+        for text in (r'"report"', r'"C:\Work" report', r'"~/notes"'):
+            with self.subTest(text=text):
+                self.assertIsNone(parse_query(text).navigation)
+        for text in ("\\\\.\\pipe\\", r"\\?\C:\Work", "//./pipe/"):
+            with self.subTest(text=text):
+                self.assertIsNone(parse_query(text).navigation)
+
 
 class ExclusionTest(unittest.TestCase):
     def test_excluded_extensions_from_lists_and_star_dot_shorthand(self):

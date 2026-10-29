@@ -47,6 +47,7 @@ MISSING_ACCENTS_PENALTY = 45
 # Absorbs float rounding, so an upper bound is never a hair below the real score.
 BOUND_TOLERANCE = 1e-6
 _LN2 = math.log(2.0)
+REASON_SEPARATOR = " · "  # Joins the reasons of one result's explanation.
 
 
 class PriorityBand(IntEnum):
@@ -59,17 +60,25 @@ class PriorityBand(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class SearchHit:
-    """A ranked filesystem target with an optional explicit navigation alias."""
+    """A catalog item as one ranked result, with the explanation shown to the user.
+
+    `label` replaces the item name as the displayed title, such as `%APPDATA%` for
+    its folder. Actions, favorites and identity always use `item`.
+    """
 
     item: CatalogItem
     score: float
     reason: str
     band: PriorityBand = PriorityBand.NORMAL
-    navigation_alias: str | None = None  # The explicit %NAME% whose target this hit represents.
+    label: str | None = None
 
     @property
     def low_priority(self) -> bool:
         return self.band == PriorityBand.FALLBACK
+
+    @property
+    def title(self) -> str:
+        return self.label or self.item.name
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +99,7 @@ class Ranking:
         reasons = list(self.reasons)
         if self.band == PriorityBand.FALLBACK:
             reasons.append("Low-priority fallback")
-        explanation = " · ".join(dict.fromkeys(reasons)) or "Recently used"
+        explanation = REASON_SEPARATOR.join(dict.fromkeys(reasons)) or "Recently used"
         return SearchHit(item, self.score, explanation, self.band)
 
 

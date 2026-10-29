@@ -24,7 +24,7 @@ from winlauncher.search.matching import (
 )
 from winlauncher.search.query import MatchMode, SearchQuery
 from winlauncher.search.query_parser import parse_query
-from winlauncher.search.ranking import PriorityBand, SearchHit
+from winlauncher.search.ranking import REASON_SEPARATOR, PriorityBand, SearchHit
 
 # Plugins list their most relevant items first, such as the chats written to last.
 # The first item gets this bonus; it halves every POSITION_HALF_VALUE items.
@@ -310,7 +310,7 @@ def _text_relevance(
             return None
         points += best[0]
         reasons.append(best[1])
-    return points, " · ".join(dict.fromkeys(reasons))
+    return points, REASON_SEPARATOR.join(dict.fromkeys(reasons))
 
 
 def merge_hits(

@@ -185,18 +185,16 @@ learned items through the path identity index.
 ## Rust search engine
 
 Absolute paths and explicit environment/home shortcuts are handled first by
-`search/navigation.py`. The parser and syntax highlighting share a purely
-syntactic navigation check. Exact targets are read without enumerating their
-parent; browsing and prefix completion enumerate only one directory on the search
-worker, with existing exclusions, priority/ranking rules and result limits.
-No catalog or Rust candidate read is needed. Known directory variables are
-suggested without exposing arbitrary environment values; `in:` expands variables
-for catalog queries as well. Frozen navigation matches carry the item, explanation
-and optional alias explicitly. `SearchHit.navigation_alias` passes that alias to
-`ui/result_rows.py`, which displays `%NAME%` and its full resolved path for variable
-suggestions and exact references. Catalog identity and every file action continue
-to use the real target; aliases are neither inferred from explanations nor stored
-in the catalog.
+`search/navigation.py`. `query_parser._navigation_target` decides syntactically,
+for parsing and syntax highlighting alike, whether the input is one navigation
+path. Exact targets are read without enumerating their parent; browsing and
+prefix completion enumerate only one directory, with the existing exclusion,
+priority/ranking rules and result limits. No catalog or Rust candidate read is
+needed. Navigation runs on its own `NAVIGATION` worker pool, and a root probe
+waits only a bounded time for a drive or share root on a daemon thread, so a
+dead network share delays neither catalog searches nor a worker for long.
+`SearchHit.label` carries the `%NAME%` title of variable targets to
+`ui/result_rows.py`; identity and actions use the real target.
 
 `search/native_engine.py` imports the extension once (`native_availability`),
 checks `API_VERSION` and selects the Unicode tables of the running interpreter
@@ -358,7 +356,8 @@ the others, and offers to save and restart after a change.
 ## Threads, scheduling and cancellation
 
 Qt widgets live on the GUI thread. `BackgroundTasks` runs work on separate search
-(2), prefetch (1), index (1), action (1), plugin (2) and plugin source (1) pools and always delivers
+(2), navigation (2), prefetch (1), index (1), action (1), plugin (2), plugin source (1)
+and network (1) pools and always delivers
 results through a queued signal to callbacks on the GUI thread. Callbacks never
 run inside `submit`. Its `WorkerPool` takes callables from a queue on daemon
 threads instead of using a `ThreadPoolExecutor`, whose workers Python joins at

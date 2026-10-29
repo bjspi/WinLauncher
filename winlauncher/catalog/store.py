@@ -377,6 +377,18 @@ class CatalogStore:
             else:
                 connection.execute("DELETE FROM favorites WHERE path_key = ?", (path_key(path),))
 
+    def favorite_keys(self, keys: Iterable[str]) -> set[str]:
+        """Which of these `path_key` identities are favorites."""
+        keys = tuple(keys)
+        if not keys:
+            return set()
+        placeholders = ",".join("?" for _ in keys)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT path_key FROM favorites WHERE path_key IN ({placeholders})", keys
+            )
+            return {row[0] for row in rows}
+
     def clear_history(self) -> None:
         with self.connect() as connection:
             connection.execute("DELETE FROM usage")
