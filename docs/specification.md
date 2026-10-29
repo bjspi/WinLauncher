@@ -838,6 +838,24 @@ the bar returns over Settings when called again. An exclusion added
 from a result's menu meanwhile is saved at once and also joins the open window's
 fields, so its next Save keeps it.
 
+Opening any modal dialog hides the bar, even when pinned, so the new prompt is
+in front. Dialogs opened from Settings or another dialog belong to that window
+and are window-modal: only their owner is blocked, and the bar can be summoned
+and used meanwhile, including Quick Switch in a folder picker. A dialog opened
+from the bar (or without an owner) instead runs application-modal in its own
+independent window. Each dialog is shown, raised and activated explicitly, so a
+background failure is brought forward even when the bar was already hidden.
+Nested prompts belong to the active dialog; a warning during a Settings action
+belongs to Settings. These ownership and focus rules share `ui/dialogs.run_modal`.
+
+Summoning the bar by shortcut, tray or another start while a modal dialog blocks
+it keeps the bar hidden and brings that dialog's own window forward, without
+changing the search text or scope. A window-modal child of an application-modal
+dialog still blocks the bar; an independent Settings child does not. After an
+application-wide dialog closes, the bar stays hidden until it is called again.
+Escape in the bar reaches the bar and leaves Settings and its dialogs open;
+Escape in a dialog closes only that dialog with one press.
+
 All other settings apply on Save. Validation or save errors keep the dialog open
 with the edits intact.
 

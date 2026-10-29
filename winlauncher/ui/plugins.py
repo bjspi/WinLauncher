@@ -24,6 +24,7 @@ from winlauncher.plugins.api import PluginCommand
 from winlauncher.plugins.host import PluginHost
 from winlauncher.plugins.search import PluginHit
 from winlauncher.settings import Settings
+from winlauncher.ui.dialogs import run_modal
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.widgets import InfoDialog, line_icon
 
@@ -276,7 +277,7 @@ def ask_text(parent: QWidget | None, title: str, text: str, *, secret: bool = Fa
     dialog.add_button("Cancel", dialog.reject)
     dialog.add_button("Continue", dialog.accept, primary=True)
     field.setFocus()
-    accepted = dialog.exec() == InfoDialog.DialogCode.Accepted
+    accepted = run_modal(dialog) == InfoDialog.DialogCode.Accepted
     answer = field.text().strip()
     dialog.deleteLater()
     return answer if accepted and answer else None

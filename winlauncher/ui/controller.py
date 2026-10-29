@@ -54,6 +54,7 @@ from winlauncher.search.service import SearchService
 from winlauncher.settings import Appearance, Settings, SettingsFile
 from winlauncher.ui import messages
 from winlauncher.ui.about import AboutDialog
+from winlauncher.ui.dialogs import run_modal
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
 from winlauncher.ui.plugin_sources import SourceWatcher
@@ -483,7 +484,7 @@ class LauncherController(QObject):
                 dialog.add_widget(_details("Scan errors", "\n".join(report.errors)))
         dialog.add_helper("Refresh now", lambda: (dialog.accept(), self.rescan()))
         dialog.add_button("Close", dialog.accept, primary=True)
-        dialog.exec()
+        run_modal(dialog)
         dialog.deleteLater()
 
     # Item actions -------------------------------------------------------------
@@ -623,7 +624,7 @@ class LauncherController(QObject):
         candidates = exclusion_candidates(path, self._configured_roots(), generated)
         choices = [FolderChoice(path, self.store.count_within(path)) for path in candidates]
         dialog = ExcludeFolderDialog(choices, self.window)
-        accepted = dialog.exec()
+        accepted = run_modal(dialog)
         chosen, pattern = dialog.chosen_folder(), dialog.pattern
         dialog.deleteLater()
         if not accepted:
@@ -763,7 +764,7 @@ class LauncherController(QObject):
 
     def show_about(self) -> None:
         dialog = AboutDialog(self.data_dir, self.window)
-        dialog.exec()
+        run_modal(dialog)
         dialog.deleteLater()
 
     def check_for_updates(self) -> None:
@@ -809,9 +810,11 @@ class LauncherController(QObject):
     def _offer_update(self, release: Release) -> None:
         """A checkout updates itself; other installations get the command to run."""
         if not self.updater.can_apply:
-            UpdateCommandDialog(
+            dialog = UpdateCommandDialog(
                 release, install_command(self.updater.installation, release), self.window
-            ).exec()
+            )
+            run_modal(dialog)
+            dialog.deleteLater()
             return
         root = self.updater.root
         answer = messages.show_message(

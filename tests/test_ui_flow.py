@@ -20,8 +20,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QLocale, Qt, QTimer
 from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QMenu
+from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMenu,
+)
 
 import winlauncher
 from winlauncher.actions import ExplorerTarget
@@ -35,16 +44,22 @@ from winlauncher.platform.gesture import (
     InputUnavailable,
     ViewKind,
 )
+from winlauncher.releases import Release
 from winlauncher.search.native_engine import warm_search_index
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.settings import Settings, SettingsFile
 from winlauncher.ui.controller import LauncherController
+from winlauncher.ui.dialogs import bring_to_front, run_modal
+from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice
 from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
 from winlauncher.ui.indexing import IndexJobKind
+from winlauncher.ui.messages import MessageDialog, message
+from winlauncher.ui.plugins import ask_text
 from winlauncher.ui.settings import NUMBER_FIELD_WIDTH, SettingsDialog
 from winlauncher.ui.tasks import TaskCategory
 from winlauncher.ui.theme import colors
+from winlauncher.ui.widgets import InfoDialog, pick_path
 from winlauncher.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MARGIN
 from winlauncher.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
 
@@ -1581,6 +1596,277 @@ class UiFlowTest(unittest.TestCase):
         self.assertIn("**\\noise\\deep", c.settings.excluded_patterns)
         dialog.reject()
         self.assertIsNone(c.settings_dialog)
+
+    def test_summoning_with_an_application_modal_dialog_keeps_the_bar_hidden(self):
+        for visible in (False, True):
+            with self.subTest(bar_visible=visible):
+                self.window.setVisible(visible)
+                self.window.query.setText("keep this query")
+                dialog = QDialog(self.window)
+                self.addCleanup(dialog.deleteLater)
+                self.addCleanup(dialog.reject)
+                dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+                dialog.show()
+                self.app.processEvents()
+                self.assertIs(QApplication.activeModalWidget(), dialog)
+                changed = QSignalSpy(self.window.query_changed)
+                self.window.present(text="must not replace the query", scope=self.root)
+                self.app.processEvents()
+                self.assertFalse(self.window.isVisible())
+                self.assertIs(QApplication.activeWindow(), dialog)
+                self.assertEqual(self.window.query.text(), "keep this query")
+                self.assertIsNone(self.window.scope)
+                self.assertEqual(changed.count(), 0)
+                QTest.keyClick(dialog, Qt.Key.Key_Escape)
+                self.assertFalse(dialog.isVisible())
+
+    def test_summoning_redirects_to_the_nested_child_of_an_application_modal_dialog(self):
+        parent = QDialog()
+        self.addCleanup(parent.deleteLater)
+        self.addCleanup(parent.reject)
+        parent.setWindowModality(Qt.WindowModality.ApplicationModal)
+        parent.show()
+        child = QDialog(parent)
+        self.addCleanup(child.deleteLater)
+        self.addCleanup(child.reject)
+        child.setWindowModality(Qt.WindowModality.WindowModal)
+        child.show()
+        self.app.processEvents()
+        self.assertIs(QApplication.activeModalWidget(), child)
+        self.controller.tray.search_requested.emit()
+        self.app.processEvents()
+        self.assertFalse(self.window.isVisible())
+        self.assertIs(QApplication.activeWindow(), child)
+        QTest.keyClick(child, Qt.Key.Key_Escape)
+        self.assertFalse(child.isVisible())
+        self.assertTrue(parent.isVisible())
+        self.controller._toggle_launcher()
+        self.app.processEvents()
+        self.assertFalse(self.window.isVisible())
+        self.assertIs(QApplication.activeWindow(), parent)
+        QTest.keyClick(parent, Qt.Key.Key_Escape)
+        self.assertFalse(parent.isVisible())
+        self.controller._toggle_launcher()
+        self.app.processEvents()
+        self.assertTrue(self.window.query.hasFocus())
+
+    def open_settings(self) -> SettingsDialog:
+        """Open the real independent Settings window without reading Windows Startup."""
+        self.controller.startup = Mock()
+        self.controller.startup.is_enabled.return_value = False
+        self.controller.edit_settings()
+        settings = self.controller.settings_dialog
+        self.addCleanup(settings.reject)
+        self.app.processEvents()
+        return settings
+
+    def test_settings_error_blocks_only_settings_and_escape_stays_with_the_focused_window(self):
+        settings = self.open_settings()
+
+        def run(dialog: MessageDialog) -> int:
+            self.app.processEvents()
+            self.assertIs(dialog.parentWidget(), settings)
+            self.assertEqual(dialog.windowModality(), Qt.WindowModality.WindowModal)
+            self.assertIs(QApplication.activeModalWidget(), dialog)
+            self.controller.tray.search_requested.emit()
+            self.app.processEvents()
+            self.assertIs(QApplication.activeWindow(), self.window)
+            self.assertTrue(self.window.query.hasFocus())
+            QTest.keyClicks(self.window.query, "report")
+            self.assertEqual(self.window.query.text(), "report")
+            QTest.keyClick(self.window.query, Qt.Key.Key_Escape)
+            self.assertFalse(self.window.isVisible())
+            self.assertTrue(dialog.isVisible())
+            bring_to_front(dialog)
+            self.app.processEvents()
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            self.assertFalse(dialog.isVisible())
+            self.assertTrue(settings.isVisible())
+            return dialog.result()
+
+        with (
+            patch.object(self.controller.settings_file, "save", side_effect=OSError("denied")),
+            patch.object(MessageDialog, "exec", run),
+        ):
+            self.assertFalse(settings.save())
+        self.assertTrue(settings.isVisible())
+        self.window.present()
+        self.app.processEvents()
+        self.assertTrue(self.window.query.hasFocus())
+        QTest.keyClicks(self.window.query, "usable")
+        self.assertEqual(self.window.query.text(), "usable")
+
+    def test_settings_picker_and_plugin_question_leave_the_bar_usable(self):
+        settings = self.open_settings()
+
+        def run(dialog: QDialog) -> int:
+            self.app.processEvents()
+            self.assertIs(dialog.parentWidget(), settings)
+            self.assertEqual(dialog.windowModality(), Qt.WindowModality.WindowModal)
+            self.window.present(text="type here")
+            self.app.processEvents()
+            self.assertTrue(self.window.query.hasFocus())
+            QTest.keyClicks(self.window.query, " too")
+            self.assertEqual(self.window.query.text(), "type here too")
+            self.assertTrue(dialog.isVisible())
+            dialog.reject()
+            return dialog.result()
+
+        with patch.object(InfoDialog, "exec", run):
+            self.assertIsNone(ask_text(settings.limit, "Sign in", "Enter a code"))
+        with patch.object(QFileDialog, "exec", run):
+            self.assertIsNone(pick_path(settings.limit, "Choose a folder"))
+
+    def test_settings_apply_warning_uses_the_active_settings_window(self):
+        settings = self.open_settings()
+
+        def run(dialog: MessageDialog) -> int:
+            self.app.processEvents()
+            self.assertIs(dialog.parentWidget(), settings)
+            self.assertEqual(dialog.windowModality(), Qt.WindowModality.WindowModal)
+            self.window.present()
+            self.app.processEvents()
+            self.assertTrue(self.window.query.hasFocus())
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            return dialog.result()
+
+        with (
+            patch.object(self.controller, "_apply_changes", side_effect=OSError("watch failed")),
+            patch.object(MessageDialog, "exec", run),
+            self.assertLogs("winlauncher.ui.controller", "ERROR"),
+        ):
+            self.assertTrue(settings.save())
+        self.assertTrue(settings.isVisible())
+
+    def test_new_settings_prompt_steps_a_visible_bar_aside_before_it_can_be_summoned(self):
+        settings = self.open_settings()
+        self.window.present()
+        self.app.processEvents()
+        self.assertTrue(self.window.isVisible())
+
+        def run(dialog: MessageDialog) -> int:
+            self.app.processEvents()
+            self.assertIs(dialog.parentWidget(), settings)
+            self.assertEqual(dialog.windowModality(), Qt.WindowModality.WindowModal)
+            self.assertFalse(self.window.isVisible())
+            self.assertIs(QApplication.activeWindow(), dialog)
+            self.window.present(text="still usable")
+            self.app.processEvents()
+            self.assertTrue(self.window.query.hasFocus())
+            QTest.keyClick(self.window.query, Qt.Key.Key_Escape)
+            self.assertTrue(dialog.isVisible())
+            dialog.reject()
+            return dialog.result()
+
+        with patch.object(MessageDialog, "exec", run):
+            message(settings.limit, "Source failed", "A background settings action failed.")
+
+    def test_hidden_bar_background_failure_is_an_independent_foreground_message(self):
+        self.window.hide()
+
+        def run(dialog: MessageDialog) -> int:
+            self.app.processEvents()
+            self.assertIsNone(dialog.parentWidget())
+            self.assertEqual(dialog.windowModality(), Qt.WindowModality.ApplicationModal)
+            self.assertTrue(dialog.isVisible())
+            self.assertIs(QApplication.activeWindow(), dialog)
+            self.assertIs(QApplication.focusWidget().window(), dialog)
+            self.controller._toggle_launcher()
+            self.app.processEvents()
+            self.assertFalse(self.window.isVisible())
+            self.assertIs(QApplication.activeWindow(), dialog)
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            self.assertFalse(dialog.isVisible())
+            return dialog.result()
+
+        with patch.object(MessageDialog, "exec", run):
+            self.controller._action_failed("A background action failed.")
+        self.assertFalse(self.window.isVisible())
+        self.assertIsNone(QApplication.activeModalWidget())
+
+    def test_bar_dialogs_hide_even_a_pinned_bar_and_detach_its_ownership(self):
+        self.window.pinned = True
+        self.controller.updater.root = None  # Exercise an installed package's update dialog.
+
+        def run(dialog: QDialog) -> int:
+            self.app.processEvents()
+            self.assertFalse(self.window.isVisible())
+            self.assertIsNone(dialog.parentWidget())
+            self.assertEqual(dialog.windowModality(), Qt.WindowModality.ApplicationModal)
+            self.assertIs(QApplication.activeWindow(), dialog)
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            self.assertFalse(dialog.isVisible())
+            return dialog.result()
+
+        for action in (self.controller.show_index_status, self.controller.show_about):
+            with self.subTest(action=action.__name__):
+                self.window.present()
+                with patch.object(InfoDialog, "exec", run):
+                    action()
+                self.assertFalse(self.window.isVisible())
+                self.assertTrue(self.window.pinned)
+        self.window.present()
+        with patch.object(MessageDialog, "exec", run):
+            message(None, "Background notice", "Unowned decisions also hide the bar.")
+        self.window.present()
+        with patch.object(InfoDialog, "exec", run):
+            self.controller._offer_update(Release(1, 2, 3))
+        self.window.present()
+        with patch.object(ExcludeFolderDialog, "exec", run):
+            self.controller.exclude_folder(self.root)
+
+    def test_exclusion_pattern_editor_is_modal_only_to_its_picker(self):
+        picker = ExcludeFolderDialog([FolderChoice(self.root, 1)], self.window)
+        self.addCleanup(picker.deleteLater)
+
+        def edit(editor: QInputDialog) -> int:
+            self.app.processEvents()
+            self.assertIs(editor.parentWidget(), picker)
+            self.assertEqual(editor.windowModality(), Qt.WindowModality.WindowModal)
+            self.window.present()
+            self.app.processEvents()
+            self.assertFalse(self.window.isVisible())
+            self.assertIs(QApplication.activeWindow(), editor)
+            QTest.keyClick(editor, Qt.Key.Key_Escape)
+            self.assertFalse(editor.isVisible())
+            self.assertTrue(picker.isVisible())
+            return editor.result()
+
+        def choose(dialog: ExcludeFolderDialog) -> int:
+            with patch.object(QInputDialog, "exec", edit):
+                dialog.edit_pattern()
+            self.assertIsNone(dialog.pattern)
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            self.assertFalse(dialog.isVisible())
+            return dialog.result()
+
+        with patch.object(ExcludeFolderDialog, "exec", choose):
+            self.assertEqual(run_modal(picker), QDialog.DialogCode.Rejected)
+
+    def test_foreground_activation_uses_the_dialog_window_instead_of_the_hidden_bar(self):
+        dialog = QDialog()
+        field = QLineEdit(dialog)
+        self.addCleanup(dialog.deleteLater)
+        self.addCleanup(dialog.reject)
+        with (
+            patch("winlauncher.ui.dialogs.QApplication.platformName", return_value="windows"),
+            patch("winlauncher.platform.windows.activate_window", return_value=True) as activate,
+        ):
+            bring_to_front(field)
+        activate.assert_called_once_with(int(dialog.winId()))
+        self.assertNotEqual(int(dialog.winId()), int(self.window.winId()))
+
+    def test_native_picker_wrapper_does_not_receive_the_windows_focus_request(self):
+        wrapper = QDialog()
+        wrapper.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        self.addCleanup(wrapper.deleteLater)
+        self.addCleanup(wrapper.reject)
+        with (
+            patch("winlauncher.ui.dialogs.QApplication.platformName", return_value="windows"),
+            patch("winlauncher.platform.windows.activate_window") as activate,
+        ):
+            bring_to_front(wrapper)
+        activate.assert_not_called()
 
     def test_exclude_picker_adds_the_chosen_parent(self):
         c = self.controller

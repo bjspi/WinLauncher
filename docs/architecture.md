@@ -68,6 +68,7 @@ flowchart TD
 | `ui/plugin_sources.py`, `ui/source_settings.py` | Periodic source checks, update notices, installs and activations; the Plugins page: what sources offer, and the sources |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
 | `ui/widgets.py` | The settings look: tinted line icons, animated switches, cards with setting rows, info dialogs |
+| `ui/dialogs.py` | Modal ownership, hiding the bar for application-wide dialogs, and foreground activation; blocked launcher summons return to the active dialog |
 | `ui/theme.py` | Light and dark colors, the stylesheet built from them, following the Windows color scheme; painters read `colors()` and refresh kept icons on `Theme.changed` |
 | `platform/git.py` | Read-only git queries for self-updating a source checkout |
 | `releases.py` | Release tags, installation kinds and their update commands |

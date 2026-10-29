@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from winlauncher.ui.dialogs import run_modal
 from winlauncher.ui.theme import colors, theme
 
 ICONS = Path(__file__).with_name("assets") / "icons"
@@ -76,8 +77,7 @@ def pick_path(parent: QWidget, title: str, filters: str | None = None) -> Path |
     else:
         dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         dialog.setNameFilters(filters.split(";;"))
-    dialog.setWindowModality(Qt.WindowModality.WindowModal)
-    chosen = dialog.selectedFiles() if dialog.exec() else []
+    chosen = dialog.selectedFiles() if run_modal(dialog) else []
     dialog.deleteLater()
     return Path(chosen[0]) if chosen else None
 

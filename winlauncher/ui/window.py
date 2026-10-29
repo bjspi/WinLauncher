@@ -70,6 +70,7 @@ from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
 from winlauncher.search.ranking import SearchHit
 from winlauncher.ui.commands import command_icon
+from winlauncher.ui.dialogs import blocking_modal, bring_to_front
 from winlauncher.ui.file_transfer import file_mime_data, url_mime_data
 from winlauncher.ui.highlight import matched_positions
 from winlauncher.ui.icons import ResultIcons
@@ -1155,6 +1156,10 @@ class LauncherWindow(QWidget):
         launcher opens on the cursor's screen. `view_kind` says what
         `explorer_view` belongs to.
         """
+        if (modal := blocking_modal(self)) is not None:
+            self.hide()
+            bring_to_front(modal)
+            return
         self._show_scope(scope)
         self.explorer_view = explorer_view
         self.view_kind = view_kind

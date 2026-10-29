@@ -14,6 +14,7 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QPlainTextEdit, QPushButton, QWidget
 
+from winlauncher.ui.dialogs import run_modal
 from winlauncher.ui.theme import colors
 from winlauncher.ui.widgets import INFO_DIALOG_WIDTH, INFO_ICON_SIZE, InfoDialog, line_icon
 
@@ -147,7 +148,7 @@ def show_message(
 ) -> str | None:
     """Show a message dialog; the clicked button's text, or None when it was closed."""
     dialog = MessageDialog(title, text, buttons, kind, parent, **options)
-    dialog.exec()
+    run_modal(dialog)
     clicked = dialog.clicked
     dialog.deleteLater()
     return clicked
