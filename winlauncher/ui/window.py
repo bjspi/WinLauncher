@@ -86,6 +86,7 @@ COMPACT_WIDTH = 640
 EXPANDED_WIDTH = 900
 EXPLORER_WIDTH = 396
 SETTINGS_ICON_SIZE = 20  # With its padding as tall as the logo button beside it.
+PIN_TOOLTIP = "Keep open after opening results (Ctrl+P)"
 EXPANDED_ROWS = 14
 SHADOW_MARGIN = 14
 SHADOW_OFFSET = 4
@@ -352,7 +353,7 @@ def _shortcut_hint(
     if explorer:
         return "↵ open · ↑↓ select in Explorer"
     if row.file_hit.item.kind == ItemKind.FOLDER and not row.missing:
-        return "↵ open · Tab search inside · Ctrl+↵ show in folder · Ctrl+1–9"
+        return "↵ open · Tab search inside · Ctrl+↵ show in folder"
     return "↵ open · Ctrl+↵ show in folder · Ctrl+C copy file · Ctrl+1–9"
 
 
@@ -529,6 +530,8 @@ class LauncherWindow(QWidget):
         self.auto_hide.timeout.connect(self._hide_if_unused)
         self.auto_hide_enabled = False
         self.auto_hide_ms = 0
+        # Pinned, results open without closing the bar; see `set_pinned`.
+        self.pinned = False
         self.menu_commands: tuple[MenuCommand, ...] = ()
         self._command_icons: dict[MenuCommand, QIcon] = {}  # Loaded when first shown.
         self.foreground_watcher = None
@@ -612,14 +615,24 @@ class LauncherWindow(QWidget):
         self.settings_button.setToolTip("Settings (Ctrl+,)")
         self.settings_button.setAccessibleName("Settings")
         self.settings_button.clicked.connect(self.settings_requested)
+        self.pin_button = QToolButton()
+        self.pin_button.setObjectName("pinButton")
+        self.pin_button.setCheckable(True)
+        self.pin_button.setIconSize(QSize(SETTINGS_ICON_SIZE, SETTINGS_ICON_SIZE))
+        self.pin_button.setToolTip(PIN_TOOLTIP)
+        self.pin_button.setAccessibleName("Keep open")
+        self.pin_button.toggled.connect(self.set_pinned)
         self._use_theme_icons()
         theme().changed.connect(self._theme_changed)
         row.addWidget(self.settings_button)
+        row.addWidget(self.pin_button)
         row.addWidget(self.menu_button)  # The logo stays the bar's right edge.
         return row
 
     def _use_theme_icons(self) -> None:
         self.settings_button.setIcon(line_icon("gear", colors().muted))
+        pin_color = colors().scope_text if self.pinned else colors().muted
+        self.pin_button.setIcon(line_icon("pin", pin_color))
 
     def _theme_changed(self) -> None:
         """Results paint with the active colors; icons keep the colors they were made with."""
@@ -717,6 +730,7 @@ class LauncherWindow(QWidget):
             ("Ctrl+Enter", self.reveal_selected),  # Keypad Enter.
             ("Ctrl+Shift+C", self.copy_target),
             ("Ctrl+D", self.favorite_selected),
+            ("Ctrl+P", self.pin_button.toggle),
             ("Ctrl+,", self.settings_requested),
             ("Shift+F10", self.keyboard_context_menu),
         ):
@@ -1210,7 +1224,7 @@ class LauncherWindow(QWidget):
         if self.explorer_mode:
             # On the next event loop pass, once the new foreground window is known.
             self.auto_hide.start(0)
-        elif self.auto_hide_enabled:
+        elif self.auto_hide_enabled and not self.pinned:
             self.auto_hide.start(self.auto_hide_ms)
 
     def _hide_if_unused(self) -> None:
@@ -1274,6 +1288,7 @@ class LauncherWindow(QWidget):
         self.menu_button.setIconSize(QSize(16, 16) if enabled else QSize(28, 28))
         # The Explorer bar stays narrow; its menu still offers the settings.
         self.settings_button.setVisible(not enabled)
+        self.pin_button.setVisible(not enabled)
         self._show_scope(scope)
 
     def _place_on_cursor_screen(self) -> None:
@@ -1379,6 +1394,25 @@ class LauncherWindow(QWidget):
             return
         if (hit := row.file_hit) is not None:
             self.explorer_selection.emit(hit)
+
+    def set_pinned(self, pinned: bool) -> None:
+        """Pinned, the launcher bar stays open after opening results and when focus
+        leaves it, so several results can be opened in a row.
+
+        Escape, the global shortcut and closing it from the tray still hide it. The
+        Explorer bar is never pinned: it belongs to the Explorer window.
+        """
+        self.pinned = pinned
+        self.pin_button.setChecked(pinned)
+        self._use_theme_icons()
+        if pinned:
+            self.auto_hide.stop()
+
+    def close_after_action(self) -> None:
+        """A result was opened or acted on: hide, unless the launcher bar is pinned."""
+        if self.pinned and not self.explorer_mode:
+            return
+        self.hide()
 
     def dismiss(self) -> None:
         """Escape: close; a file dialog gets the typed text back in its file-name box.

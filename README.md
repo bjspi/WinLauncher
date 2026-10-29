@@ -212,6 +212,7 @@ built-in keys and Ctrl+Alt is AltGr on many keyboards.
 | <kbd>Alt</kbd>+<kbd>Enter</kbd> / <kbd>Alt</kbd>+click / <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> | Run your own command whose shortcut is Alt (also Shift or Alt+Shift) |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy the path |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> | Toggle favorite |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> / pin button | Keep the bar open after opening results; <kbd>Esc</kbd> still closes it |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | Select the query |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Shift</kbd>+<kbd>F10</kbd> / right-click | Open, reveal, your own commands, copy, favorite, exclude |

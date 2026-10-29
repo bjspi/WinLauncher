@@ -992,6 +992,34 @@ class UiFlowTest(unittest.TestCase):
         self.assertIsNone(self.controller.search.running)
         self.assertFalse(self.controller.search.debounce.isActive())
 
+    def test_pinned_launcher_stays_open_after_opening_results(self):
+        hit = self.show_file_result()
+        self.window.activateWindow()
+        self.window.query.setFocus()
+        self.app.processEvents()
+        QTest.keyClick(self.window.query, Qt.Key.Key_P, Qt.KeyboardModifier.ControlModifier)
+        self.assertTrue(self.window.pinned)
+        self.assertTrue(self.window.pin_button.isChecked())
+        self.window.open_selected()
+        self.tasks.finish(TaskCategory.ACTION)
+        self.window.reveal_selected()
+        self.tasks.finish(TaskCategory.ACTION)
+        self.launch.assert_called_once()
+        self.reveal.assert_called_once_with(hit.item.path)
+        self.assertTrue(self.window.isVisible())
+        # Focus moving to the opened program does not start the auto-hide timer either.
+        self.window.set_auto_hide(True, 1)
+        self.window._focus_left()
+        self.assertFalse(self.window.auto_hide.isActive())
+        self.window.dismiss()  # Escape still closes.
+        self.assertFalse(self.window.isVisible())
+        self.window.show()
+        self.window.pin_button.click()
+        self.assertFalse(self.window.pinned)
+        self.window.open_selected()
+        self.tasks.finish(TaskCategory.ACTION)
+        self.assertFalse(self.window.isVisible())
+
     def test_home_shortcut_opens_an_unindexed_folder(self):
         folder = self.root.parent / ".toolbox"
         folder.mkdir()
