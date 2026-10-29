@@ -277,8 +277,9 @@ D:\Work\Shared report.pdf               find this file directly, even outside in
 
 Paste an absolute file path and use **Ctrl+Enter** or **Show in containing folder**
 to open its folder with the file selected. Absolute paths use the same direct
-navigation as `~/`; spaces belong to the path. For a catalog search within a
-folder, use `in:"D:\Work" report`. `%` suggestions and exact references such as
+navigation as `~/`; spaces belong to the path, and the quotes of Explorer's
+"Copy as path" are removed. For a catalog search within a folder, use
+`in:"D:\Work" report` (a leading `D:\Work\ report` now navigates instead). `%` suggestions and exact references such as
 `%TEMP%` show the variable name and its full resolved path; `%TEMP%\` lists its contents.
 
 | Filter | Meaning |

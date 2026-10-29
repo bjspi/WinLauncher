@@ -991,9 +991,11 @@ class UiFlowTest(unittest.TestCase):
         folder = self.root.parent / ".toolbox"
         folder.mkdir()
         with patch.dict(os.environ, USERPROFILE=str(self.root.parent), HOME=str(self.root.parent)):
+            catalog_searches = self.tasks.count(TaskCategory.SEARCH)
             self.window.query.setText("~/.toolbox")
             self.controller.search.run()
-            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.tasks.count(TaskCategory.SEARCH), catalog_searches)
+            self.tasks.finish(TaskCategory.NAVIGATION)
             self.assertEqual(self.window.selected_hit().item.path, folder)
             self.window.open_selected()
             self.tasks.finish(TaskCategory.ACTION)
@@ -1017,13 +1019,15 @@ class UiFlowTest(unittest.TestCase):
                 self.window.activateWindow()
                 self.window.query.setFocus()
                 self.app.processEvents()
-                self.window.query.setText(str(document))
+                # Explorer's "Copy as path" adds quotes; both forms navigate.
+                text = str(document) if action == "menu" else f'"{document}"'
+                self.window.query.setText(text)
                 self.controller.search.run()
                 with patch(
                     "winlauncher.search.service.select_native",
                     side_effect=AssertionError("An absolute file must bypass catalog search"),
                 ):
-                    self.tasks.finish(TaskCategory.SEARCH)
+                    self.tasks.finish(TaskCategory.NAVIGATION)
                 self.assertEqual(self.window.results.count(), 1)
                 self.assertEqual(self.window.selected_hit().item.path, document)
                 if action == "menu":
@@ -1054,7 +1058,7 @@ class UiFlowTest(unittest.TestCase):
                 with self.subTest(text=text):
                     self.window.query.setText(text)
                     self.controller.search.run()
-                    self.tasks.finish(TaskCategory.SEARCH)
+                    self.tasks.finish(TaskCategory.NAVIGATION)
                     row = self.window.selected_row()
                     self.assertEqual(row.name, alias)
                     self.assertEqual(row.location, str(folder))
@@ -1078,12 +1082,12 @@ class UiFlowTest(unittest.TestCase):
             self.window.show()
             self.window.query.setText(alias + "\\")
             self.controller.search.run()
-            self.tasks.finish(TaskCategory.SEARCH)
+            self.tasks.finish(TaskCategory.NAVIGATION)
             row = self.window.selected_row()
             self.assertEqual(row.name, document.name)
             self.assertEqual(row.location, str(folder))
             self.assertEqual(row.target, str(document))
-            self.assertIsNone(row.file_hit.navigation_alias)
+            self.assertIsNone(row.file_hit.label)
 
     def test_explorer_typing_opens_live_folder_in_original_window_on_one_click(self):
         self.window.hide()

@@ -275,10 +275,12 @@ Typed kind filters update toggle/menu state. Selecting a toggle removes typed
 Leading absolute paths (drive paths and UNC shares), `%VARIABLE%` and
 `~`/`~/`/`~\` enter direct path navigation, even outside indexed roots. The whole
 trimmed input is one path, including spaces and any text that would otherwise be
-a filter; no surrounding quotes are required or removed. For a catalog search
+a filter; no quotes are required. One pair of quotes enclosing an absolute path,
+as Explorer's "Copy as path" produces, is removed. For a catalog search
 with terms and filters, use `in:"D:\Work" report` instead of `D:\Work\ report`.
-Drive-relative paths (`C:Work`), root-relative paths (`\Work`) and incomplete UNC
-server names do not enter direct navigation.
+Drive-relative paths (`C:Work`), root-relative paths (`\Work`), incomplete UNC
+server names and Win32 device paths (`\\.\…`, `\\?\…`) do not enter direct
+navigation.
 An exact existing path returns the file/folder without enumerating its parent;
 a trailing separator lists its direct children, and an incomplete last component
 completes names by prefix. A pasted file path can be opened directly or revealed
@@ -294,11 +296,19 @@ uppercase alias as their title and the full resolved target as their location,
 tooltip and accessible description. Suggestions sort by alias within their
 priority band. A trailing separator or subpath restores normal file/folder names.
 Actions and favorites always use the real target path, never the displayed alias.
-Unknown completed names and relative expansion values report an error.
-Resolution and enumeration run on a search worker, obey
+Their explanation reads "Windows folder variable"; other exact targets read
+"Direct path" and listed or completed entries "Path completion".
+Unknown completed names and relative expansion values report an error, and so
+does a folder that cannot be read (for example, access denied). Entries that
+vanish or deny access during listing and dangling links are left out.
+Resolution and enumeration run on a dedicated navigation worker pool, obey
 type, priority and exclusion rules, support cancellation and the result limit,
 and do not recursively scan or add entries to the catalog. Filesystem reads are
-skipped for excluded subtrees. `in:` also expands environment/home variables.
+skipped for excluded subtrees, including exact targets inside them. Before
+reading, the drive or share root is checked on a separate thread for at most two
+seconds; a root that does not answer reports an error, and folder variables on
+such a root are not suggested. Catalog searches never wait for navigation.
+`in:` also expands environment/home variables.
 
 ## Search classes and boosts
 

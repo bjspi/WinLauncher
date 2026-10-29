@@ -20,6 +20,8 @@ class TaskCategory(StrEnum):
     """Each category has its own pool, so a long scan never delays a search or launch."""
 
     SEARCH = "search"
+    # Direct path navigation: a slow network share must never delay catalog searches.
+    NAVIGATION = "navigation"
     PREFETCH = "prefetch"  # Results computed ahead of time, such as the start list.
     INDEX = "index"
     ACTION = "action"
@@ -32,6 +34,7 @@ class TaskCategory(StrEnum):
 
 _POOL_SIZES = {
     TaskCategory.SEARCH: 2,
+    TaskCategory.NAVIGATION: 2,
     TaskCategory.PREFETCH: 1,
     TaskCategory.INDEX: 1,
     TaskCategory.ACTION: 1,

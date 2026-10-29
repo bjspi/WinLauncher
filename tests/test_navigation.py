@@ -13,6 +13,7 @@ from unittest.mock import patch
 from winlauncher.catalog.model import ItemKind
 from winlauncher.catalog.priority import NamePriority
 from winlauncher.catalog.store import CatalogStore
+from winlauncher.search import navigation
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.service import SearchService
 from winlauncher.settings import DEFAULT_EXCLUDED_PATTERNS, RESULT_LIMIT_RANGE, Settings
@@ -111,7 +112,7 @@ class PathNavigationTest(unittest.TestCase):
                 ):
                     hits = self.service.search(parse_query(text), self.settings)
                     self.assertEqual([hit.item.path for hit in hits], [target])
-                    self.assertIsNone(hits[0].navigation_alias)
+                    self.assertIsNone(hits[0].label)
         self.assertEqual(self.service.store.count(), 0)
 
     def test_absolute_paths_browse_and_complete_only_direct_children(self) -> None:
@@ -139,38 +140,41 @@ class PathNavigationTest(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 hit = self.service.search(parse_query(text), self.settings)[0]
-                self.assertEqual(hit.navigation_alias, alias)
+                self.assertEqual(hit.label, alias)
                 self.assertEqual(hit.item.path, target)
                 self.assertEqual(hit.item.name, target.name)
         for text in ("~/", "%USERPROFILE%/", "%USERPROFILE%/.toolbox"):
             with self.subTest(text=text):
                 hits = self.service.search(parse_query(text), self.settings)
                 self.assertTrue(hits)
-                self.assertTrue(all(hit.navigation_alias is None for hit in hits))
+                self.assertTrue(all(hit.label is None for hit in hits))
 
     def test_aliases_sort_by_name_and_preserve_environment_precedence(self) -> None:
-        alpha = self.home / "Zulu folder"
-        zulu = self.home / "Alpha folder"
-        alpha.mkdir()
-        zulu.mkdir()
+        # Folder names sort opposite to their variables, so the order proves label sorting.
+        alpha_target = self.home / "Zulu folder"
+        zulu_target = self.home / "Alpha folder"
+        alpha_target.mkdir()
+        zulu_target.mkdir()
         self.service = SearchService(
-            self.service.store, lambda: {"NAV_ALPHA": zulu, "NAV_EXTRA": self.toolbox}
+            self.service.store, lambda: {"NAV_ALPHA": zulu_target, "NAV_EXTRA": self.toolbox}
         )
         with patch.dict(
             os.environ,
-            NAV_ALPHA=str(alpha),
-            NAV_ZULU=str(zulu),
-            NAV_DUPLICATE=str(alpha),
+            NAV_ALPHA=str(alpha_target),
+            NAV_ZULU=str(zulu_target),
+            NAV_DUPLICATE=str(alpha_target),
             NAV_SECRET="not-a-path",
         ):
             hits = self.service.search(parse_query("%nav_"), self.settings)
             self.assertEqual(
-                [hit.navigation_alias for hit in hits],
+                [hit.label for hit in hits],
                 ["%NAV_ALPHA%", "%NAV_EXTRA%", "%NAV_ZULU%"],
             )
-            self.assertEqual([hit.item.path for hit in hits], [alpha, self.toolbox, zulu])
+            self.assertEqual(
+                [hit.item.path for hit in hits], [alpha_target, self.toolbox, zulu_target]
+            )
             hits = self.service.search(parse_query("%nav_alpha%"), self.settings)
-            self.assertEqual(hits[0].item.path, alpha)
+            self.assertEqual(hits[0].item.path, alpha_target)
 
     def test_folder_names_complete_by_prefix_from_variables_and_shortcuts(self):
         downloads = self.home / "Downloads"
@@ -179,16 +183,15 @@ class PathNavigationTest(unittest.TestCase):
         self.service = SearchService(self.service.store, lambda: {"DOWNLOADS": downloads})
 
         def names(text):
-            return [
-                hit.reason.split(" · ")[0]
-                for hit in self.service.search(parse_query(text), self.settings)
-            ]
+            return [hit.label for hit in self.service.search(parse_query(text), self.settings)]
 
         # Only names starting with the typed text; TMP reaches TEMP's folder and is left out.
-        self.assertEqual(names("%t"), ["Windows folder: %TEMP%"])
-        self.assertEqual(names("%dev"), ["Windows folder: %DEVTOOLS%"])
-        self.assertEqual(names("%user"), ["Windows folder: %USERPROFILE%"])
-        self.assertEqual(names("%DOWN"), ["Windows folder: %DOWNLOADS%"])
+        self.assertEqual(names("%t"), ["%TEMP%"])
+        self.assertEqual(names("%dev"), ["%DEVTOOLS%"])
+        self.assertEqual(names("%user"), ["%USERPROFILE%"])
+        self.assertEqual(names("%DOWN"), ["%DOWNLOADS%"])
+        hit = self.service.search(parse_query("%t"), self.settings)[0]
+        self.assertTrue(hit.reason.startswith("Windows folder variable"))
         # A variable whose value is no folder, such as a token, is never shown.
         self.assertEqual(names("%api"), [])
         self.assertEqual(self.paths("%Downloads%\\"), [downloads / "setup.exe"])
@@ -247,21 +250,30 @@ class PathNavigationTest(unittest.TestCase):
         self.service.store.set_favorite(self.toolbox, False)
         self.assertFalse(self.service.search(query, self.settings)[0].item.pinned)
 
-    def test_absolute_navigation_preserves_policy_limits_cancellation_and_favorites(self) -> None:
+    def test_absolute_navigation_honors_exclusions_markers_and_priorities(self) -> None:
         excluded = self.home / "__pycache__"
         excluded.mkdir()
+        (excluded / "module.pyc").touch()
         with patch(
             "winlauncher.search.navigation.long_paths.scandir",
             side_effect=AssertionError("Excluded subtree must not be read"),
         ):
             self.assertEqual(self.paths(str(excluded) + os.sep), [])
+        with patch(
+            "winlauncher.search.navigation._item",
+            side_effect=AssertionError("An excluded target must not be read"),
+        ):
+            self.assertEqual(self.paths(str(excluded / "module.pyc")), [])
         (self.toolbox / ".nobackup").touch()
         self.assertEqual(self.paths(str(self.toolbox)), [])
         self.assertNotIn(self.toolbox, self.paths(str(self.home) + os.sep))
+        self.assertEqual(self.paths("%DEVTOOLS%\\"), [])
         ignored = replace(
             self.settings, name_priorities=(NamePriority("notes", search_priority="ignored"),)
         )
         self.assertEqual(self.paths(str(self.home / "notes.txt"), settings=ignored), [])
+
+    def test_absolute_navigation_keeps_limits_type_cancellation_and_favorites(self) -> None:
         limit = RESULT_LIMIT_RANGE[0]
         for index in range(limit + 1):
             (self.home / f"result-{index}").mkdir()
@@ -276,3 +288,45 @@ class PathNavigationTest(unittest.TestCase):
         self.service.store.set_favorite(self.home / "notes.txt", True)
         hits = self.service.search(parse_query(str(self.home / "notes.txt")), self.settings)
         self.assertTrue(hits[0].item.pinned)
+
+    def test_quoted_pasted_paths_navigate_without_their_quotes(self) -> None:
+        report = self.home / "My Documents" / "Shared report.txt"
+        report.write_text("fixture", encoding="utf-8")
+        self.assertEqual(self.paths(f'  "{report}"  '), [report])
+        self.assertEqual(self.paths(f'"{self.home}{os.sep}"'), self.paths(f"{self.home}{os.sep}"))
+
+    def test_unreadable_folders_report_a_message_and_dangling_targets_are_skipped(self) -> None:
+        with (
+            patch(
+                "winlauncher.search.navigation.long_paths.scandir",
+                side_effect=PermissionError(13, "Access is denied"),
+            ),
+            self.assertRaisesRegex(ValueError, "Cannot read .*Access is denied"),
+        ):
+            self.paths(str(self.toolbox) + os.sep)
+        with patch(
+            "winlauncher.search.navigation._item",
+            side_effect=FileNotFoundError(2, "The system cannot find the file"),
+        ):
+            self.assertEqual(self.paths(str(self.home / "notes.txt")), [])
+
+    def test_unresponsive_roots_cannot_hold_a_search_worker(self) -> None:
+        released = threading.Event()
+        self.addCleanup(released.set)
+
+        def hanging_share(_root: str) -> bool:
+            released.wait()
+            return True
+
+        share = r"\\unreachable-server\share"
+        with (
+            patch.object(navigation, "_ROOTS", navigation._RootProbe(0.05, hanging_share)),
+            patch.dict(os.environ, NAV_SHARE=share),
+        ):
+            for text in (share + "\\", share + "\\Reports\\q3"):
+                with (
+                    self.subTest(text=text),
+                    self.assertRaisesRegex(ValueError, "does not respond"),
+                ):
+                    self.paths(text)
+            self.assertEqual(self.paths("%nav_"), [])

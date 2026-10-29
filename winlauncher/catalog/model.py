@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+FOLDER_SEPARATORS = ("\\", "/")  # Both separate path components on Windows.
 REGISTRY_SOURCE = "registry:apps"
 APPLICATION_SOURCE_PREFIX = "apps:"  # Start-menu sources; see `CatalogSource.id`.
 """Source id of applications discovered through the App Paths registry keys."""

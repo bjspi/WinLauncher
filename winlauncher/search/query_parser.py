@@ -3,9 +3,10 @@
 Tokens are separated by whitespace; double quotes group words, and a quoted term
 matches only as contiguous text. Backslashes and apostrophes are literal, so
 Windows paths and names like "mom's" survive. A token `key:value` is a filter
-only when `key` is a known filter name. A leading absolute path, `%` or home
-shortcut enters direct navigation instead. A leading `!` or `-` excludes, and a
-trailing separator within a search (`reports\\`, `D:\\Work\\`) names a folder.
+only when `key` is a known filter name. Input that starts with an absolute path,
+`%` or the home shortcut `~` is one path for direct navigation instead (see
+`_navigation_target`). A leading `!` or `-` excludes, and a trailing separator
+within a search (`reports\\`, `D:\\Work\\`) names a folder.
 """
 
 from __future__ import annotations
@@ -19,16 +20,21 @@ from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 from fractions import Fraction
 from math import ceil, floor
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TypeVar
 
-from winlauncher.catalog.model import ItemKind, fold_case, normalize, normalize_extension
+from winlauncher.catalog.model import (
+    FOLDER_SEPARATORS,
+    ItemKind,
+    fold_case,
+    normalize,
+    normalize_extension,
+)
 from winlauncher.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
 
 MAX_QUERY_LENGTH = 512
 MAX_TERM_LENGTH = 128
 EXCLUSION_PREFIXES = ("!", "-")
-FOLDER_SEPARATORS = ("\\", "/")
 RANGE_SEPARATOR = ".."
 _Choice = TypeVar("_Choice", bound=StrEnum)
 _Bound = TypeVar("_Bound", int, float)
@@ -54,6 +60,11 @@ FILTER_NAMES = frozenset(
     }
 )
 CONTENT_FILTERS = frozenset({"contains", "content", "rg"})
+_HOME_SHORTCUT = "~"
+_NAVIGATION_PREFIXES = ("%", "~/", "~\\")
+# Win32 device namespaces (`\\.\pipe\`, `\\?\C:\`) are absolute but no user paths.
+_DEVICE_PREFIXES = ("\\\\.\\", "\\\\?\\", "//./", "//?/")
+_QUOTE = '"'
 # Whitespace separates tokens except inside double quotes; an open quote runs to the end.
 _TOKEN = re.compile(r'(?:"[^"]*"?|[^ \t\r\n"])+')
 
@@ -137,9 +148,8 @@ def parse_query(text: str, scope: Path | None = None, *, today: date | None = No
     `today` anchors relative dates such as `date:week`; it defaults to the local date.
     """
     _check_raw_text(text)
-    stripped = text.strip()
-    if _is_navigation(stripped):
-        return SearchQuery(navigation=stripped)
+    if (target := _navigation_target(text)) is not None:
+        return SearchQuery(navigation=target)
     draft = _QueryDraft(scope=scope, today=today or date.today())
     for token in _query_tokens(text):
         if not token.closed:
@@ -153,16 +163,39 @@ def query_spans(text: str) -> tuple[QuerySpan, ...]:
 
     Presentation only: never raises, so text being typed can be highlighted.
     """
-    if _is_navigation(text.strip()):
+    if _navigation_target(text) is not None:
         return ()
     spans = (_span(token) for token in _query_tokens(text))
     return tuple(span for span in spans if span is not None)
 
 
-def _is_navigation(stripped: str) -> bool:
-    return (
-        stripped.startswith(("%", "~/", "~\\")) or stripped == "~" or Path(stripped).is_absolute()
-    )
+def _navigation_target(text: str) -> str | None:
+    """The path that `text` navigates to directly, or None for an ordinary search.
+
+    The whole trimmed input is one path, spaces and filter-like text included, when
+    it starts with `%`, is `~` or starts with `~/`, or is an absolute drive or UNC
+    path. One pair of quotes around an absolute path is removed, as Explorer's
+    "Copy as path" adds them. Purely syntactic: the filesystem is not touched.
+    """
+    stripped = text.strip()
+    unquoted = _without_enclosing_quotes(stripped)
+    if unquoted is not None and _is_absolute_path(unquoted):
+        return unquoted
+    if stripped == _HOME_SHORTCUT or stripped.startswith(_NAVIGATION_PREFIXES):
+        return stripped
+    return stripped if _is_absolute_path(stripped) else None
+
+
+def _without_enclosing_quotes(text: str) -> str | None:
+    """The text inside one pair of quotes that encloses all of `text`, if it does."""
+    inner = text[1:-1]
+    enclosed = len(text) > 1 and text[0] == text[-1] == _QUOTE and _QUOTE not in inner
+    return inner if enclosed else None
+
+
+def _is_absolute_path(text: str) -> bool:
+    r"""A drive path (`C:\`) or UNC share (`\\server\share`), not a device path."""
+    return PureWindowsPath(text).is_absolute() and not text.startswith(_DEVICE_PREFIXES)
 
 
 def _query_tokens(text: str) -> Iterator[_Token]:
@@ -243,7 +276,7 @@ def _check_raw_text(text: str) -> None:
 
 def without_type_filter(text: str) -> str:
     """Remove typed kind overrides when a user selects a different UI filter."""
-    if _is_navigation(text.strip()):
+    if _navigation_target(text) is not None:
         return text
     tokens = _split_tokens(text)
     kept = [

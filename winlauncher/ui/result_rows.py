@@ -91,26 +91,40 @@ def _plugin_row(hit: PluginHit) -> ResultRow:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _FilePlace:
+    """Where a file row says its item is: muted location and full description."""
+
+    location: str
+    description: str
+
+
+def _file_place(hit: SearchHit, scope: Path | None) -> _FilePlace:
+    path = hit.item.path
+    if hit.label is None:
+        return _FilePlace(_location(path.parent, scope), str(path))
+    # The label hides the target's own name, so the full target path is shown instead.
+    return _FilePlace(str(path), f"{hit.label}\n{path}")
+
+
 def _file_row(hit: SearchHit, query: SearchQuery | None, scope: Path | None) -> ResultRow:
+    """A catalog or navigation hit; actions always use the real target path."""
     item = hit.item
-    name = hit.navigation_alias or item.name
-    location = str(item.path) if hit.navigation_alias else _location(item.path.parent, scope)
-    description = f"{hit.navigation_alias}\n{item.path}" if hit.navigation_alias else str(item.path)
+    place = _file_place(hit, scope)
     metadata = _metadata(item, query)
     size = QLocale().formattedDataSize(item.size)
     favorite = ", favorite" if item.pinned else ""
     details = f"\n{metadata}" if metadata else ""
+    modified = format_modified(item.modified)
     return ResultRow(
         hit=hit,
-        name=name,
-        location=location,
+        name=hit.title,
+        location=place.location,
         target=str(item.path),
         target_noun="Path",
-        detail=(
-            f"{description}\n{size}  ·  Modified {format_modified(item.modified)}  ·  {hit.reason}"
-        ),
-        tooltip=f"{description}\n{hit.reason}\nRelevance: {hit.score:.1f}",
-        accessible_text=f"{name}, {item.kind.value}{favorite}{details}\n{item.path}",
+        detail=f"{place.description}\n{size}  ·  Modified {modified}  ·  {hit.reason}",
+        tooltip=f"{place.description}\n{hit.reason}\nRelevance: {hit.score:.1f}",
+        accessible_text=f"{hit.title}, {item.kind.value}{favorite}{details}\n{item.path}",
         metadata=metadata,
         pinned=item.pinned,
         direct=scope is not None and item.path.parent == scope,

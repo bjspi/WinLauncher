@@ -130,7 +130,7 @@ class SearchSession(QObject):
             return
         cancel = self.running = threading.Event()
         self.tasks.submit(
-            TaskCategory.SEARCH,
+            _task_category(query),
             partial(self._work, query, self.settings(), cancel),
             partial(self._completed, cancel, query),
             partial(self._failed, cancel),
@@ -323,6 +323,13 @@ def _file_query(query: LauncherQuery) -> SearchQuery | None:
     if isinstance(query, WebsiteQuery | PluginQuery):
         return query.files
     return query
+
+
+def _task_category(query: LauncherQuery) -> TaskCategory:
+    """Direct navigation may wait for a network share, so it has its own workers."""
+    files = _file_query(query)
+    navigates = files is not None and files.navigation is not None
+    return TaskCategory.NAVIGATION if navigates else TaskCategory.SEARCH
 
 
 def content_search_text(text: str) -> str | None:
