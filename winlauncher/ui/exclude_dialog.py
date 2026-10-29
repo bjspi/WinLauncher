@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from winlauncher.catalog.model import is_within
+from winlauncher.ui.dialogs import run_modal
 
 PATTERN_DIALOG_WIDTH = 640
 PATTERN_HELP = (
@@ -106,7 +107,7 @@ class ExcludeFolderDialog(QDialog):
         editor.setLabelText(PATTERN_HELP)
         editor.setTextValue(str(folder) if folder else "")
         editor.resize(PATTERN_DIALOG_WIDTH, editor.sizeHint().height())
-        pattern = editor.textValue().strip() if editor.exec() else ""
+        pattern = editor.textValue().strip() if run_modal(editor) else ""
         editor.deleteLater()
         if pattern:
             self.pattern = pattern
