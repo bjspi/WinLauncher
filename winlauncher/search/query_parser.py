@@ -194,8 +194,13 @@ def _without_enclosing_quotes(text: str) -> str | None:
 
 
 def _is_absolute_path(text: str) -> bool:
-    r"""A drive path (`C:\`) or UNC share (`\\server\share`), not a device path."""
-    return PureWindowsPath(text).is_absolute() and not text.startswith(_DEVICE_PREFIXES)
+    r"""A drive path (`C:\`) or UNC share (`\\server\share`), not a device path.
+
+    Drive and root are checked instead of `is_absolute()`, which since Python 3.13
+    also accepts an incomplete UNC server name such as `\\server`.
+    """
+    path = PureWindowsPath(text)
+    return bool(path.drive and path.root) and not text.startswith(_DEVICE_PREFIXES)
 
 
 def _query_tokens(text: str) -> Iterator[_Token]:
