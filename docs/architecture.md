@@ -189,7 +189,8 @@ matches below (`SearchService._search_explorer_folder`). The window owns the
 keys and the chip; `ui/search_session.py` only reads `window.scope`.
 `ui/result_rows.py` turns hits into display rows; plugin `breadcrumbs` become
 `ResultRow.location_parts`, which the row delegate shortens by whole parts
-(`shortened_breadcrumbs`) before eliding characters.
+(`shortened_breadcrumbs`) before eliding characters. Item `chips` carry a
+`ChipTone`, not a color; the delegate maps tones to theme colors when painting.
 
 ## Rust search engine
 

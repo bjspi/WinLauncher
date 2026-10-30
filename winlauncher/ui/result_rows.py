@@ -15,6 +15,7 @@ from typing import TypeAlias
 from PySide6.QtCore import QLocale
 
 from winlauncher.catalog.model import CatalogItem
+from winlauncher.plugins.api import MAX_CHIPS, Chip
 from winlauncher.plugins.search import PluginHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.ranking import SearchHit
@@ -47,6 +48,7 @@ class ResultRow:
     starts_subfolders: bool = False
     missing: bool = False  # The file is gone; the catalog has not noticed yet.
     opens_in: str = ""  # Where a website or plugin item opens: "browser", "Telegram".
+    chips: tuple[Chip, ...] = ()  # A plugin item's labels, drawn before the location.
 
     @property
     def file_hit(self) -> SearchHit | None:
@@ -84,6 +86,8 @@ def _plugin_row(hit: PluginHit) -> ResultRow:
     """A plugin item; its breadcrumbs, when given, replace the subtitle."""
     item = hit.item
     location = BREADCRUMB_SEPARATOR.join(item.breadcrumbs) or item.subtitle
+    chips = item.chips[:MAX_CHIPS]
+    labels = "".join(f", {chip.text}" for chip in chips)
     tooltip = "\n".join(part for part in (item.target, f"Opens in {hit.label}", hit.reason) if part)
     return ResultRow(
         hit=hit,
@@ -94,8 +98,9 @@ def _plugin_row(hit: PluginHit) -> ResultRow:
         target_noun="Link",
         detail=tooltip,
         tooltip=tooltip,
-        accessible_text=f"{hit.title}, {hit.label}\n{location}".rstrip(),
+        accessible_text=f"{hit.title}, {hit.label}{labels}\n{location}".rstrip(),
         opens_in=hit.label,
+        chips=chips,
     )
 
 

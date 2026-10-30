@@ -249,7 +249,8 @@ class Notes(Plugin):
         return [PluginItem(str(f), f.stem, target=str(f), subtitle=str(f.parent)) for f in files]
 ```
 
-- `PluginItem(key, name, target, subtitle, keywords, icon, title, routes, data, breadcrumbs)`:
+- `PluginItem(key, name, target, subtitle, keywords, icon, title, routes, data, breadcrumbs,
+  chips)`:
   - `key` identifies the item across refreshes.
   - `name` is matched and shown after the label; `title` replaces the whole
     "Label: name" text.
@@ -260,6 +261,7 @@ class Notes(Plugin):
   - `icon` is an image file, such as a cached avatar.
   - `routes` names the plugin's routes that list the item (see below).
   - `data` holds JSON values for `open`; it is never matched.
+  - `chips` are short colored labels, such as a ticket's status (see below).
 - `refresh(context)` returns the items. Raise `PluginError` with a message for the
   user, or `SetupRequired` when the user must set something up first.
 - `open(item, context)` opens the item; by default `os.startfile(item.target)`, so a
@@ -298,6 +300,41 @@ and the innermost ones (how deep) stay readable:
 elided. Each part must be non-empty text; `breadcrumbs` takes precedence over
 `subtitle`, and the full joined text is read to screen readers. Breadcrumbs are
 only shown, never matched: put words users type into `name` or `keywords`.
+
+### Status at a glance: chips
+
+A chip is a short rounded label on the row's second line, before the location,
+such as a ticket's status or priority:
+
+```python
+from winlauncher.plugins.api import Chip, ChipTone, PluginItem
+
+PluginItem(
+    key=issue["key"],
+    name=f"{issue['key']} {fields['summary']}",
+    target=f"https://contoso.atlassian.net/browse/{issue['key']}",
+    breadcrumbs=("Contoso", fields["project"]["name"]),
+    chips=(Chip(fields["status"]["name"], ChipTone.INFO), Chip("Bug")),
+)
+```
+
+A chip names a tone, not a color, so it stays readable in the light and the dark
+theme and looks like the chips of every other plugin:
+
+| Tone | Color | For |
+| --- | --- | --- |
+| `NEUTRAL` (default) | gray | types, labels, "To Do" |
+| `INFO` | blue | work going on, "In Progress" |
+| `SUCCESS` | green | done, approved, online |
+| `WARNING` | orange | waiting, due soon |
+| `DANGER` | red | blocked, failed, overdue |
+
+`tone` also takes the value as text, such as `"success"`. Keep chips to a word or
+two and to what helps choosing a row: the launcher draws at most three
+(`MAX_CHIPS`), elides long texts, and leaves out chips that do not fit whole.
+The location gives way before chips do. Screen readers hear the chips' texts.
+Chips are only shown, never matched: to let users type `blocked`, also put the
+word into `keywords`.
 
 ### Multiline text options
 

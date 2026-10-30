@@ -22,6 +22,7 @@ from winlauncher.catalog.model import normalize
 from winlauncher.connectivity import InternetState, InternetStatus
 from winlauncher.plugins.api import (
     Ask,
+    Chip,
     Plugin,
     PluginCommand,
     PluginContext,
@@ -494,4 +495,5 @@ def _item_from_json(value: object) -> PluginItem:
     values = dict(value)
     values["keywords"] = tuple(values.get("keywords", ()))
     values["routes"] = tuple(values.get("routes", ()))
+    values["chips"] = tuple(Chip(**chip) for chip in values.get("chips", ()))
     return PluginItem(**values)

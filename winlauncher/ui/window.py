@@ -65,6 +65,7 @@ from winlauncher.calculator import Calculation, calculate
 from winlauncher.catalog.model import ItemKind
 from winlauncher.commands import MenuCommand
 from winlauncher.platform.gesture import ViewKind
+from winlauncher.plugins.api import Chip, ChipTone
 from winlauncher.plugins.search import PluginHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
@@ -115,6 +116,12 @@ SEPARATOR_GAP = 9  # Extra height above that row; the line runs through its midd
 MISSING_OPACITY = 0.45  # Icon and text of a result whose file no longer exists.
 LOCATION_POINTS = 8  # Font size of the muted location and metadata text.
 HINT_SPACING = 8  # Between the shortcut hint and the kind filter buttons.
+CHIP_POINTS = 7.5  # A plugin item's chips, such as a ticket's status.
+CHIP_PADDING = 7  # Left and right of a chip's text.
+CHIP_SPACING = 4  # Between chips.
+CHIP_GAP = 8  # Between the last chip and the location.
+CHIP_TEXT_WIDTH = 140  # Longer chip texts are elided.
+CHIP_ALPHA = 40  # Of 255: a light tint of the chip's color behind its text.
 # Symbols the bar draws; Segoe UI lacks some, and Windows searches every installed
 # font for a fallback the first time one is measured, which takes 100-300 ms.
 BAR_SYMBOLS = "↵ ↑↓ ✕ ★ · … –"
@@ -245,11 +252,12 @@ class ResultDelegate(QStyledItemDelegate):
         location_area = text.adjusted(0, 0, -metadata_width, 0)
         if self.rows.two_lines:
             self._paint_name(painter, text, result.name, baseline=text.top() + 23)
-            self._paint_location(painter, location_area, result, baseline=baseline)
         else:
             name_end = self._paint_name(painter, location_area, result.name, baseline=baseline)
-            location = location_area.adjusted(name_end - text.left() + 12, 0, 0, 0)
-            self._paint_location(painter, location, result, baseline=baseline)
+            location_area = location_area.adjusted(name_end - text.left() + 12, 0, 0, 0)
+        chips_width = self._paint_chips(painter, location_area, result.chips, baseline=baseline)
+        location_area = location_area.adjusted(chips_width, 0, 0, 0)
+        self._paint_location(painter, location_area, result, baseline=baseline)
         painter.restore()
 
     def _icon(self, hit: LauncherHit) -> QIcon:
@@ -281,6 +289,37 @@ class ResultDelegate(QStyledItemDelegate):
             painter.drawText(x, baseline, segment)
             x += metrics.horizontalAdvance(segment)
         return x
+
+    def _paint_chips(
+        self, painter: QPainter, area: QRect, chips: tuple[Chip, ...], *, baseline: int
+    ) -> int:
+        """Draw the chips that fit at the left of `area`; return the width they take."""
+        if not chips or area.width() <= 0:
+            return 0
+        font = QFont("Segoe UI")
+        font.setPointSizeF(CHIP_POINTS if self.rows.two_lines else CHIP_POINTS - 0.5)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        padding = 2 if self.rows.two_lines else 1
+        top = baseline - metrics.ascent() - padding
+        height = metrics.height() + 2 * padding
+        x = area.left()
+        for chip in chips:
+            text = metrics.elidedText(chip.text, Qt.TextElideMode.ElideRight, CHIP_TEXT_WIDTH)
+            width = metrics.horizontalAdvance(text) + 2 * CHIP_PADDING
+            if x + width > area.right():
+                break
+            color = QColor(_chip_color(chip.tone))
+            tint = QColor(color)
+            tint.setAlpha(CHIP_ALPHA)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(tint)
+            painter.drawRoundedRect(QRectF(x, top, width, height), height / 2, height / 2)
+            painter.setPen(color)
+            painter.drawText(x + CHIP_PADDING, baseline, text)
+            x += width + CHIP_SPACING
+        return x - area.left() - CHIP_SPACING + CHIP_GAP if x > area.left() else 0
 
     def _paint_location(
         self, painter: QPainter, area: QRect, result: ResultRow, *, baseline: int
@@ -318,6 +357,17 @@ class ResultDelegate(QStyledItemDelegate):
         area = QRect(row.right() - width - 4, row.top(), width, row.height())
         painter.drawText(area, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, label)
         return width
+
+
+def _chip_color(tone: ChipTone) -> str:
+    theme_colors = colors()
+    return {
+        ChipTone.NEUTRAL: theme_colors.muted,
+        ChipTone.INFO: theme_colors.accent_strong,
+        ChipTone.SUCCESS: theme_colors.success,
+        ChipTone.WARNING: theme_colors.warning,
+        ChipTone.DANGER: theme_colors.invalid,
+    }[tone]
 
 
 def _row_color(state: QStyle.StateFlag) -> str | None:

@@ -20,6 +20,9 @@ from PySide6.QtWidgets import QApplication
 from winlauncher.catalog.model import CatalogItem, ItemKind
 from winlauncher.connectivity import InternetState, InternetStatus
 from winlauncher.plugins.api import (
+    MAX_CHIPS,
+    Chip,
+    ChipTone,
     Plugin,
     PluginCommand,
     PluginError,
@@ -58,6 +61,7 @@ TEAM = PluginItem(
     "Team Annahme",
     target="tg://privatepost?channel=5",
     breadcrumbs=("Contoso", "Teams", "Annahme"),
+    chips=(Chip("Active", ChipTone.SUCCESS), Chip("Group")),
 )
 
 
@@ -599,10 +603,21 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             ({"keywords": (1,)}, "keywords must be text"),
             ({"breadcrumbs": ("Site", " ")}, "breadcrumbs must be non-empty text"),
             ({"breadcrumbs": ("Site", 3)}, "breadcrumbs must be non-empty text"),
+            ({"chips": ("Done",)}, "chips must be Chip values"),
             ({"data": [("a", 1)]}, "data must map names"),
         ):
             with self.subTest(expected=expected), self.assertRaises(ValueError) as caught:
                 PluginItem(**{"key": "1", "name": "Anna", **fields})
+            self.assertIn(expected, str(caught.exception))
+
+    def test_chips_need_text_and_a_known_tone(self):
+        self.assertIs(Chip("Done", "success").tone, ChipTone.SUCCESS)
+        for text, tone, expected in (
+            (" ", ChipTone.NEUTRAL, "needs text"),
+            ("Done", "green", "tone must be one of"),
+        ):
+            with self.subTest(expected=expected), self.assertRaises(ValueError) as caught:
+                Chip(text, tone)
             self.assertIn(expected, str(caught.exception))
 
     def test_unusable_settings_buttons_are_ignored(self):
@@ -999,6 +1014,13 @@ class BreadcrumbTest(unittest.TestCase):
         )
         self.assertEqual(plain.location, item.subtitle)
         self.assertEqual(plain.location_parts, ())
+
+    def test_a_plugin_row_shows_and_reads_out_its_first_chips(self):
+        chips = tuple(Chip(f"Label {number}") for number in range(MAX_CHIPS + 1))
+        row = result_row(PluginHit("fake", "Fake", replace(TEAM, chips=chips), 1, ""), None, None)
+        self.assertEqual(row.chips, chips[:MAX_CHIPS])
+        self.assertIn("Fake, Label 0, Label 1, Label 2\n", row.accessible_text)
+        self.assertNotIn(f"Label {MAX_CHIPS}", row.accessible_text)
 
 
 if __name__ == "__main__":

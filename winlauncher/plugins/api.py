@@ -25,6 +25,7 @@ import re
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Protocol
 
@@ -41,6 +42,36 @@ class PluginError(Exception):
 
 class SetupRequired(PluginError):
     """The plugin cannot list anything until the user sets it up in Settings."""
+
+
+class ChipTone(StrEnum):
+    """What a chip says; the launcher picks the color that suits the active theme."""
+
+    NEUTRAL = "neutral"  # Gray: a type, a label, a state with no judgement such as "To Do".
+    INFO = "info"  # Blue: work going on, such as "In Progress".
+    SUCCESS = "success"  # Green: done, approved, online.
+    WARNING = "warning"  # Orange: waiting, due soon, needs attention.
+    DANGER = "danger"  # Red: blocked, failed, overdue.
+
+
+@dataclass(frozen=True, slots=True)
+class Chip:
+    """A short colored label in an item's row, such as a ticket's status."""
+
+    text: str
+    tone: ChipTone = ChipTone.NEUTRAL
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str) or not self.text.strip():
+            raise ValueError("A chip needs text.")
+        try:
+            object.__setattr__(self, "tone", ChipTone(self.tone))
+        except ValueError:
+            tones = ", ".join(tone.value for tone in ChipTone)
+            raise ValueError(f"A chip's tone must be one of {tones}.") from None
+
+
+MAX_CHIPS = 3  # Shown per row; further chips are kept but not drawn.
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +91,9 @@ class PluginItem:
     # Where the item lives, outermost first, such as ("Contoso", "Finance", "Q3"). Shown
     # instead of `subtitle`; a narrow row drops whole middle parts, never the first.
     breadcrumbs: tuple[str, ...] = ()
+    # Short labels in the row before the location, such as a ticket's status. Shown,
+    # never matched: put words users type into `keywords`.
+    chips: tuple[Chip, ...] = ()
 
     def __post_init__(self) -> None:
         """Reject an item the launcher could not show, so a refresh fails, not a search."""
@@ -71,9 +105,11 @@ class PluginItem:
             if not isinstance(getattr(self, field_name), str):
                 raise ValueError(f"A plugin item's {field_name} must be text.")
         keywords, routes = tuple(self.keywords), tuple(self.routes)
-        breadcrumbs = tuple(self.breadcrumbs)
+        breadcrumbs, chips = tuple(self.breadcrumbs), tuple(self.chips)
         if not all(isinstance(part, str) and part.strip() for part in breadcrumbs):
             raise ValueError("A plugin item's breadcrumbs must be non-empty text.")
+        if not all(isinstance(chip, Chip) for chip in chips):
+            raise ValueError("A plugin item's chips must be Chip values.")
         if not all(isinstance(keyword, str) for keyword in keywords):
             raise ValueError("A plugin item's keywords must be text.")
         if not all(isinstance(route, str) for route in routes):
@@ -83,6 +119,7 @@ class PluginItem:
         object.__setattr__(self, "keywords", keywords)
         object.__setattr__(self, "routes", routes)
         object.__setattr__(self, "breadcrumbs", breadcrumbs)
+        object.__setattr__(self, "chips", chips)
 
 
 @dataclass(frozen=True, slots=True)
