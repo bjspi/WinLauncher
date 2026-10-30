@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -51,7 +50,7 @@ from winlauncher.search.ranking import SearchHit
 from winlauncher.settings import Settings, SettingsFile
 from winlauncher.ui.controller import LauncherController
 from winlauncher.ui.dialogs import bring_to_front, run_modal
-from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice
+from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, PatternDialog
 from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
 from winlauncher.ui.indexing import IndexJobKind
 from winlauncher.ui.messages import MessageDialog, message
@@ -1819,7 +1818,7 @@ class UiFlowTest(unittest.TestCase):
         picker = ExcludeFolderDialog([FolderChoice(self.root, 1)], self.window)
         self.addCleanup(picker.deleteLater)
 
-        def edit(editor: QInputDialog) -> int:
+        def edit(editor: PatternDialog) -> int:
             self.app.processEvents()
             self.assertIs(editor.parentWidget(), picker)
             self.assertEqual(editor.windowModality(), Qt.WindowModality.WindowModal)
@@ -1833,7 +1832,7 @@ class UiFlowTest(unittest.TestCase):
             return editor.result()
 
         def choose(dialog: ExcludeFolderDialog) -> int:
-            with patch.object(QInputDialog, "exec", edit):
+            with patch.object(PatternDialog, "exec", edit):
                 dialog.edit_pattern()
             self.assertIsNone(dialog.pattern)
             QTest.keyClick(dialog, Qt.Key.Key_Escape)

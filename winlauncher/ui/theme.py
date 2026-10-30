@@ -356,6 +356,7 @@ QWidget#infoBody { background: $field; }
 QWidget#infoFooter { background: $page; border-top: 1px solid $card_border; }
 QLabel#infoTitle { font-size: 15px; font-weight: 600; color: $title; }
 QLabel#infoText { font-size: 13px; color: $subtle; }
+QListWidget#choiceList { background: transparent; border: 0; padding: 0; outline: none; }
 QFrame#factCard { background: $hover; border: 1px solid $card_border; border-radius: 10px; }
 QLabel#factLabel { font-size: 12px; color: $subtle; }
 QLabel#factValue { font-size: 12px; color: $text; }
