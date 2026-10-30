@@ -14,12 +14,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QMimeData, QTimer, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QInputDialog
+from PySide6.QtWidgets import QApplication, QDialog
 
 from winlauncher.platform.git import release_changes
 from winlauncher.releases import Release
 from winlauncher.ui import messages
-from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
+from winlauncher.ui.exclude_dialog import (
+    ExcludeFolderDialog,
+    FolderChoice,
+    PatternDialog,
+    exclusion_candidates,
+)
 from winlauncher.ui.messages import MessageDialog
 from winlauncher.ui.settings import PathList, dropped_folders
 from winlauncher.ui.updater import ReleaseUpdater
@@ -109,14 +114,14 @@ class FolderFeaturesTest(unittest.TestCase):
         choices = [FolderChoice(self.base / "a" / "b", 3), FolderChoice(self.base / "a", 900)]
         offered = []
 
-        def edit(editor: QInputDialog) -> int:
-            offered.append(editor.textValue())
-            editor.setTextValue("  **\\a\\b  ")
+        def edit(editor: PatternDialog) -> int:
+            offered.append(editor.field.text())
+            editor.field.setText("  **\\a\\b  ")
             return QDialog.DialogCode.Accepted
 
         dialog = ExcludeFolderDialog(choices)
         dialog.folders.setCurrentRow(1)
-        with patch.object(QInputDialog, "exec", edit):
+        with patch.object(PatternDialog, "exec", edit):
             dialog.edit_pattern()
         self.assertEqual(offered, [str(self.base / "a")])
         self.assertEqual(dialog.pattern, "**\\a\\b")
@@ -129,9 +134,13 @@ class FolderFeaturesTest(unittest.TestCase):
         ):
             dialog = ExcludeFolderDialog(choices)
             dialog.show()
-            with patch.object(QInputDialog, "exec", return_value=result):
-                with patch.object(QInputDialog, "textValue", return_value=text):
-                    dialog.edit_pattern()
+
+            def answer(editor: PatternDialog, result=result, text=text) -> int:
+                editor.field.setText(text)
+                return result
+
+            with patch.object(PatternDialog, "exec", answer):
+                dialog.edit_pattern()
             self.assertIsNone(dialog.pattern)
             self.assertTrue(dialog.isVisible())
             dialog.deleteLater()

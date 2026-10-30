@@ -552,8 +552,8 @@ command's keys beside its title, such as `Alt+Enter`.
 
 The result context menu offers **Exclude this or a parent folder…**. A picker lists
 the result itself and its parents up to the configured root (or up to, but not
-including, the drive for folders outside every root), each with its number of
-catalog entries. The chosen path is added to the excluded directories; a file
+including, the drive for folders outside every root), each folder with its number
+of catalog entries and a file as "Only this entry". The chosen path is added to the excluded directories; a file
 there excludes exactly that entry, applications and Windows tools included. For a
 shortcut WinLauncher generates (Store apps, Windows tools and settings) the picker
 offers only the entry itself, since its folders are switched off in Settings.
