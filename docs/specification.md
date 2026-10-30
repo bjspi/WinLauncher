@@ -672,8 +672,12 @@ as a ticket prefix without digits; the loader rejects a plugin whose patterns do
 not compile. Quoted terms and `match:keyword` are literal as always.
 
 A row shows "Label: name" (or the item's own title), the subtitle as its
-location and the item's image. A plugin with `round_icons` crops images to
-circles and paints colored initials for items without one. Enter, a click or
+location and the item's image. Up to three chips, colored by their tone (neutral,
+info, success, warning, danger) in the active theme's colors, come first on the
+second line, before the location (in a one-line Explorer row after the name);
+chips that do not fit are left out whole, and the location gives way before them.
+Screen readers hear the chips' texts after the label. Chips are never matched.
+A plugin with `round_icons` crops images to circles and paints colored initials for items without one. Enter, a click or
 Ctrl+1…9 hides the bar and runs the plugin's `open` on the action worker. The
 default opens the item's target with `os.startfile`, and a failure is shown
 like other failed actions. The context menu offers Open in <label> and Copy
