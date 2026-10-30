@@ -2,7 +2,8 @@
 
 python tools/readme_screenshots.py [output folder, default docs/images] [light|dark]
 
-The README shows the light theme, whatever Windows uses.
+The README shows the light theme, whatever Windows uses. The windows are rendered
+without ever appearing on screen, so clicks and typing elsewhere cannot reach them.
 """
 
 import sys
@@ -11,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Qt
+from PySide6.QtWidgets import QWidget
 
 from winlauncher.__main__ import _create_application
 from winlauncher.catalog.model import CatalogItem, ItemKind
@@ -28,6 +30,17 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parents[1] / "d
 OUT.mkdir(parents=True, exist_ok=True)
 APPEARANCE = Appearance(sys.argv[2]) if len(sys.argv) > 2 else Appearance.LIGHT
 app = _create_application()
+_set_visible = QWidget.setVisible
+
+
+def _off_screen(widget: QWidget, visible: bool) -> None:
+    """Show windows only to `grab()`: no screen, no focus, no stray input."""
+    if visible and widget.isWindow():
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    _set_visible(widget, visible)
+
+
+QWidget.setVisible = _off_screen
 theme().use(APPEARANCE)
 NOW = time.time()
 
