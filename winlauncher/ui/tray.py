@@ -33,6 +33,7 @@ class TrayMenu(QObject):
     update_requested = Signal()
     about_requested = Signal()
     autostart_toggled = Signal(bool)
+    centered_toggled = Signal(bool)
     opening = Signal()
 
     def __init__(self, parent: QObject, *, autostart_available: bool):
@@ -42,6 +43,7 @@ class TrayMenu(QObject):
         self.menu = Menu()
         self.menu.setObjectName("tray")
         self.icon_names: dict[QAction, str] = {}  # Tinted again when the theme changes.
+        self.check_actions: list[QAction] = []
         self.update_version: str | None = None  # The release an update installs, once known.
         self.status = QLabel("Ready to search")
         self.status.setObjectName("trayStatus")
@@ -52,11 +54,9 @@ class TrayMenu(QObject):
         self._add_action("Index status…", self.status_requested, "activity")
         self.menu.addSeparator()
         self._add_action("Settings…", self.settings_requested, "gear")
-        # Its check mark is drawn as an icon, so it lines up with the other icons.
-        self.autostart = self._add_action("Start with Windows", self.autostart_toggled)
-        self.autostart.setCheckable(True)
+        self.autostart = self._add_check("Start with Windows", self.autostart_toggled)
         self.autostart.setEnabled(autostart_available)
-        self.autostart.toggled.connect(self._show_check)
+        self.centered = self._add_check("Center search bar", self.centered_toggled)
         self._add_action("Clear search history", self.clear_history_requested, "trash")
         self.menu.addSeparator()
         self.update = self._add_action("Check for updates…", self.update_requested, "download")
@@ -109,15 +109,25 @@ class TrayMenu(QObject):
         action.triggered.connect(signal)  # Qt forwards `checked` only where accepted.
         return action
 
+    def _add_check(self, text: str, signal) -> QAction:
+        """A checkable entry; its check mark is drawn as an icon, aligned with the others."""
+        action = self._add_action(text, signal)
+        action.setCheckable(True)
+        action.toggled.connect(lambda _checked: self._show_check(action))
+        self.check_actions.append(action)
+        return action
+
     def _use_theme_icons(self) -> None:
         for action, icon in self.icon_names.items():
             action.setIcon(line_icon(icon, colors().muted))
-        self._show_check(self.autostart.isChecked())
+        for action in self.check_actions:
+            self._show_check(action)
         self.set_update_version(self.update_version)
 
-    def _show_check(self, checked: bool) -> None:
+    @staticmethod
+    def _show_check(action: QAction) -> None:
         # A null icon keeps the column free, so the text stays aligned.
-        self.autostart.setIcon(line_icon("check", colors().accent) if checked else QIcon())
+        action.setIcon(line_icon("check", colors().accent) if action.isChecked() else QIcon())
 
     def set_catalog_count(self, count: int) -> None:
         self.status.setText(f"{count:,} items indexed" if count else "Ready to search")

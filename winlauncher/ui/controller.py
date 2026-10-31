@@ -16,7 +16,7 @@ from functools import partial
 from pathlib import Path
 from typing import TypeVar
 
-from PySide6.QtCore import QObject, QProcess, QTimer, QUrl
+from PySide6.QtCore import QObject, QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
@@ -54,7 +54,8 @@ from winlauncher.search.service import SearchService
 from winlauncher.settings import Appearance, Settings, SettingsFile
 from winlauncher.ui import messages
 from winlauncher.ui.about import AboutDialog
-from winlauncher.ui.dialogs import run_modal
+from winlauncher.ui.bar_placement import BarPlacement
+from winlauncher.ui.dialogs import bring_to_front, run_modal
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
 from winlauncher.ui.plugin_sources import SourceWatcher
@@ -83,6 +84,7 @@ DETAILS_HEIGHT = 120  # Scan errors and problems in the index status dialog.
 # Explorer follows the result where arrow-key repeats stop, not every row passed.
 EXPLORER_SELECT_DELAY_MS = 120
 PLUGIN_CARDS_FILE = "plugin-cards.json"  # Which plugin settings cards show their details.
+BAR_PLACEMENT_FILE = "launcher-bar.json"  # The launcher bar's widths and position.
 
 _Event = TypeVar("_Event")
 
@@ -119,6 +121,8 @@ class LauncherController(QObject):
         self.watch_events: queue.SimpleQueue = queue.SimpleQueue()
         self.favorite_pending = False
         self.settings_dialog: SettingsDialog | None = None  # While Settings is open.
+        # The launcher's search, hidden only while the Exclude picker is open.
+        self.search_paused = False
         self._closed = False
 
         # Shared by the result list and the Websites settings.
@@ -126,9 +130,14 @@ class LauncherController(QObject):
         self.plugins = PluginHost(
             discover_plugins([self.own_plugin_folder], self.active_plugin_folders()), data_dir
         )
-        self.window = LauncherWindow(self.website_icons, PluginIcons(self.plugins, self))
+        # Shared by the bar's menu, the tray and the Settings dialog.
+        self.placement = BarPlacement(data_dir / BAR_PLACEMENT_FILE, self)
+        self.window = LauncherWindow(
+            self.website_icons, PluginIcons(self.plugins, self), self.placement
+        )
         self.tasks = BackgroundTasks(self)
         self.tray = TrayMenu(self, autostart_available=os.name == "nt")
+        self.tray.centered.setChecked(self.placement.centered)
         self.status = StatusBoard(self.window.set_activity, self.tray.icon)
         self.search = SearchSession(
             self.window,
@@ -218,6 +227,8 @@ class LauncherController(QObject):
         tray.clear_history_requested.connect(self.clear_history)
         tray.quit_requested.connect(QApplication.instance().quit)
         tray.autostart_toggled.connect(self._toggle_autostart_from_tray)
+        tray.centered_toggled.connect(self.placement.set_centered)
+        self.placement.centered_changed.connect(tray.centered.setChecked)
         tray.opening.connect(self._sync_autostart)
         tray.restart_requested.connect(self.restart)
         tray.update_requested.connect(self.check_for_updates)
@@ -249,8 +260,11 @@ class LauncherController(QObject):
         own_data = str(self.store.path.parent)
         return replace(self.settings, excluded_paths=(*self.settings.excluded_paths, own_data))
 
+    def _search_session_open(self) -> bool:
+        return self.window.isVisible() or self.search_paused
+
     def _explorer_session_open(self) -> bool:
-        return self.window.isVisible() and self.window.scope is not None
+        return self._search_session_open() and self.window.scope is not None
 
     def _configured_roots(self) -> list[Path]:
         roots = indexed_application_roots(self.settings)
@@ -447,7 +461,7 @@ class LauncherController(QObject):
         self.explorer_select.stop()
         self.explorer_hit = None
         scope = self.window.scope
-        if self._closed or scope is None:
+        if self._closed or scope is None or self._search_session_open():
             return
         if any(is_within(scope, root) for root in self._configured_roots()):
             self.indexing.run_pending()
@@ -456,7 +470,7 @@ class LauncherController(QObject):
         QTimer.singleShot(HIDDEN_SCOPE_CLEANUP_MS, self._remove_hidden_scope)
 
     def _remove_hidden_scope(self) -> None:
-        if not self._closed and not self.window.isVisible():
+        if not self._closed and not self._search_session_open():
             self.indexing.request_full()
 
     def show_index_status(self) -> None:
@@ -619,14 +633,36 @@ class LauncherController(QObject):
         messages.message(self.window, "That did not work", message, messages.WARNING)
 
     def exclude_folder(self, path: Path) -> None:
-        """Let the user exclude a result itself, or its folder or one of their parents."""
+        """Let the user exclude a result itself, or its folder or one of their parents.
+
+        The launcher's search continues afterwards, whether a rule was saved or not:
+        excluding is a quick aside, not the end of the search. The Explorer bar
+        belongs to its Explorer window and stays closed, as after other dialogs.
+        """
         generated = tuple(f for f in (store_app_folder(), windows_tools_folder()) if f)
         candidates = exclusion_candidates(path, self._configured_roots(), generated)
         choices = [FolderChoice(path, self.store.count_within(path)) for path in candidates]
         dialog = ExcludeFolderDialog(choices, self.window)
+        resume = not self.window.explorer_mode
+        self.search_paused = resume
+        try:
+            self._apply_exclusion(dialog)
+        finally:
+            dialog.deleteLater()
+            self.search_paused = False
+        if resume and not self._closed:
+            self._resume_search()
+
+    def _resume_search(self) -> None:
+        """Show the bar as it was, with its query, chip and filters; run the query again."""
+        bring_to_front(self.window)
+        self.window.query.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+        self.search.run()  # A new rule may have removed results.
+
+    def _apply_exclusion(self, dialog: ExcludeFolderDialog) -> None:
+        """Run the picker and save its rule, reporting any save error before returning."""
         accepted = run_modal(dialog)
         chosen, pattern = dialog.chosen_folder(), dialog.pattern
-        dialog.deleteLater()
         if not accepted:
             return
         if pattern is not None:
@@ -674,6 +710,7 @@ class LauncherController(QObject):
             plugin_folder=str(self.own_plugin_folder),
             plugin_sources=self.plugin_sources,
             plugin_cards=self.data_dir / PLUGIN_CARDS_FILE,
+            placement=self.placement,
             restart=self.restart,
         )
         dialog.finished.connect(self._settings_closed)
@@ -734,7 +771,8 @@ class LauncherController(QObject):
         self.watch_events = queue.SimpleQueue()
         self.status.clear_topic(ProblemTopic.FOLDER_WATCH)
         self._start_monitor()
-        self.window.set_scope(None)
+        if not self.search_paused:  # A continuing search keeps its folder chip.
+            self.window.set_scope(None)
         self.indexing.restart()
 
     # Autostart ----------------------------------------------------------------

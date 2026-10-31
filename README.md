@@ -219,9 +219,14 @@ built-in keys and Ctrl+Alt is AltGr on many keyboards.
 | <kbd>Esc</kbd> | Hide (indexing keeps running in the tray) |
 
 Click the icon at the right of the bar for the **All / Apps / Files / Folders**
-filters, refresh, an expanded view, settings, About and restart. Right-click a
-result → **Exclude this or a parent folder…** to drop just that entry or a noisy
-folder tree; the picker shows how many catalog entries each choice removes. For a
+filters, refresh, an expanded view, settings, About and restart. Drag the bar
+anywhere and it opens there next time, on whichever screen; drag its left or right
+edge to make it wider or narrower. **Center search bar** in that menu, the tray menu
+or Settings brings it back to the middle.
+
+Right-click a result → **Exclude this or a parent folder…** to drop just that entry
+or a noisy folder tree; the picker shows how many catalog entries each choice
+removes, and your search stays open afterwards to carry on. For a
 Windows setting or Store app it offers only the entry itself. **Custom rule…** turns
 the chosen folder into an exclusion pattern you edit first, for example
 `**\patches\src` for every `src` folder directly inside a `patches` folder.

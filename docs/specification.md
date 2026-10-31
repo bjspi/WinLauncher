@@ -448,7 +448,7 @@ JSON keys are rejected instead of silently dropping the user's rules.
 
 The launcher is one compact bar: the query field, an optional folder-scope chip and
 the application icon, which opens a menu with the type filters (All, Apps, Files,
-Folders), Refresh catalog, Expanded view, Settings, About, Restart and Hide. The bar grows with up
+Folders), Refresh catalog, Expanded view, Center search bar, Settings, About, Restart and Hide. The bar grows with up
 to nine results (fourteen in expanded view) and shrinks back to the bare query
 field for an empty query without history. Rows show the shell icon (one per file
 extension, an application's own, the standard folder icon, and their own icon for
@@ -457,6 +457,19 @@ matched characters highlighted, the containing folder and a `Ctrl+1`…`Ctrl+9`
 shortcut that opens that row. Messages (no matches, invalid query, failures),
 the result count and persistent problems appear below the results only when
 present. The bar can be dragged by its empty areas.
+
+The launcher bar opens on the cursor's screen, centered and with its top at a
+fifth of the screen height. Dragging the shadow beside its left or right edge
+changes its width, remembered separately for the compact and the expanded view
+(at least 480 pixels, at most the screen). Dragging the bar elsewhere turns off
+**Center search bar**: from then on it opens at the same relative spot of
+whichever screen it opens on, horizontally relative to the room the bar leaves
+free and vertically relative to the screen height, kept on screen. Resizing a
+centered bar keeps it centered. **Center search bar** in the bar's menu, the tray
+menu and Settings → General shows the same state and applies at once; choosing
+it centers the open bar. Widths and position are remembered across starts in
+`<data>/launcher-bar.json`, apart from Settings' Save; an unreadable file only
+loses them. The Explorer bar keeps its fixed width and dock position.
 
 A pin button between the settings button and the application icon (or Ctrl+P)
 keeps the launcher bar open: opening a result by Enter, click or Ctrl+1…9,
@@ -473,7 +486,7 @@ with locations relative to the folder, so a folder outside the indexed roots
 still lists its contents. Shift+Tab moves the chip to the parent folder, and
 Backspace in the empty field or a click on the chip removes it. On other rows,
 without a chip, and in the Explorer bar, these keys keep their usual meaning.
-Every newly shown launcher starts without a chip.
+Every newly shown launcher starts without a chip; returning from Exclude keeps it.
 
 Typing in Explorer opens a smaller one-line variant docked to the bottom right of
 that Explorer window, over the date and type columns rather than the names; it
@@ -857,6 +870,13 @@ it keeps the bar hidden and brings that dialog's own window forward, without
 changing the search text or scope. A window-modal child of an application-modal
 dialog still blocks the bar; an independent Settings child does not. After an
 application-wide dialog closes, the bar stays hidden until it is called again.
+Exclude in a launcher result's menu is the exception: excluding is a quick aside
+in a search. While the picker, its custom-rule editor or a save error is open,
+the hidden search is kept, so losing focus neither ends it nor drops a folder
+outside the indexed roots from the catalog. Afterwards, saved or cancelled, the
+bar returns with its query, folder chip and filters, focused for typing, and
+runs the query again under the saved rules. The Explorer bar stays closed after
+Exclude, as after other dialogs.
 Escape in the bar reaches the bar and leaves Settings and its dialogs open;
 Escape in a dialog closes only that dialog with one press.
 

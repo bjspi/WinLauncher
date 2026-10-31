@@ -377,3 +377,37 @@ class MessageDialogTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BarPlacementTest(unittest.TestCase):
+    def test_a_position_keeps_the_bar_on_its_screen(self):
+        from PySide6.QtCore import QPoint, QRect, QSize
+
+        from winlauncher.ui.bar_placement import RelativePosition
+
+        area = QRect(100, 0, 1000, 800)
+        bottom_right = RelativePosition.of(QRect(1500, 900, 200, 50), area)
+        self.assertEqual(bottom_right, RelativePosition(1.0, 1.0))
+        # A tall bar moves up so it ends at the screen's bottom.
+        self.assertEqual(bottom_right.top_left(QSize(200, 300), area), QPoint(900, 500))
+        # A bar wider than the screen starts at its left edge.
+        self.assertEqual(RelativePosition(0.5, 0).top_left(QSize(1200, 50), area), QPoint(100, 0))
+
+    def test_an_unreadable_file_keeps_the_defaults(self):
+        from winlauncher.ui.bar_placement import (
+            COMPACT_WIDTH,
+            EXPANDED_WIDTH,
+            MIN_WIDTH,
+            BarPlacement,
+        )
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "launcher-bar.json"
+            for text in ("{", "[]", '{"compact_width": "wide", "position": {"x": "left"}}'):
+                path.write_text(text, encoding="utf-8")
+                placement = BarPlacement(path)
+                self.assertEqual(placement.width(expanded=False), COMPACT_WIDTH)
+                self.assertEqual(placement.width(expanded=True), EXPANDED_WIDTH)
+                self.assertTrue(placement.centered)
+            path.write_text('{"compact_width": 10}', encoding="utf-8")
+            self.assertEqual(BarPlacement(path).width(expanded=False), MIN_WIDTH)

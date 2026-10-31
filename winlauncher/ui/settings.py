@@ -53,6 +53,7 @@ from winlauncher.settings import (
     WindowsSettingsDetail,
     priority_rules,
 )
+from winlauncher.ui.bar_placement import BarPlacement
 from winlauncher.ui.commands import CommandList
 from winlauncher.ui.messages import ERROR, WARNING, message
 from winlauncher.ui.plugin_sources import SourceWatcher
@@ -415,6 +416,7 @@ class SettingsDialog(QDialog):
         plugin_folder: str = "",
         plugin_sources: SourceWatcher | None = None,
         plugin_cards: Path | None = None,
+        placement: BarPlacement | None = None,
         restart: Callable[[], None] | None = None,
     ):
         super().__init__(parent)
@@ -424,6 +426,8 @@ class SettingsDialog(QDialog):
         self.set_startup = set_startup
         self.startup_state = startup_state
         self.restart_app = restart
+        # Applies at once, like Start with Windows; None hides the switch.
+        self.placement = placement
         self.setObjectName("settings")
         self.setWindowTitle("WinLauncher settings")
         self.resize(DIALOG_SIZE)
@@ -657,6 +661,17 @@ class SettingsDialog(QDialog):
         bar.add_row(
             "Maximum results", "How many results a search lists.", _with_unit(self.limit, "")
         )
+        if self.placement is not None:
+            self.centered = ToggleSwitch("Open the search bar centered")
+            self.centered.setChecked(self.placement.centered)
+            self.centered.clicked.connect(self.placement.set_centered)
+            self.placement.centered_changed.connect(self.centered.setChecked)
+            bar.add_row(
+                "Center search bar",
+                "Open it centered on the screen. Dragging the bar elsewhere turns this off; "
+                "drag its left or right edge to change its width. Applies immediately.",
+                self.centered,
+            )
         self.appearance = QComboBox()
         self.appearance.setAccessibleName("Appearance")
         for label, appearance in APPEARANCE_CHOICES:
