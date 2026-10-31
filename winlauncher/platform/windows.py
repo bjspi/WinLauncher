@@ -32,6 +32,8 @@ WM_QUIT = 0x0012
 WM_KEYDOWN = 0x0100
 WM_SYSKEYDOWN = 0x0104
 WM_HOTKEY = 0x0312
+WM_ENTERSIZEMOVE = 0x0231  # The user starts moving or resizing a window.
+WM_EXITSIZEMOVE = 0x0232  # ... and has finished.
 LLKHF_INJECTED = 0x10
 LLKHF_LOWER_IL_INJECTED = 0x02
 MOD_ALT = 0x0001
@@ -285,6 +287,11 @@ def round_corners(hwnd: int) -> None:
     _dwmapi.DwmSetWindowAttribute(
         hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(preference), ctypes.sizeof(preference)
     )
+
+
+def message_id(message: int) -> int:
+    """The id of a window message that Qt's `nativeEvent` passes as the MSG's address."""
+    return wintypes.MSG.from_address(message).message
 
 
 def class_name(hwnd: int) -> str:

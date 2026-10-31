@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent, QLocale, Qt, QTimer
+from PySide6.QtCore import QEvent, QLocale, QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
@@ -48,7 +48,8 @@ from winlauncher.search.native_engine import warm_search_index
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.settings import Settings, SettingsFile
-from winlauncher.ui.controller import LauncherController
+from winlauncher.ui.bar_placement import COMPACT_WIDTH, EXPANDED_WIDTH, BarPlacement
+from winlauncher.ui.controller import BAR_PLACEMENT_FILE, LauncherController
 from winlauncher.ui.dialogs import bring_to_front, run_modal
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, PatternDialog
 from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
@@ -913,11 +914,13 @@ class UiFlowTest(unittest.TestCase):
 
     def test_indexing_settings_restart_monitor_and_rescan(self):
         c = self.controller
+        self.window.set_scope(self.root)
         before = self.tasks.count(TaskCategory.INDEX)
         with patch.object(c, "_start_monitor") as monitor:
             c.apply_settings(replace(c.settings, excluded_patterns=("build",)))
         monitor.assert_called_once()
         self.assertEqual(self.tasks.count(TaskCategory.INDEX), before + 1)
+        self.assertIsNone(self.window.scope)
 
     def test_calculation_is_selected_copied_and_left_with_the_arrow_keys(self):
         window = self.window
@@ -1900,6 +1903,182 @@ class UiFlowTest(unittest.TestCase):
         exclusions = c.settings.exclusions()
         self.assertFalse(exclusions.allows(entry, application=True))
         self.assertTrue(exclusions.allows(entry.with_name("Bluetooth.lnk2"), application=True))
+
+    def _search_reports_in_root(self) -> None:
+        """A launcher search with a folder chip and a kind filter, ready to exclude from."""
+        for name in ("report-keep.txt", "noise/report-drop.txt"):
+            (self.root / name).parent.mkdir(exist_ok=True)
+            (self.root / name).touch()
+        self.indexing.request_full()
+        self.tasks.finish(TaskCategory.INDEX)
+        self.window.present(text="report", scope=self.root)
+        self.window.set_kind(ItemKind.FILE)
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.assertEqual(self.window.results.count(), 2)
+
+    def _assert_search_continues(self) -> None:
+        self.app.processEvents()
+        self.assertTrue(self.window.isVisible())
+        self.assertTrue(self.window.query.hasFocus())
+        self.assertEqual(self.window.query.text(), "report")
+        self.assertEqual(self.window.scope, self.root)
+        self.assertEqual(self.window.kind, ItemKind.FILE)
+        self.assertFalse(self.controller.search_paused)
+
+    def test_cancelled_exclusion_continues_the_launcher_search(self):
+        c = self.controller
+        self._search_reports_in_root()
+        settings = c.settings
+
+        def cancel(dialog: ExcludeFolderDialog) -> int:
+            self.assertFalse(self.window.isVisible())
+            self.window._focus_left()  # Losing focus to the picker must not end the search.
+            self.assertFalse(self.window.auto_hide.isActive())
+            with patch.object(self.indexing, "request_full") as cleanup:
+                c._remove_hidden_scope()
+            cleanup.assert_not_called()
+            dialog.reject()
+            return dialog.result()
+
+        with patch.object(ExcludeFolderDialog, "exec", cancel):
+            c.exclude_folder(self.root / "noise")
+        self.tasks.finish(TaskCategory.SEARCH)
+        self._assert_search_continues()
+        self.assertIs(c.settings, settings)
+        self.assertEqual(self.window.results.count(), 2)
+
+    def test_exclusion_refreshes_the_continuing_search(self):
+        c = self.controller
+        self._search_reports_in_root()
+
+        def choose(dialog: ExcludeFolderDialog) -> int:
+            dialog.accept()
+            return dialog.result()
+
+        with patch.object(ExcludeFolderDialog, "exec", choose), patch.object(c, "_start_monitor"):
+            c.exclude_folder(self.root / "noise")
+        self.tasks.finish(TaskCategory.SEARCH)
+        self._assert_search_continues()
+        self.assertEqual(c.settings.excluded_paths[-1], str(self.root / "noise"))
+        self.assertEqual(self.window.selected_hit().item.path, self.root / "report-keep.txt")
+        self.assertEqual(self.window.results.count(), 1)
+
+    def test_exclusion_save_error_continues_the_search_after_the_message(self):
+        c = self.controller
+        self._search_reports_in_root()
+        settings = c.settings
+
+        def choose(dialog: ExcludeFolderDialog) -> int:
+            dialog.accept()
+            return dialog.result()
+
+        def dismiss_error(dialog: MessageDialog) -> int:
+            self.assertFalse(self.window.isVisible())
+            dialog.reject()
+            return dialog.result()
+
+        with (
+            patch.object(ExcludeFolderDialog, "exec", choose),
+            patch.object(c.settings_file, "save", side_effect=OSError("Disk full")),
+            patch.object(MessageDialog, "exec", autospec=True, side_effect=dismiss_error) as error,
+        ):
+            c.exclude_folder(self.root / "noise")
+        error.assert_called_once()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self._assert_search_continues()
+        self.assertIs(c.settings, settings)
+
+    def test_exclusion_from_the_explorer_bar_leaves_it_closed(self):
+        self.window.present(
+            text="report", scope=self.root, near=(0, 0, 800, 600), explorer_view=(123, 456)
+        )
+
+        def cancel(dialog: ExcludeFolderDialog) -> int:
+            dialog.reject()
+            return dialog.result()
+
+        with patch.object(ExcludeFolderDialog, "exec", cancel):
+            self.controller.exclude_folder(self.root)
+        self.assertFalse(self.window.isVisible())
+
+    def _drag_bar(self, to: QPoint | None = None, width: int | None = None) -> None:
+        """What a user's drag or edge resize leaves behind, as seen once they let go."""
+        window = self.window
+        start = window.geometry()
+        if width is not None:
+            window.resize(width, window.height())
+        if to is not None:
+            window.move(to)
+        window._remember_placement(start)
+
+    def test_a_dragged_bar_opens_at_the_same_relative_spot_until_centered_again(self):
+        c, window = self.controller, self.window
+        window.present()
+        area = window.screen().availableGeometry()
+        self.assertTrue(c.tray.centered.isChecked())
+        self._drag_bar(to=QPoint(area.x(), area.y() + area.height() // 2))
+        self.assertFalse(c.placement.centered)
+        self.assertFalse(c.tray.centered.isChecked())
+        self.assertFalse(window.center_action.isChecked())
+        window.hide()
+        window.present()
+        self.assertEqual(window.x(), area.x())
+        self.assertAlmostEqual(window.y(), area.y() + area.height() // 2, delta=1)
+        remembered = BarPlacement(self.data / BAR_PLACEMENT_FILE)  # The next start.
+        self.assertEqual(remembered.position, c.placement.position)
+
+        c.tray.centered.trigger()
+        self.assertTrue(c.placement.centered)
+        self.assertTrue(window.center_action.isChecked())
+        free = area.width() - window.width()
+        self.assertAlmostEqual(window.x(), area.x() + free // 2, delta=1)
+        self.assertTrue(BarPlacement(self.data / BAR_PLACEMENT_FILE).centered)
+
+    def test_a_resized_bar_keeps_its_width_per_layout_and_stays_centered(self):
+        c, window = self.controller, self.window
+        window.present()
+        self._drag_bar(width=window.width() + 100)
+        self.assertEqual(c.placement.compact_width, COMPACT_WIDTH + 100)
+        self.assertEqual(c.placement.expanded_width, EXPANDED_WIDTH)
+        self.assertTrue(c.placement.centered)
+        area = window.screen().availableGeometry()
+        self.assertAlmostEqual(window.geometry().center().x(), area.center().x(), delta=1)
+        window.hide()
+        window.present()
+        self.assertEqual(window.width(), COMPACT_WIDTH + 100 + 2 * SHADOW_MARGIN)
+        window.toggle_expanded()  # Wider than the test screen, so as wide as it.
+        self.assertEqual(window.width(), min(EXPANDED_WIDTH + 2 * SHADOW_MARGIN, area.width()))
+
+    def test_only_the_launcher_bar_shadow_resizes_it(self):
+        window = self.window
+        window.present()
+        surface = window.surface.geometry()
+        beside = QPoint(surface.left() - 1, surface.center().y())
+        self.assertEqual(window._resize_edge(beside), Qt.Edge.LeftEdge)
+        self.assertIsNone(window._resize_edge(surface.center()))
+        self.assertIsNone(window._resize_edge(QPoint(surface.left() - 1, surface.top() - 1)))
+        window.present(scope=self.root, near=(0, 0, 800, 600), explorer_view=(123, 456))
+        self.assertIsNone(window._resize_edge(beside))
+
+    def test_the_explorer_bar_does_not_change_the_launcher_placement(self):
+        c, window = self.controller, self.window
+        window.present(scope=self.root, near=(0, 0, 800, 600), explorer_view=(123, 456))
+        self._drag_bar(to=QPoint(0, 0), width=window.width() + 100)
+        self.assertTrue(c.placement.centered)
+        self.assertEqual(c.placement.compact_width, COMPACT_WIDTH)
+        self.assertFalse((self.data / BAR_PLACEMENT_FILE).exists())
+
+    def test_settings_switch_and_tray_share_the_centered_state(self):
+        c = self.controller
+        c.edit_settings()
+        switch = c.settings_dialog.centered
+        self.assertTrue(switch.isChecked())
+        switch.click()
+        self.assertFalse(c.placement.centered)
+        self.assertFalse(c.tray.centered.isChecked())
+        c.tray.centered.trigger()
+        self.assertTrue(switch.isChecked())
 
     def test_autostart_tray_and_settings_share_state_and_restore_on_error(self):
         c = self.controller

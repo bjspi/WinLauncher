@@ -39,6 +39,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QKeySequence,
     QPainter,
+    QScreen,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -70,6 +71,7 @@ from winlauncher.plugins.search import PluginHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
 from winlauncher.search.ranking import SearchHit
+from winlauncher.ui.bar_placement import MIN_WIDTH, BarPlacement
 from winlauncher.ui.commands import command_icon
 from winlauncher.ui.dialogs import blocking_modal, bring_to_front
 from winlauncher.ui.file_transfer import file_mime_data, url_mime_data
@@ -84,8 +86,6 @@ from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.widgets import line_icon
 from winlauncher.websites import WebsiteTarget
 
-COMPACT_WIDTH = 640
-EXPANDED_WIDTH = 900
 EXPLORER_WIDTH = 396
 SETTINGS_ICON_SIZE = 20  # With its padding as tall as the logo button beside it.
 PIN_TOOLTIP = "Keep open after opening results (Ctrl+P)"
@@ -554,9 +554,19 @@ class LauncherWindow(QWidget):
     hidden = Signal()
     shown = Signal()
 
-    def __init__(self, website_icons: WebsiteIcons, plugin_icons: PluginIcons | None = None):
+    def __init__(
+        self,
+        website_icons: WebsiteIcons,
+        plugin_icons: PluginIcons | None = None,
+        placement: BarPlacement | None = None,
+    ):
         flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
         super().__init__(None, flags | Qt.WindowType.WindowStaysOnTopHint)
+        # Width and position of the launcher bar; the Explorer bar docks to its window.
+        self.placement = placement or BarPlacement(parent=self)
+        self.placement.centered_changed.connect(self._centered_changed)
+        # The geometry when the user started dragging or resizing the bar.
+        self._size_move_start: QRect | None = None
         self.scope: Path | None = None
         self.kind: ItemKind | None = None
         self.expanded = False
@@ -599,6 +609,9 @@ class LauncherWindow(QWidget):
         outer.setContentsMargins(SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN, SHADOW_MARGIN)
         surface = self.surface = QFrame()
         surface.setObjectName("surface")
+        # Only the shadow beside the surface shows the resize cursor; see `_resize_edge`.
+        self.setMouseTracking(True)
+        surface.setCursor(Qt.CursorShape.ArrowCursor)
         outer.addWidget(surface)
         layout = QVBoxLayout(surface)
         layout.setContentsMargins(0, 0, 0, 6)
@@ -629,7 +642,8 @@ class LauncherWindow(QWidget):
         layout.addWidget(self.activity)
         self._install_shortcuts()
         self._show_scope(None)
-        self.resize(COMPACT_WIDTH + 2 * SHADOW_MARGIN, 0)
+        self.setMinimumWidth(MIN_WIDTH + 2 * SHADOW_MARGIN)
+        self.resize(self._bar_width(), 0)
         self._show_results_area(False)
 
     # Construction -------------------------------------------------------------
@@ -706,6 +720,10 @@ class LauncherWindow(QWidget):
         self.expand_action = menu.addAction("Expanded view")
         self.expand_action.setCheckable(True)
         self.expand_action.triggered.connect(self.toggle_expanded)
+        self.center_action = menu.addAction("Center search bar")
+        self.center_action.setCheckable(True)
+        self.center_action.setChecked(self.placement.centered)
+        self.center_action.triggered.connect(self.placement.set_centered)
         menu.addAction("Settings…").triggered.connect(self.settings_requested)
         menu.addAction("About WinLauncher").triggered.connect(self.about_requested)
         menu.addSeparator()
@@ -796,10 +814,68 @@ class LauncherWindow(QWidget):
     # Input --------------------------------------------------------------------
 
     def mousePressEvent(self, event) -> None:
-        """The frameless bar moves when dragged anywhere outside its controls."""
+        """The frameless bar moves when dragged anywhere outside its controls.
+
+        The launcher bar's left and right shadow resize it instead.
+        """
         if event.button() == Qt.MouseButton.LeftButton and self.windowHandle():
-            self.windowHandle().startSystemMove()
+            edge = self._resize_edge(event.position().toPoint())
+            if edge is None:
+                self.windowHandle().startSystemMove()
+            else:
+                self.windowHandle().startSystemResize(edge)
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if event.buttons() == Qt.MouseButton.NoButton:
+            if self._resize_edge(event.position().toPoint()) is None:
+                self.unsetCursor()
+            else:
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+        super().mouseMoveEvent(event)
+
+    def _resize_edge(self, point: QPoint) -> Qt.Edge | None:
+        """The launcher bar's edge whose shadow, beside the surface, is at `point`."""
+        surface = self.surface.geometry()
+        if self.explorer_mode or not surface.top() <= point.y() <= surface.bottom():
+            return None
+        if point.x() < surface.left():
+            return Qt.Edge.LeftEdge
+        if point.x() > surface.right():
+            return Qt.Edge.RightEdge
+        return None
+
+    def nativeEvent(self, event_type, message):
+        if self._native_focus():
+            self._follow_size_move(int(message))
+        return super().nativeEvent(event_type, message)
+
+    def _follow_size_move(self, message: int) -> None:
+        """Remember where the user dragged the bar, or how wide, once they let go.
+
+        Windows runs the drag in its own loop between these two messages; a plain
+        click on the bar runs it too, so only a changed geometry counts.
+        """
+        from winlauncher.platform.windows import WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, message_id
+
+        kind = message_id(message)
+        if kind == WM_ENTERSIZEMOVE:
+            self._size_move_start = self.geometry()
+        elif kind == WM_EXITSIZEMOVE and self._size_move_start is not None:
+            self._remember_placement(self._size_move_start)
+            self._size_move_start = None
+
+    def _remember_placement(self, start: QRect) -> None:
+        """Keep the launcher bar's new width and position; a centered bar stays centered."""
+        if self.explorer_mode or self.geometry() == start:
+            return
+        resized = self.width() != start.width()
+        if resized:
+            self.placement.remember_width(self.expanded, self.width() - 2 * SHADOW_MARGIN)
+        if resized and self.placement.centered:
+            self._place_on(self.screen())
+        else:
+            self.placement.remember_position(self.geometry(), self.screen().availableGeometry())
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.KeyPress and self._handle_key(watched, event):
@@ -1315,7 +1391,7 @@ class LauncherWindow(QWidget):
     def _bar_width(self) -> int:
         if self.explorer_mode:
             return EXPLORER_WIDTH + 2 * SHADOW_MARGIN
-        return (EXPANDED_WIDTH if self.expanded else COMPACT_WIDTH) + 2 * SHADOW_MARGIN
+        return self.placement.width(self.expanded) + 2 * SHADOW_MARGIN
 
     def _set_explorer_mode(self, enabled: bool, scope: Path | None) -> None:
         self.explorer_mode = enabled
@@ -1342,16 +1418,26 @@ class LauncherWindow(QWidget):
             button.setIconSize(QSize(14, 14) if enabled else QSize(16, 16))
         self.menu_button.setIconSize(QSize(16, 16) if enabled else QSize(28, 28))
         # The Explorer bar stays narrow; its menu still offers the settings.
+        self.setMinimumWidth(0 if enabled else MIN_WIDTH + 2 * SHADOW_MARGIN)
+        self.center_action.setVisible(not enabled)
         self.settings_button.setVisible(not enabled)
         self.pin_button.setVisible(not enabled)
         self._show_scope(scope)
 
     def _place_on_cursor_screen(self) -> None:
+        self._place_on(QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen())
+
+    def _place_on(self, screen: QScreen) -> None:
+        """Open the launcher bar with its remembered width, centered or where it was left."""
         self._bottom_anchor = None
-        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
         area = screen.availableGeometry()
         self.resize(min(self._bar_width(), area.width()), self.height())
-        self.move(area.x() + (area.width() - self.width()) // 2, area.y() + area.height() // 5)
+        self.move(self.placement.top_left(self.size(), area))
+
+    def _centered_changed(self, centered: bool) -> None:
+        self.center_action.setChecked(centered)
+        if centered and self.isVisible() and not self.explorer_mode:
+            self._place_on(self.screen())
 
     def _place_in(self, explorer: QRect) -> None:
         """Docked to the bottom right of the Explorer window, inside its screen.
