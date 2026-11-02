@@ -48,6 +48,7 @@ from winlauncher.plugins.registry import discover_plugins
 from winlauncher.plugins.search import PluginHit
 from winlauncher.plugins.sources import CLONES_FOLDER, Offer, PluginSources
 from winlauncher.releases import Release, install_command
+from winlauncher.search.commands import CommandHit
 from winlauncher.search.native_engine import native_availability, warm_search_index
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.service import SearchService
@@ -504,6 +505,10 @@ class LauncherController(QObject):
     # Item actions -------------------------------------------------------------
 
     def open_item(self, hit: LauncherHit, history_key: str) -> None:
+        if isinstance(hit, CommandHit):
+            self.window.close_after_action()
+            self._run_action(partial(self.actions.run_folder_command, hit.command, hit.folder))
+            return
         if isinstance(hit, PluginHit):
             self.window.close_after_action()
             config = self.plugins.config(hit.plugin_id, self.settings.plugins)
@@ -527,8 +532,11 @@ class LauncherController(QObject):
             work = partial(self.actions.open, hit.item.path, history_key, explorer=explorer)
         self._run_action(work)
 
-    def follow_in_explorer(self, hit: SearchHit) -> None:
+    def follow_in_explorer(self, hit: SearchHit | None) -> None:
         self.explorer_hit = hit
+        if hit is None:
+            self.explorer_select.stop()
+            return
         self.explorer_select.start()
 
     def _select_in_explorer(self) -> None:

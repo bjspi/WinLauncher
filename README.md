@@ -181,6 +181,21 @@ with `codex` or `copilot` for those tools; **Duplicate** copies an entry to star
 from. Each entry shows its program's icon, or an `.ico`, `.png`, `.svg`, `.webp`, `.exe` or `.dll`
 file you choose under **Icon**.
 
+Enable **Show in Explorer search** on a folder command to find it while typing
+in Explorer. Add optional **Search keywords**, separated by commas: for example,
+name the command **Windows Terminal**, add `wt, terminal`, then type `wt` and
+press Enter to run it in the open folder. The same works for Claude Code or
+Codex using the terminal commands above. Tool rows show **Run here** and their
+configured icon; they always use the open folder, regardless of the selected file.
+
+Under **Settings → Explorer & dialogs → Explorer tool order**, choose **Tools
+first** (the default) or **Files first**. Files first puts direct folder entries
+above tools; matches in subfolders follow both groups. Tools appear only in
+Explorer's search bar, for ordinary name searches. They are off for each command
+until enabled, and stay out of the normal launcher and Open/Save dialogs.
+
+<img src="docs/images/explorer-tools.png" width="440" alt="Windows Terminal, Claude Code and Codex as tools in an Explorer folder search">
+
 Give an entry a **Shortcut** to run it without the menu: with **Alt**, for
 example, <kbd>Alt</kbd>+<kbd>Enter</kbd> runs it on the selected result,
 <kbd>Alt</kbd>+click on the clicked one and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>

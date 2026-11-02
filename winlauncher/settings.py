@@ -156,6 +156,7 @@ class Settings:
     # A `WindowsSettingsDetail`; a string in the JSON file.
     windows_settings_detail: str = WindowsSettingsDetail.EVERY_SETTING.value
     explorer_typing: bool = True
+    explorer_tools_first: bool = True
     # Open and Save dialogs: typing searches their folder, Ctrl+G shows Explorer's folder.
     quick_switch: bool = True
     double_ctrl_ms: int = DEFAULT_DOUBLE_CTRL_MS

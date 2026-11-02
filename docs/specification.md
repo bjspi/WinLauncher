@@ -503,6 +503,40 @@ always rank below every direct entry. A regular `in:` query lists direct
 entries before deeper matches; relevance orders each group, and priority classes
 still come first.
 
+Folder commands can opt into **Show in Explorer search** under Settings → Context
+menu (`explorer_search`, default false). Optional **Search keywords**
+(`search_keywords`, a list of nonempty single-line texts, default empty) supplement
+the title; the UI separates aliases with commas. File-only commands cannot opt
+in; changing **Show for** to Files clears the flag while retaining aliases.
+Duplicate copies both search settings and continues to clear only the shortcut.
+Older settings keep tools off without migration or automatically enabling defaults.
+
+Only an actual Explorer typing session offers tools: the Tab-scoped launcher and
+Open/Save dialogs do not. Empty queries and input containing query syntax,
+including filters, exclusions, wildcards, quotes and navigation, offer none.
+Titles and aliases use the existing normalized and fuzzy name matching; each
+query term must match, taking its best title/alias score. Command lines and the
+folder path never match. Tools rank by summed text score, then configuration
+order; they do not create catalog entries or learn file launches.
+
+**Explorer tool order** under Settings → Explorer & dialogs stores
+`explorer_tools_first` (default true). Tools first orders matching tools, direct
+folder entries, then subfolder matches; Files first orders direct entries, tools,
+then subfolder matches. The result limit applies to the combined list. Separator
+lines distinguish groups; tool rows show their command icon (a terminal fallback
+when unavailable) and **Run here**. Selecting a tool cancels pending Explorer
+selection previews and never selects a file in Explorer.
+
+Enter, a single click or Ctrl+1…9 closes the bar and runs the tool once in the
+Explorer folder captured for that search, independently of selected files.
+`{path}` and `{folder}` both name that folder and `{name}` its name, using the
+existing environment expansion and quoting rules. A missing folder fails instead
+of falling back to its parent. Command failures use the normal action error
+reporting. Enter waits for the typed query's results, including when identical
+query text changes from a Tab scope to an Explorer session. A tool's context menu
+offers Run here, Copy command and Settings; clipboard and drag data contain its
+expanded command line as plain text. File-only actions do not apply.
+
 When the query is a calculation (`winlauncher/calculator.py`), the launcher shows
 its result in a row above the results and selects it: Enter or a click copies the
 result, Down moves to the first result and Up from there returns to the

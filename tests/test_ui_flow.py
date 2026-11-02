@@ -44,6 +44,7 @@ from winlauncher.platform.gesture import (
     ViewKind,
 )
 from winlauncher.releases import Release
+from winlauncher.search.commands import CommandHit
 from winlauncher.search.native_engine import warm_search_index
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
@@ -64,6 +65,12 @@ from winlauncher.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MAR
 from winlauncher.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
 
 DIALOG = ViewKind.FILE_DIALOG
+EXPLORER_TERMINAL = MenuCommand(
+    "Windows Terminal",
+    'wt.exe -d "{folder}"',
+    explorer_search=True,
+    search_keywords=("wt", "terminal"),
+)
 
 
 @dataclass
@@ -1257,6 +1264,209 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(explorer.entry_for(self.root / "a.txt"), self.root / "a.txt")
         self.assertIsNone(explorer.entry_for(self.root))
         self.assertIsNone(explorer.entry_for(self.root.parent / "elsewhere.txt"))
+
+    def test_explorer_tool_groups_order_limits_and_selection_preview(self):
+        direct = SearchHit(CatalogItem(self.root / "wt.txt", ItemKind.FILE), 100, "fixture")
+        deeper = SearchHit(
+            CatalogItem(self.root / "archive" / "wt.txt", ItemKind.FILE), 90, "fixture"
+        )
+        self.controller.settings = replace(
+            self.controller.settings, menu_commands=(EXPLORER_TERMINAL,)
+        )
+        with patch.object(self.controller.search.service, "search", return_value=[direct, deeper]):
+            self.window.present(text="wt", scope=self.root, explorer_view=(11, 22))
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            tool = self.window.selected_hit()
+            self.assertIsInstance(tool, CommandHit)
+            rows = [self.window.results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(3)]
+            self.assertEqual([row.hit for row in rows], [tool, direct, deeper])
+            self.assertEqual([row.separated for row in rows], [False, True, True])
+            self.assertTrue(rows[2].starts_subfolders)
+            self.assertEqual(rows[0].location, "Run here")
+            self.assertIsNone(rows[0].file_hit)
+            self.assertIn("run here", self.window.hint.text())
+            self.assertFalse(self.window.grab().isNull())
+            self.assertFalse(self.controller.explorer_select.isActive())
+            # A pending file preview is cancelled as soon as a tool is selected.
+            self.window.results.setCurrentRow(1)
+            self.assertTrue(self.controller.explorer_select.isActive())
+            self.window.results.setCurrentRow(0)
+            self.assertFalse(self.controller.explorer_select.isActive())
+            self.assertIsNone(self.controller.explorer_hit)
+            self.controller.settings = replace(self.controller.settings, explorer_tools_first=False)
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            rows = [self.window.results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(3)]
+            self.assertEqual([row.hit for row in rows], [direct, tool, deeper])
+            self.assertEqual([row.separated for row in rows], [False, True, True])
+            # The selected tool remains selected when its group moves.
+            self.assertEqual(self.window.selected_hit(), tool)
+            commands = (
+                EXPLORER_TERMINAL,
+                *(replace(EXPLORER_TERMINAL, title=f"Terminal {i}") for i in range(10)),
+            )
+            self.controller.settings = replace(
+                self.controller.settings, max_results=10, menu_commands=commands
+            )
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.window.results.count(), 10)
+            self.assertEqual(self.window.results.item(0).data(Qt.ItemDataRole.UserRole).hit, direct)
+            self.controller.settings = replace(self.controller.settings, explorer_tools_first=True)
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.window.results.count(), 10)
+            self.assertIsInstance(self.window.selected_hit(), CommandHit)
+            self.assertTrue(
+                all(
+                    isinstance(
+                        self.window.results.item(i).data(Qt.ItemDataRole.UserRole).hit, CommandHit
+                    )
+                    for i in range(10)
+                )
+            )
+
+    def test_explorer_tools_are_absent_from_other_sessions_and_search_syntax(self):
+        self.controller.settings = replace(
+            self.controller.settings, menu_commands=(EXPLORER_TERMINAL,)
+        )
+        with patch.object(self.controller.search.service, "search", return_value=[]):
+            for options in (
+                {},
+                {"scope": self.root},
+                {"explorer_view": (33, 44), "view_kind": DIALOG},
+            ):
+                with self.subTest(options=options):
+                    self.window.present(text="wt", **options)
+                    self.controller.search.run()
+                    self.tasks.finish(TaskCategory.SEARCH)
+                    self.assertEqual(self.window.results.count(), 0)
+            for text in (
+                "",
+                '"wt"',
+                "wt*",
+                "wt type:file",
+                "wt ext:txt",
+                "wt date:today",
+                "wt size:>1kb",
+                "wt !old",
+                "wt -old",
+                'contains:"wt"',
+                f'wt in:"{self.root}"',
+                str(self.root),
+            ):
+                with self.subTest(text=text):
+                    self.window.present(text=text, scope=self.root, explorer_view=(11, 22))
+                    self.controller.search.run()
+                    category = (
+                        TaskCategory.NAVIGATION
+                        if self.controller.search.current_query().navigation is not None
+                        else TaskCategory.SEARCH
+                    )
+                    self.tasks.finish(category)
+                    self.assertEqual(self.window.results.count(), 0)
+
+    def test_explorer_tool_search_captures_the_folder_without_worker_ui_access(self):
+        self.controller.settings = replace(
+            self.controller.settings, menu_commands=(EXPLORER_TERMINAL,)
+        )
+        with patch.object(self.controller.search.service, "search", return_value=[]):
+            self.window.present(text="wt", scope=self.root, explorer_view=(11, 22))
+            self.controller.search.run()
+            job = self.tasks.jobs[-1]
+            self.window.scope = self.root.parent
+            with patch.object(
+                self.window.query, "text", side_effect=AssertionError("worker UI read")
+            ):
+                result = job.work()
+            self.assertEqual(result.command_folder, self.root)
+            self.assertEqual(result.hits[0].folder, self.root)
+
+    def test_explorer_tool_enter_waits_for_current_results_and_uses_the_open_folder(self):
+        codex = replace(
+            EXPLORER_TERMINAL, title="Codex", command="codex", search_keywords=("codex",)
+        )
+        self.controller.settings = replace(
+            self.controller.settings, menu_commands=(EXPLORER_TERMINAL, codex)
+        )
+        with (
+            patch.object(self.controller.search.service, "search", return_value=[]),
+            patch.object(self.controller.actions, "run_folder_command") as run,
+        ):
+            self.window.present(text="wt", scope=self.root, explorer_view=(11, 22))
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            stale = self.window.selected_hit()
+            self.window.query.setText("codex")
+            self.window.open_selected()
+            self.assertTrue(self.controller.search.open_pending)
+            run.assert_not_called()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertNotEqual(self.window.selected_hit(), stale)
+            self.assertFalse(self.window.isVisible())
+            self.tasks.finish(TaskCategory.ACTION)
+            run.assert_called_once_with(codex, self.root)
+            self.launch.assert_not_called()
+
+    def test_enter_waits_when_same_query_changes_from_tab_scope_to_explorer(self):
+        file = SearchHit(CatalogItem(self.root / "wt.txt", ItemKind.FILE), 100, "fixture")
+        self.controller.settings = replace(
+            self.controller.settings, menu_commands=(EXPLORER_TERMINAL,)
+        )
+        with (
+            patch.object(self.controller.search.service, "search", return_value=[file]),
+            patch.object(self.controller.actions, "run_folder_command") as run,
+        ):
+            self.window.present(text="wt", scope=self.root)
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.window.selected_hit(), file)
+            self.window.present(text="wt", scope=self.root, explorer_view=(11, 22))
+            self.window.open_selected()
+            self.assertTrue(self.controller.search.open_pending)
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.tasks.finish(TaskCategory.ACTION)
+            run.assert_called_once_with(EXPLORER_TERMINAL, self.root)
+            self.launch.assert_not_called()
+
+    def test_explorer_tool_copy_context_menu_and_file_actions(self):
+        tool = CommandHit(EXPLORER_TERMINAL, self.root, 0, 100)
+        self.window.present(text="wt", scope=self.root, explorer_view=(11, 22))
+        self.window.set_results([tool], 1)
+        command = EXPLORER_TERMINAL.command_line(self.root, self.root)
+        self.window.copy_selected()
+        data = self.app.clipboard().mimeData()
+        self.assertEqual(data.text(), command)
+        self.assertFalse(data.hasUrls())
+        self.assertFalse(self.window.copy_selected(cut=True))
+        dragged = self.window.results.mimeData([self.window.results.item(0)])
+        self.assertEqual(dragged.text(), command)
+        self.assertFalse(dragged.hasUrls())
+        self.window.reveal_selected()
+        self.window.favorite_selected()
+        self.assertIsNone(self.window._selected_folder())
+        self.reveal.assert_not_called()
+        self.assertFalse(self.controller.favorite_pending)
+        titles = []
+        with patch(
+            "winlauncher.ui.window.Menu.exec",
+            lambda menu, _point: titles.extend(action.text() for action in menu.actions()),
+        ):
+            self.window.context_menu(
+                self.window.results.visualItemRect(self.window.results.item(0)).center()
+            )
+        self.assertEqual(titles, ["Run here", "Copy command", "", "Settings…"])
+        self.assertFalse(self.window.delegate._icon(tool).isNull())
+
+    def test_explorer_tool_identity_distinguishes_commands_with_the_same_command_line(self):
+        first = CommandHit(EXPLORER_TERMINAL, self.root, 0, 100)
+        second = CommandHit(replace(EXPLORER_TERMINAL, title="Other terminal"), self.root, 1, 100)
+        self.window.set_results([first, second], 1)
+        self.window.results.setCurrentRow(0)
+        self.window.set_results([second, replace(first, score=80)], 1)
+        self.assertEqual(self.window.selected_hit(), first)
+        self.assertEqual(self.window.results.currentRow(), 1)
 
     def test_explorer_bar_keeps_its_width_after_the_expanded_launcher(self):
         # The expanded launcher's long footer hint once held the Explorer bar at its width.

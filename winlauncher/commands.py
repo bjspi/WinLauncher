@@ -34,6 +34,8 @@ class MenuCommand:
     icon: str = ""
     # One of SHORTCUT_MODIFIERS, or empty for none.
     shortcut: str = ""
+    explorer_search: bool = False
+    search_keywords: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not self.title.strip():
@@ -52,6 +54,20 @@ class MenuCommand:
             raise ValueError(
                 f"The shortcut of {self.title!r} must be one of {', '.join(SHORTCUT_MODIFIERS)}."
             )
+        if type(self.explorer_search) is not bool:
+            raise ValueError("Command explorer_search flags must be JSON booleans.")
+        if self.explorer_search and not self.folders:
+            raise ValueError("Only folder commands can appear in Explorer search.")
+        if not isinstance(self.search_keywords, list | tuple) or not all(
+            isinstance(word, str) and word.strip() and not any(ord(c) < 32 for c in word)
+            for word in self.search_keywords
+        ):
+            raise ValueError(
+                "Command search keywords must be a list of nonempty single-line texts."
+            )
+        object.__setattr__(
+            self, "search_keywords", tuple(word.strip() for word in self.search_keywords)
+        )
 
     def command_line(self, path: Path, folder: Path) -> str:
         """The command line for `path`; `folder` is where it starts."""

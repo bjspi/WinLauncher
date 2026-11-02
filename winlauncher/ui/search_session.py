@@ -19,8 +19,10 @@ from typing import TypeAlias
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from winlauncher.catalog import long_paths
+from winlauncher.platform.gesture import ViewKind
 from winlauncher.plugins.host import PluginHost, PluginSearch
 from winlauncher.plugins.search import PluginQuery, merge_hits, plugin_query
+from winlauncher.search.commands import CommandHit, search_commands
 from winlauncher.search.native_engine import native_availability
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import parse_query
@@ -47,6 +49,7 @@ class SearchResults:
     elapsed_ms: float
     # Catalog hits whose file is gone; the catalog has not noticed yet.
     missing: frozenset[Path] = field(default_factory=frozenset)
+    command_folder: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +77,7 @@ class SearchSession(QObject):
         self.plugins = plugins
         self.running: threading.Event | None = None  # Cancel flag of the search in flight.
         self.displayed_query: LauncherQuery | None = None
+        self.displayed_command_folder: Path | None = None
         self.open_pending = False
         # Kept ready while the bar is hidden, so it opens with its list at once.
         self.start_list: StartList | None = None
@@ -132,7 +136,7 @@ class SearchSession(QObject):
         cancel = self.running = threading.Event()
         self.tasks.submit(
             _task_category(query),
-            partial(self._work, query, self.settings(), cancel),
+            partial(self._work, query, self.settings(), cancel, self._command_folder(query)),
             partial(self._completed, cancel, query),
             partial(self._failed, cancel),
         )
@@ -144,6 +148,27 @@ class SearchSession(QObject):
         else:
             self.displayed_query = None
             self.prefetch_start_list()
+
+    def _command_folder(self, query: LauncherQuery) -> Path | None:
+        """Capture tool eligibility on the GUI thread, before submitting search work.
+
+        `query.explorer` alone also describes Tab-scoped launcher searches. Tools
+        need the actual Explorer session and plain text, without query syntax.
+        """
+        if (
+            not isinstance(query, SearchQuery)
+            or not self.window.explorer_mode
+            or self.window.explorer_view is None
+            or self.window.view_kind is not ViewKind.EXPLORER
+            or self.window.scope is None
+            or query.scope != self.window.scope
+            or not _plain_search_words(self.window.query.text())
+        ):
+            return None
+        plain = SearchQuery(
+            terms=query.terms, spellings=query.spellings, scope=query.scope, explorer=True
+        )
+        return query.scope if query == plain else None
 
     def prefetch_start_list(self) -> None:
         """Recompute the start list in the background while the bar is hidden."""
@@ -192,7 +217,9 @@ class SearchSession(QObject):
 
     def _must_wait_for_results(self, hit: LauncherHit | None, query: LauncherQuery) -> bool:
         """Enter refers to the typed query; its results may not be displayed yet."""
-        if self.displayed_query != query:
+        if self.displayed_query != query or self.displayed_command_folder != self._command_folder(
+            query
+        ):
             return True
         return hit is None and self.running is not None
 
@@ -212,7 +239,11 @@ class SearchSession(QObject):
 
     def _shows_other_query(self) -> bool:
         try:
-            return self.current_query() != self.displayed_query
+            query = self.current_query()
+            return (
+                query != self.displayed_query
+                or self._command_folder(query) != self.displayed_command_folder
+            )
         except ValueError:
             return True
 
@@ -222,7 +253,11 @@ class SearchSession(QObject):
             self.running = None
 
     def _work(
-        self, query: LauncherQuery, settings: Settings, cancel: threading.Event
+        self,
+        query: LauncherQuery,
+        settings: Settings,
+        cancel: threading.Event,
+        command_folder: Path | None = None,
     ) -> SearchResults:
         """Search the catalog; a website or a plugin's keyword answers above the files.
 
@@ -248,6 +283,9 @@ class SearchSession(QObject):
                 plugins = self._search_plugins(files, settings, cancel)
                 found = merge_hits(found, plugins.hits, limit)
             hits.extend(found)
+        if command_folder is not None and isinstance(query, SearchQuery) and not cancel.is_set():
+            commands = search_commands(settings.menu_commands, query, command_folder)
+            hits = _with_commands(hits, commands, settings.explorer_tools_first)
         hits = [] if cancel.is_set() else hits[:limit]
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
@@ -257,7 +295,7 @@ class SearchSession(QObject):
             cancel.is_set(),
             plugins.summary(),
         )
-        return SearchResults(hits, elapsed_ms, _missing_files(hits))
+        return SearchResults(hits, elapsed_ms, _missing_files(hits), command_folder)
 
     def _search_plugins(
         self, query: SearchQuery | PluginQuery, settings: Settings, cancel: threading.Event
@@ -292,8 +330,11 @@ class SearchSession(QObject):
             self.request_open(self.window.selected_hit())
 
     def _show(self, query: LauncherQuery, result: SearchResults) -> None:
-        same_query = self.displayed_query == query
+        same_query = (
+            self.displayed_query == query and self.displayed_command_folder == result.command_folder
+        )
         self.displayed_query = query
+        self.displayed_command_folder = result.command_folder
         files = _file_query(query)
         terms = files or (query.search if isinstance(query, PluginQuery) else None)
         offer = (
@@ -340,13 +381,38 @@ def content_search_text(text: str) -> str | None:
     change what its filters mean.
     """
     words = text.strip()
-    if not words or not _PLAIN_WORDS.fullmatch(words):
+    if not _plain_search_words(words):
         return None
-    if any(word.startswith("-") for word in words.split()):
-        return None  # An exclusion.
     if native_availability().module is None:
         return None
     return f'contains:"{words}"'
+
+
+def _plain_search_words(text: str) -> bool:
+    """Whether text is ordinary name-search words, without filters or exclusions."""
+    return (
+        bool(text.strip())
+        and bool(_PLAIN_WORDS.fullmatch(text))
+        and not any(word.startswith("-") for word in text.split())
+    )
+
+
+def _with_commands(
+    hits: list[LauncherHit], commands: list[CommandHit], tools_first: bool
+) -> list[LauncherHit]:
+    """Keep direct entries and deeper matches ordered, inserting a tool group."""
+    if not commands:
+        return hits
+    if tools_first:
+        return [*commands, *hits]
+    folder = commands[0].folder
+    direct, deeper = [], []
+    for hit in hits:
+        if isinstance(hit, SearchHit) and hit.item.path.parent == folder:
+            direct.append(hit)
+        else:
+            deeper.append(hit)
+    return [*direct, *commands, *deeper]
 
 
 def _missing_files(hits: list[LauncherHit]) -> frozenset[Path]:

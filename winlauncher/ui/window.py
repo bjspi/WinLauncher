@@ -8,7 +8,7 @@ from __future__ import annotations
 import itertools
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -68,6 +68,7 @@ from winlauncher.commands import MenuCommand
 from winlauncher.platform.gesture import ViewKind
 from winlauncher.plugins.api import Chip, ChipTone
 from winlauncher.plugins.search import PluginHit
+from winlauncher.search.commands import CommandHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
 from winlauncher.search.ranking import SearchHit
@@ -187,20 +188,31 @@ class ResultList(QListWidget):
 
 
 def transfer_data(row: ResultRow, *, cut: bool = False) -> QMimeData:
-    """What copying or dragging `row` hands over: the file itself, or a website's URL."""
+    """Copy/drag data: a file, a website's URL or an Explorer tool's command text."""
     if (hit := row.file_hit) is not None:
         return file_mime_data([hit.item.path], cut=cut)
+    if isinstance(row.hit, CommandHit):
+        data = QMimeData()
+        data.setText(row.target)
+        return data
     return url_mime_data(row.target)
 
 
 class ResultDelegate(QStyledItemDelegate):
     """Paints one `ResultRow`: icon, highlighted name, location, shortcut and favorite star."""
 
-    def __init__(self, parent: QListWidget, website_icons: WebsiteIcons, plugin_icons: PluginIcons):
+    def __init__(
+        self,
+        parent: QListWidget,
+        website_icons: WebsiteIcons,
+        plugin_icons: PluginIcons,
+        command_icons: Callable[[MenuCommand], QIcon],
+    ):
         super().__init__(parent)
         self.icons = ResultIcons(self)
         self.website_icons = website_icons
         self.plugin_icons = plugin_icons
+        self.command_icons = command_icons
         for icons in (self.icons, website_icons, plugin_icons):
             icons.changed.connect(parent.viewport().update)
         self.terms: tuple[str, ...] = ()
@@ -210,7 +222,7 @@ class ResultDelegate(QStyledItemDelegate):
         return QSize(400, self.row_height(index.data(Qt.ItemDataRole.UserRole)))
 
     def row_height(self, result: ResultRow | None) -> int:
-        separated = result is not None and result.starts_subfolders
+        separated = result is not None and result.separated
         return self.rows.height + (SEPARATOR_GAP if separated else 0)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
@@ -221,7 +233,7 @@ class ResultDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         row, size = option.rect, self.rows.icon
-        if result.starts_subfolders:
+        if result.separated:
             # The gap stays unhighlighted, so selection never hides the line.
             line = row.top() + SEPARATOR_GAP // 2
             painter.setPen(QColor(colors().results_divider))
@@ -265,6 +277,9 @@ class ResultDelegate(QStyledItemDelegate):
             return self.website_icons.icon_for(hit.url)
         if isinstance(hit, PluginHit):
             return self.plugin_icons.icon_for(hit)
+        if isinstance(hit, CommandHit):
+            icon = self.command_icons(hit.command)
+            return line_icon("terminal", colors().muted) if icon.isNull() else icon
         return self.icons.icon_for(hit.item)
 
     @staticmethod
@@ -395,6 +410,8 @@ def _shortcut_hint(
         return "↵ copy result"
     if row is None:
         return ""
+    if isinstance(row.hit, CommandHit):
+        return "↵ run here · Ctrl+C copy command"
     if row.file_hit is None:
         return f"↵ open in {row.opens_in} · Ctrl+C copy {row.target_noun}"
     if dialog:
@@ -408,16 +425,19 @@ def _shortcut_hint(
     return "↵ open · Ctrl+↵ show in folder · Ctrl+C copy file · Ctrl+1–9"
 
 
-def _with_subfolder_separator(rows: list[ResultRow]) -> list[ResultRow]:
-    """Mark the first subfolder match that follows direct entries of the folder."""
+def _with_result_separators(rows: list[ResultRow]) -> list[ResultRow]:
+    """Separate tools, direct entries and subfolder matches, in either tool order."""
     for index, (before, row) in enumerate(itertools.pairwise(rows), start=1):
-        if before.direct and not row.direct:
+        before_tool = isinstance(before.hit, CommandHit)
+        row_tool = isinstance(row.hit, CommandHit)
+        if row.file_hit is not None and not row.direct and (before.direct or before_tool):
             rows[index] = replace(
                 row,
                 starts_subfolders=True,
                 accessible_text=f"In subfolders: {row.accessible_text}",
             )
-            break
+        elif before_tool != row_tool:
+            rows[index] = replace(row, starts_group=True)
     return rows
 
 
@@ -538,7 +558,7 @@ class LauncherWindow(QWidget):
     open_requested = Signal(object)
     reveal_requested = Signal(object)
     favorite_requested = Signal(object)
-    # SearchHit the user moved to in the Explorer bar, for Explorer to select.
+    # SearchHit for Explorer to select; None cancels a pending preview on a tool.
     explorer_selection = Signal(object)
     # Text typed in a file dialog's bar that Escape returns to the dialog.
     dialog_text_returned = Signal(str)
@@ -735,7 +755,9 @@ class LauncherWindow(QWidget):
         self.results = ResultList()
         self.results.setObjectName("results")
         self.results.setAccessibleName("Search results")
-        self.delegate = ResultDelegate(self.results, self.website_icons, self.plugin_icons)
+        self.delegate = ResultDelegate(
+            self.results, self.website_icons, self.plugin_icons, self._command_icon
+        )
         self.results.setItemDelegate(self.delegate)
         self.results.setMouseTracking(True)
         self.results.setFrameShape(QFrame.Shape.NoFrame)
@@ -1097,7 +1119,7 @@ class LauncherWindow(QWidget):
         """
         previous = self.selected_row() if preserve_selection else None
         self.delegate.terms = query.terms if query is not None else ()
-        rows = _with_subfolder_separator(
+        rows = _with_result_separators(
             [
                 result_row(
                     hit,
@@ -1116,7 +1138,7 @@ class LauncherWindow(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, row)
                 item.setToolTip(row.tooltip)
                 self.results.addItem(item)
-                if previous is not None and row.target == previous.target:
+                if previous is not None and row.identity == previous.identity:
                     selected_index = index
             if hits and not self.calculation_selected:
                 self.results.setCurrentRow(selected_index)
@@ -1531,6 +1553,9 @@ class LauncherWindow(QWidget):
         row = self.selected_row()
         if not self.explorer_mode or self.serves_file_dialog:
             return
+        if row is not None and isinstance(row.hit, CommandHit):
+            self.explorer_selection.emit(None)
+            return
         if row is None or (direct_only and not row.direct):
             return
         if (hit := row.file_hit) is not None:
@@ -1588,7 +1613,7 @@ class LauncherWindow(QWidget):
         self._show_status(f"{row.target_noun} copied to clipboard")
 
     def copy_selected(self, row: ResultRow | None = None, *, cut: bool = False) -> bool:
-        """Put `row`'s file on the clipboard for Explorer; a website copies its URL.
+        """Copy a file, website URL or tool command; only files can be cut.
 
         `row` defaults to the selected row. Returns whether there was something to
         copy; a website cannot be cut.
@@ -1596,6 +1621,9 @@ class LauncherWindow(QWidget):
         row = row or self.selected_row()
         if row is None or (cut and row.file_hit is None):
             return False
+        if isinstance(row.hit, CommandHit):
+            self.copy_target(row)
+            return True
         QApplication.clipboard().setMimeData(transfer_data(row, cut=cut))
         if row.file_hit is None:
             self._show_status(f"{row.target_noun} copied to clipboard")
@@ -1628,6 +1656,11 @@ class LauncherWindow(QWidget):
         menu = Menu(self)
         if (hit := row.file_hit) is not None:
             self._add_file_actions(menu, row, hit)
+        elif isinstance(row.hit, CommandHit):
+            menu.addAction("Run here", lambda: self.open_requested.emit(row.hit))
+            menu.addAction("Copy command", lambda: self.copy_target(row))
+            menu.addSeparator()
+            menu.addAction("Settings…", self.settings_requested.emit)
         else:
             self._add_website_actions(menu, row)
         menu.exec(self.results.viewport().mapToGlobal(point))

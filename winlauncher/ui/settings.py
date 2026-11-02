@@ -768,6 +768,13 @@ class SettingsDialog(QDialog):
     def _explorer_page(self, settings: Settings) -> list[QWidget]:
         self.explorer = ToggleSwitch("Search when typing in Explorer's file view")
         self.explorer.setChecked(settings.explorer_typing)
+        self.explorer_tool_order = QComboBox()
+        self.explorer_tool_order.setAccessibleName("Explorer tool order")
+        self.explorer_tool_order.addItem("Tools first", True)
+        self.explorer_tool_order.addItem("Files first", False)
+        self.explorer_tool_order.setCurrentIndex(
+            self.explorer_tool_order.findData(settings.explorer_tools_first)
+        )
         self.quick_switch = ToggleSwitch("Quick Switch in Open and Save dialogs")
         self.quick_switch.setChecked(settings.quick_switch)
         self.quick_switch.setToolTip(
@@ -786,6 +793,12 @@ class SettingsDialog(QDialog):
             "Type in an Open or Save dialog to search everywhere. Ctrl+G jumps the dialog "
             "to the folder open in Explorer.",
             self.quick_switch,
+        )
+        card.add_row(
+            "Explorer tool order",
+            "Commands enabled under Context menu can appear before or after direct folder "
+            "entries. Matches in subfolders follow both groups.",
+            self.explorer_tool_order,
         )
         return [card]
 
@@ -913,6 +926,7 @@ class SettingsDialog(QDialog):
             windows_tools_english=self.windows_tools_english.isChecked(),
             windows_settings_detail=self.windows_settings_detail.currentData(),
             explorer_typing=self.explorer.isChecked(),
+            explorer_tools_first=self.explorer_tool_order.currentData(),
             quick_switch=self.quick_switch.isChecked(),
             double_ctrl_ms=self.ctrl_interval.value(),
             auto_hide=self.auto_hide.isChecked(),

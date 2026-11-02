@@ -84,5 +84,13 @@ class ItemActions:
         folder = path if path.is_dir() else path.parent
         shell.run_command(command.command_line(path, folder), folder)
 
+    def run_folder_command(self, command: MenuCommand, folder: Path) -> None:
+        """Run an Explorer tool in its captured folder, even if it disappeared.
+
+        Unlike a file result, this target must never fall back to its parent.
+        The shell validates the working directory and reports failures normally.
+        """
+        shell.run_command(command.command_line(folder, folder), folder)
+
     def favorite(self, path: Path, enabled: bool) -> None:
         self.store.set_favorite(path, enabled)

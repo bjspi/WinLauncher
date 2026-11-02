@@ -16,6 +16,8 @@ from PySide6.QtWidgets import QWidget
 
 from winlauncher.__main__ import _create_application
 from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.commands import MenuCommand
+from winlauncher.search.commands import search_commands
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.settings import Appearance, Settings
@@ -114,6 +116,51 @@ explorer.set_results(
 )
 settle(explorer)
 explorer.grab().save(str(OUT / "explorer-search.png"))
+explorer.hide()
+
+icons_folder = Path(__file__).parents[1] / "winlauncher" / "ui" / "assets" / "icons"
+tool_commands = (
+    MenuCommand(
+        "Windows Terminal",
+        'wt.exe -d "{folder}"',
+        icon=str(icons_folder / "terminal.svg"),
+        explorer_search=True,
+        search_keywords=("wt", "terminal"),
+    ),
+    MenuCommand(
+        "Claude Code",
+        'wt.exe -d "{folder}" cmd /k claude',
+        icon=str(icons_folder / "code.svg"),
+        explorer_search=True,
+        search_keywords=("claude", "terminal"),
+    ),
+    MenuCommand(
+        "Codex",
+        'wt.exe -d "{folder}" cmd /k codex',
+        icon=str(icons_folder / "code.svg"),
+        explorer_search=True,
+        search_keywords=("codex", "terminal"),
+    ),
+)
+tool_folder = Path(r"D:\Work\Projects")
+tool_query = replace(parse_query("terminal", scope=tool_folder), explorer=True)
+explorer.present(text="terminal", scope=tool_folder, near=(200, 200, 1200, 900))
+explorer.set_menu_commands(tool_commands)
+explorer.set_results(
+    [
+        *search_commands(tool_commands, tool_query, tool_folder),
+        *hits(
+            [
+                (str(tool_folder / "Terminal notes.txt"), ItemKind.FILE, 1, False),
+                (str(tool_folder / "docs" / "Terminal setup.md"), ItemKind.FILE, 3, False),
+            ]
+        ),
+    ],
+    2,
+    query=tool_query,
+)
+settle(explorer)
+explorer.grab().save(str(OUT / "explorer-tools.png"))
 explorer.hide()
 
 launcher = LauncherWindow(website_icons)

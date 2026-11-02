@@ -45,6 +45,7 @@ flowchart TD
 | `search/candidates.py` | Query-to-SQL translation for the literal and fuzzy candidate passes |
 | `search/memory_index.py` | What the Rust memory index loads and the candidate plans it evaluates |
 | `search/service.py` | Streaming candidates into a bounded best-hits heap |
+| `search/commands.py` | Explorer tool hits bound to their folder, title/alias matching and ranking |
 | `settings.py` | Validated settings value object and atomic JSON file |
 | `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
 | `commands.py` | The user's context-menu commands and their command lines |
@@ -192,6 +193,26 @@ keys and the chip; `ui/search_session.py` only reads `window.scope`.
 `ResultRow.location_parts`, which the row delegate shortens by whole parts
 (`shortened_breadcrumbs`) before eliding characters. Item `chips` carry a
 `ChipTone`, not a color; the delegate maps tones to theme colors when painting.
+
+Explorer tools reuse `MenuCommand` configuration and command expansion. Before
+dispatching a search, `SearchSession` captures a command folder only for a real
+Explorer session with plain name-search input; `query.explorer` also describes
+Tab scopes and is not sufficient. The worker matches opted-in commands through
+`search/commands.py` and inserts their `CommandHit` group before direct entries
+or between direct and deeper entries according to `explorer_tools_first`, then
+applies the combined result limit. No command search code reads UI state or
+changes the catalog or either search engine.
+
+`CommandHit` holds the command, captured folder, configuration position and score.
+Its equality ignores score so row selection survives ranking changes, while
+separate configured commands retain separate identities. Search results also
+carry the command folder: Enter and selection preservation distinguish identical
+queries with different Explorer tool contexts. Tool rows have no `file_hit`;
+selecting one cancels a queued Explorer preview. The controller dispatches them
+through `ItemActions.run_folder_command`, which always passes the captured folder
+to the shell, even if it disappeared, rather than interpreting it as a file and
+using its parent. Icons reuse the context menu's cache. Copy and drag expose the
+expanded command as text, and file-only actions remain unavailable.
 
 ## Rust search engine
 

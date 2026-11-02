@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from winlauncher.commands import SHORTCUT_MODIFIERS, MenuCommand, shortcut_clash
 from winlauncher.platform.shell import alias_target
 from winlauncher.ui.messages import WARNING, ask
-from winlauncher.ui.widgets import pick_path
+from winlauncher.ui.widgets import ToggleSwitch, pick_path
 
 LIST_WIDTH = 200
 ROW_SIZE = QSize(LIST_WIDTH, 42)  # Two text lines: title and command line.
@@ -50,6 +50,8 @@ class CommandDraft(NamedTuple):
     files: bool = False
     icon: str = ""
     shortcut: str = ""
+    explorer_search: bool = False
+    search_keywords: str = ""
 
     def menu_command(self) -> MenuCommand:
         return MenuCommand(
@@ -59,6 +61,8 @@ class CommandDraft(NamedTuple):
             self.files,
             self.icon.strip(),
             self.shortcut,
+            self.explorer_search,
+            tuple(word.strip() for word in self.search_keywords.split(",") if word.strip()),
         )
 
 
@@ -121,6 +125,16 @@ class CommandList(QWidget):
             field.textChanged.connect(self._edited)
         self.show_for.setAccessibleName("Show the command for")
         self.show_for.currentIndexChanged.connect(self._edited)
+        self.explorer_search = ToggleSwitch("Show in Explorer search")
+        self.explorer_search.setToolTip("Offer this command for the folder open in Explorer.")
+        self.search_keywords = QLineEdit()
+        self.search_keywords.setAccessibleName("Search keywords")
+        self.search_keywords.setPlaceholderText("wt, terminal")
+        self.search_keywords.setToolTip(
+            "Optional aliases, separated by commas; the title always matches."
+        )
+        self.explorer_search.toggled.connect(self._edited)
+        self.search_keywords.textChanged.connect(self._edited)
         self.shortcut = QComboBox()
         self.shortcut.addItem("None", "")
         for modifier in SHORTCUT_MODIFIERS:
@@ -140,6 +154,8 @@ class CommandList(QWidget):
         form.addRow("Title", self.title)
         form.addRow("Command line", self.command)
         form.addRow("Show for", self.show_for)
+        form.addRow("Show in Explorer search", self.explorer_search)
+        form.addRow("Search keywords", self.search_keywords)
         form.addRow("Shortcut", self.shortcut)
         browse = QPushButton("Browse…")
         browse.clicked.connect(self.choose_icon)
@@ -190,6 +206,8 @@ class CommandList(QWidget):
                     command.files,
                     command.icon,
                     command.shortcut,
+                    command.explorer_search,
+                    ", ".join(command.search_keywords),
                 )
             )
         self.list.setCurrentRow(0 if commands else -1)
@@ -231,7 +249,7 @@ class CommandList(QWidget):
         if ask(
             self,
             f"Remove “{title}”?",
-            "The command disappears from the result context menu.",
+            "The command disappears from the result context menu and Explorer search.",
             "Remove",
             kind=WARNING,
         ):
@@ -246,7 +264,15 @@ class CommandList(QWidget):
         self.duplicate.setEnabled(item is not None)
         flags = (draft.folders, draft.files)
         show_for = next((i for i, (_, choice) in enumerate(SHOW_FOR) if choice == flags), 0)
-        fields = (self.title, self.command, self.icon, self.show_for, self.shortcut)
+        fields = (
+            self.title,
+            self.command,
+            self.icon,
+            self.show_for,
+            self.shortcut,
+            self.explorer_search,
+            self.search_keywords,
+        )
         for field in fields:
             field.blockSignals(True)
         self.title.setText(draft.title)
@@ -254,12 +280,16 @@ class CommandList(QWidget):
         self.icon.setText(draft.icon)
         self.show_for.setCurrentIndex(show_for)
         self.shortcut.setCurrentIndex(max(0, self.shortcut.findData(draft.shortcut)))
+        self.explorer_search.setChecked(draft.explorer_search)
+        self.search_keywords.setText(draft.search_keywords)
+        self._update_search_fields(draft.folders)
         for field in fields:
             field.blockSignals(False)
 
     def _edited(self) -> None:
         if item := self.list.currentItem():
             folders, files = SHOW_FOR[self.show_for.currentIndex()][1]
+            self._update_search_fields(folders)
             draft = CommandDraft(
                 self.title.text(),
                 self.command.text(),
@@ -267,8 +297,19 @@ class CommandList(QWidget):
                 files,
                 self.icon.text(),
                 self.shortcut.currentData(),
+                self.explorer_search.isChecked(),
+                self.search_keywords.text(),
             )
             _store(item, draft)
+
+    def _update_search_fields(self, folders: bool) -> None:
+        """File-only commands cannot become actions on the open Explorer folder."""
+        self.explorer_search.setEnabled(folders)
+        if not folders:
+            self.explorer_search.blockSignals(True)
+            self.explorer_search.setChecked(False)
+            self.explorer_search.blockSignals(False)
+        self.search_keywords.setEnabled(folders and self.explorer_search.isChecked())
 
     def commands(self) -> tuple[MenuCommand, ...]:
         """The validated list; on an invalid entry or a shared shortcut, raise ValueError."""

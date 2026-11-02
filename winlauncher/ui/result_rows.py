@@ -1,4 +1,4 @@
-"""What one launcher row shows: a catalog hit, a website or a plugin's item to open.
+"""What one launcher row shows: a file, website, plugin item or Explorer tool.
 
 `result_row` is the only place that distinguishes them for text. Icons and
 actions that exist for one kind only dispatch on `ResultRow.hit`.
@@ -17,11 +17,12 @@ from PySide6.QtCore import QLocale
 from winlauncher.catalog.model import CatalogItem
 from winlauncher.plugins.api import MAX_CHIPS, Chip
 from winlauncher.plugins.search import PluginHit
+from winlauncher.search.commands import CommandHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.ranking import SearchHit
 from winlauncher.websites import WebsiteTarget
 
-LauncherHit: TypeAlias = SearchHit | WebsiteTarget | PluginHit
+LauncherHit: TypeAlias = SearchHit | WebsiteTarget | PluginHit | CommandHit
 WEBSITE_REASON = "Opens in your default browser"
 MISSING_LABEL = "Deleted"
 BREADCRUMB_SEPARATOR = " › "
@@ -33,8 +34,8 @@ class ResultRow:
     hit: LauncherHit
     name: str
     location: str  # Muted text beside or below the name.
-    target: str  # The path or URL; copied, and identifies the row across refreshes.
-    target_noun: str  # "Path", "URL" or "Link", for messages about `target`.
+    target: str  # The path, URL or command line to copy.
+    target_noun: str  # "Path", "URL", "Link" or "Command", for messages about `target`.
     detail: str
     tooltip: str
     accessible_text: str
@@ -46,6 +47,7 @@ class ResultRow:
     direct: bool = False
     # The first subfolder match after the direct entries; a line separates them.
     starts_subfolders: bool = False
+    starts_group: bool = False  # Boundary between tools and file entries.
     missing: bool = False  # The file is gone; the catalog has not noticed yet.
     opens_in: str = ""  # Where a website or plugin item opens: "browser", "Telegram".
     chips: tuple[Chip, ...] = ()  # A plugin item's labels, drawn before the location.
@@ -54,6 +56,16 @@ class ResultRow:
     def file_hit(self) -> SearchHit | None:
         """The catalog hit, for actions that only files and folders have."""
         return self.hit if isinstance(self.hit, SearchHit) else None
+
+    @property
+    def identity(self) -> str | CommandHit:
+        """Keep distinct tools selected independently of their copied command text."""
+        return self.hit if isinstance(self.hit, CommandHit) else self.target
+
+    @property
+    def separated(self) -> bool:
+        """Whether this row starts a visually separated result group."""
+        return self.starts_subfolders or self.starts_group
 
 
 def result_row(
@@ -64,8 +76,26 @@ def result_row(
         return _website_row(hit)
     if isinstance(hit, PluginHit):
         return _plugin_row(hit)
+    if isinstance(hit, CommandHit):
+        return _command_row(hit)
     row = _file_row(hit, query, scope)
     return _as_missing(row) if missing else row
+
+
+def _command_row(hit: CommandHit) -> ResultRow:
+    """An action on the open folder; its copy/drag target is plain command text."""
+    line = hit.command.command_line(hit.folder, hit.folder)
+    description = f"Run in {hit.folder}\n{line}"
+    return ResultRow(
+        hit=hit,
+        name=hit.command.title,
+        location="Run here",
+        target=line,
+        target_noun="Command",
+        detail=description,
+        tooltip=description,
+        accessible_text=f"{hit.command.title}, run here\n{description}",
+    )
 
 
 def _website_row(website: WebsiteTarget) -> ResultRow:

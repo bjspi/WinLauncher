@@ -140,9 +140,11 @@ class ToggleSwitch(QCheckBox):
 
     def setChecked(self, checked: bool) -> None:  # noqa: N802 - Qt override.
         super().setChecked(checked)
-        if not self.isVisible():
+        if not self.isVisible() or self.signalsBlocked():
             self._animation.stop()
-            self._position = 1.0 if checked else 0.0  # No animation while building a page.
+            # Loading a visible form blocks signals, including the one that
+            # normally starts our animation. Snap to the loaded state instead.
+            self._set_position(1.0 if checked else 0.0)
 
     def _animate(self, checked: bool) -> None:
         if not self.isVisible():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
@@ -12,14 +13,18 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from winlauncher.actions import ItemActions
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand, shortcut_clash
 from winlauncher.platform import shell
+from winlauncher.search.commands import search_commands
+from winlauncher.search.query_parser import parse_query
 from winlauncher.settings import Settings, SettingsFile, settings_from_json
-from winlauncher.ui.commands import command_icon
+from winlauncher.ui.commands import CommandList, command_icon
 from winlauncher.ui.settings import SettingsDialog
 from winlauncher.ui.website_icons import WebsiteIcons
 
@@ -111,6 +116,79 @@ class MenuCommandTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 settings_from_json({"menu_commands": value})
 
+    def test_explorer_settings_roundtrip_and_validation(self):
+        tool = replace(TERMINAL, explorer_search=True, search_keywords=("wt", "terminal"))
+        settings = Settings(roots=(), menu_commands=(tool,), explorer_tools_first=False)
+        with tempfile.TemporaryDirectory() as directory:
+            file = SettingsFile(Path(directory) / "settings.json")
+            file.save(settings)
+            self.assertEqual(file.load(), settings)
+        loaded = settings_from_json({"menu_commands": [{"title": "Terminal", "command": "wt"}]})
+        self.assertFalse(loaded.menu_commands[0].explorer_search)
+        self.assertEqual(loaded.menu_commands[0].search_keywords, ())
+        self.assertTrue(loaded.explorer_tools_first)
+        for changes in (
+            {"explorer_search": "yes"},
+            {"explorer_search": True, "folders": False, "files": True},
+            {"search_keywords": "wt"},
+            {"search_keywords": [None]},
+            {"search_keywords": [" "]},
+            {"search_keywords": ["wt\nterminal"]},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                replace(TERMINAL, **changes)
+        with self.assertRaises(ValueError):
+            settings_from_json({"explorer_tools_first": "yes"})
+        loaded = settings_from_json(
+            {
+                "menu_commands": [
+                    {
+                        "title": "Terminal",
+                        "command": "wt",
+                        "explorer_search": True,
+                        "search_keywords": [" wt ", "terminal"],
+                    }
+                ],
+            }
+        )
+        self.assertEqual(loaded.menu_commands[0].search_keywords, ("wt", "terminal"))
+        self.assertIsInstance(hash(loaded.menu_commands[0]), int)
+
+    def test_explorer_tools_match_titles_aliases_and_all_words(self):
+        folder = Path("D:/A folder containing unmatchedword")
+        terminal = replace(TERMINAL, explorer_search=True, search_keywords=("wt",))
+        claude = MenuCommand(
+            "Claude Code", 'wt.exe -d "{folder}" cmd /k claude', explorer_search=True
+        )
+        commands = (TERMINAL, terminal, claude)
+        for text, expected in (
+            ("wt", [terminal]),
+            ("TERMINAL", [terminal]),
+            ("wt term", [terminal]),
+            ("clde", [claude]),
+            ("claude code", [claude]),
+            ("claude unmatchedword", []),
+            ("unmatchedword", []),
+            ("", []),
+        ):
+            with self.subTest(text=text):
+                hits = search_commands(commands, parse_query(text), folder)
+                self.assertEqual([hit.command for hit in hits], expected)
+                self.assertTrue(all(hit.folder == folder for hit in hits))
+        accented = MenuCommand("Öffnen", "x", explorer_search=True)
+        self.assertEqual(
+            search_commands((accented,), parse_query("offnen"), folder)[0].command, accented
+        )
+
+    def test_explorer_tools_rank_exact_aliases_and_keep_ties_in_configuration_order(self):
+        folder = Path("D:/Project")
+        fuzzy = MenuCommand("Wartung", "a", explorer_search=True)
+        alias = MenuCommand("Terminal", "b", explorer_search=True, search_keywords=("wt",))
+        duplicate = replace(alias, command="c")
+        hits = search_commands((fuzzy, alias, duplicate), parse_query("wt"), folder)
+        self.assertEqual([hit.command for hit in hits], [alias, duplicate, fuzzy])
+        self.assertEqual([hit.position for hit in hits], [1, 2, 0])
+
 
 class MenuCommandRunTest(unittest.TestCase):
     def setUp(self):
@@ -134,6 +212,22 @@ class MenuCommandRunTest(unittest.TestCase):
             ],
         )
         actions.store.record_launch.assert_not_called()
+
+    def test_explorer_commands_keep_the_captured_folder_and_never_use_its_parent(self):
+        actions = ItemActions(Mock())
+        command = MenuCommand("All", 'tool "{path}" "{folder}" "{name}"')
+        missing = self.folder / "gone {name} & spaces"
+        with patch("winlauncher.actions.shell.run_command") as run:
+            actions.run_folder_command(command, missing)
+        run.assert_called_once_with(f'tool "{missing}" "{missing}" "{missing.name}"', missing)
+        actions.store.record_launch.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows processes")
+    def test_missing_explorer_folder_is_reported_without_starting_a_process(self):
+        with patch("winlauncher.platform.shell.subprocess.Popen") as popen:
+            with self.assertRaises(FileNotFoundError):
+                ItemActions(Mock()).run_folder_command(TERMINAL, self.folder / "missing")
+        popen.assert_not_called()
 
     @unittest.skipUnless(os.name == "nt", "Windows consoles")
     def test_console_programs_get_their_own_console(self):
@@ -260,6 +354,107 @@ class MenuCommandUiTest(unittest.TestCase):
         editor.list.setCurrentRow(-1)
         self.assertFalse(editor.duplicate.isEnabled())
         dialog.deleteLater()
+
+    def test_explorer_options_edit_duplicate_and_disable_for_file_only_commands(self):
+        tool = replace(TERMINAL, explorer_search=True, search_keywords=("wt", "terminal"))
+        dialog = SettingsDialog(Settings(roots=(), menu_commands=(tool,)), website_icons=self.icons)
+        self.addCleanup(dialog.deleteLater)
+        editor = dialog.menu_commands
+        self.assertTrue(editor.explorer_search.isChecked())
+        self.assertEqual(editor.search_keywords.text(), "wt, terminal")
+        self.assertTrue(editor.search_keywords.isEnabled())
+        editor.duplicate_selected()
+        editor.title.setText("Codex")
+        editor.search_keywords.setText(" codex, coding, , ")
+        duplicate = dialog.read_settings().menu_commands[1]
+        self.assertTrue(duplicate.explorer_search)
+        self.assertEqual(duplicate.search_keywords, ("codex", "coding"))
+        editor.show_for.setCurrentText("Files")
+        self.assertFalse(editor.explorer_search.isChecked())
+        self.assertFalse(editor.explorer_search.isEnabled())
+        self.assertFalse(editor.search_keywords.isEnabled())
+        self.assertFalse(dialog.read_settings().menu_commands[1].explorer_search)
+        editor.list.setCurrentRow(0)
+        self.assertTrue(editor.explorer_search.isChecked())
+        self.assertEqual(editor.search_keywords.text(), "wt, terminal")
+        editor.show_for.setCurrentText("Folders and files")
+        editor.explorer_search.setChecked(False)
+        self.assertFalse(editor.search_keywords.isEnabled())
+        self.assertTrue(dialog.read_settings().explorer_tools_first)
+        dialog.explorer_tool_order.setCurrentText("Files first")
+        self.assertFalse(dialog.read_settings().explorer_tools_first)
+
+    def test_visible_command_switching_keeps_search_toggle_and_editability_in_sync(self):
+        enabled = replace(TERMINAL, explorer_search=True)
+        disabled = replace(TERMINAL, title="Other terminal")
+        editor = CommandList((enabled, disabled))
+        self.addCleanup(editor.deleteLater)
+        editor.show()
+        self.addCleanup(editor.hide)
+        self.app.processEvents()
+        self.assertTrue(editor.search_keywords.isEnabled())
+        QTest.keyClicks(editor.search_keywords, "wt")
+        self.assertEqual(editor.commands()[0].search_keywords, ("wt",))
+
+        editor.list.setCurrentRow(1)
+        self.assertFalse(editor.explorer_search.isChecked())
+        self.assertEqual(editor.explorer_search.position, 0.0)
+        self.assertFalse(editor.search_keywords.isEnabled())
+        editor.list.setCurrentRow(0)
+        self.assertTrue(editor.explorer_search.isChecked())
+        self.assertEqual(editor.explorer_search.position, 1.0)
+        self.assertTrue(editor.search_keywords.isEnabled())
+        QTest.keyClicks(editor.search_keywords, ", terminal")
+        self.assertEqual(editor.commands()[0].search_keywords, ("wt", "terminal"))
+
+        # Changing entries during a user animation must not leave the old
+        # animation painting an enabled switch over a disabled command.
+        QTest.mouseClick(editor.explorer_search, Qt.MouseButton.LeftButton)
+        QTest.qWait(200)
+        QTest.mouseClick(editor.explorer_search, Qt.MouseButton.LeftButton)
+        editor.list.setCurrentRow(1)
+        QTest.qWait(200)
+        self.assertEqual(editor.explorer_search.position, 0.0)
+        self.assertFalse(editor.search_keywords.isEnabled())
+
+    @unittest.skipUnless(os.name == "nt", "Windows clipboard shutdown")
+    def test_copying_an_explorer_command_keeps_python_shutdown_clean(self):
+        """Assertions can pass before Qt crashes during interpreter shutdown.
+
+        Keep the copied command in the clipboard until process exit: replacing
+        it during test cleanup would conceal the original ownership failure.
+        """
+        script = """
+import ctypes
+from pathlib import Path
+from PySide6.QtWidgets import QApplication
+from winlauncher.commands import MenuCommand
+from winlauncher.search.commands import CommandHit
+from winlauncher.ui.website_icons import WebsiteIcons
+from winlauncher.ui.window import LauncherWindow
+
+SEM_FAILCRITICALERRORS = 0x0001
+SEM_NOGPFAULTERRORBOX = 0x0002
+ctypes.windll.kernel32.SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)
+app = QApplication([])
+icons = WebsiteIcons()
+window = LauncherWindow(icons)
+command = MenuCommand("Terminal", 'wt.exe -d "{folder}"', explorer_search=True)
+folder = Path.cwd()
+window.set_results([CommandHit(command, folder, 0, 100)], 1)
+assert window.copy_selected()
+assert app.clipboard().text() == command.command_line(folder, folder)
+assert not app.clipboard().mimeData().hasUrls()
+window.close_focus_watch()
+icons.close()
+"""
+        result = subprocess.run(
+            [sys.executable, "-X", "faulthandler", "-c", script],
+            capture_output=True,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        self.assertEqual((result.returncode, result.stderr), (0, b""))
 
     def test_icons_come_from_the_chosen_file_or_the_program(self):
         with tempfile.TemporaryDirectory() as directory:
