@@ -775,6 +775,8 @@ class SettingsDialog(QDialog):
         self.explorer_tool_order.setCurrentIndex(
             self.explorer_tool_order.findData(settings.explorer_tools_first)
         )
+        self.explorer_tools_fuzzy = ToggleSwitch("Fuzzy matching for tools")
+        self.explorer_tools_fuzzy.setChecked(settings.explorer_tools_fuzzy)
         self.quick_switch = ToggleSwitch("Quick Switch in Open and Save dialogs")
         self.quick_switch.setChecked(settings.quick_switch)
         self.quick_switch.setToolTip(
@@ -799,6 +801,12 @@ class SettingsDialog(QDialog):
             "Commands enabled under Context menu can appear before or after direct folder "
             "entries. Matches in subfolders follow both groups.",
             self.explorer_tool_order,
+        )
+        card.add_row(
+            "Fuzzy matching for tools",
+            "Allow loose letter matches in Explorer tool titles and keywords. Off: Cla "
+            "matches Claude, cud does not. File matching is independent.",
+            self.explorer_tools_fuzzy,
         )
         return [card]
 
@@ -927,6 +935,7 @@ class SettingsDialog(QDialog):
             windows_settings_detail=self.windows_settings_detail.currentData(),
             explorer_typing=self.explorer.isChecked(),
             explorer_tools_first=self.explorer_tool_order.currentData(),
+            explorer_tools_fuzzy=self.explorer_tools_fuzzy.isChecked(),
             quick_switch=self.quick_switch.isChecked(),
             double_ctrl_ms=self.ctrl_interval.value(),
             auto_hide=self.auto_hide.isChecked(),

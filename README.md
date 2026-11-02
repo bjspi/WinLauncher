@@ -78,7 +78,7 @@ Explorer & dialogs**.
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.15.11"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.15.12"
 winlauncher --show
 ```
 
@@ -193,6 +193,11 @@ first** (the default) or **Files first**. Files first puts direct folder entries
 above tools; matches in subfolders follow both groups. Tools appear only in
 Explorer's search bar, for ordinary name searches. They are off for each command
 until enabled, and stay out of the normal launcher and Open/Save dialogs.
+
+**Fuzzy matching for tools**, on the same settings page, is off by default:
+`Cla` finds **Open in Claude Code**, while `cud` does not. Tool titles and search
+keywords match contiguous text, ignoring case and accents. Turn this option on
+to allow loose letter matches for tools; file matching keeps its own behavior.
 
 <img src="docs/images/explorer-tools.png" width="440" alt="Windows Terminal, Claude Code and Codex as tools in an Explorer folder search">
 

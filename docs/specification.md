@@ -514,10 +514,17 @@ Older settings keep tools off without migration or automatically enabling defaul
 Only an actual Explorer typing session offers tools: the Tab-scoped launcher and
 Open/Save dialogs do not. Empty queries and input containing query syntax,
 including filters, exclusions, wildcards, quotes and navigation, offer none.
-Titles and aliases use the existing normalized and fuzzy name matching; each
+Titles and aliases use the existing normalized name matching; each
 query term must match, taking its best title/alias score. Command lines and the
 folder path never match. Tools rank by summed text score, then configuration
 order; they do not create catalog entries or learn file launches.
+
+**Fuzzy matching for tools** under Settings → Explorer & dialogs stores
+`explorer_tools_fuzzy` (default false, including when missing from older settings).
+With it off, terms must occur contiguously in a title or alias, ignoring case and
+accents: `Cla` matches Open in Claude, `cud` does not. With it on, the existing
+abbreviation and fuzzy subsequence matches also apply. This setting affects only
+Explorer tool results; the file query and its matching mode are unchanged.
 
 **Explorer tool order** under Settings → Explorer & dialogs stores
 `explorer_tools_first` (default true). Tools first orders matching tools, direct

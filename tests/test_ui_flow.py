@@ -1367,6 +1367,35 @@ class UiFlowTest(unittest.TestCase):
                     self.tasks.finish(category)
                     self.assertEqual(self.window.results.count(), 0)
 
+    def test_explorer_tool_fuzzy_setting_does_not_change_the_file_query(self):
+        claude = MenuCommand("Open in Claude", "claude", explorer_search=True)
+        path = self.root / "cud.txt"
+        path.touch()
+        file = SearchHit(CatalogItem(path, ItemKind.FILE), 100, "fixture")
+        self.controller.settings = replace(self.controller.settings, menu_commands=(claude,))
+        with patch.object(self.controller.search.service, "search", return_value=[file]) as search:
+            self.window.present(text="cud", scope=self.root, explorer_view=(11, 22))
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            file_query = search.call_args.args[0]
+            self.assertEqual(self.window.results.count(), 1)
+            self.assertEqual(self.window.selected_hit(), file)
+
+            self.controller.settings = replace(self.controller.settings, explorer_tools_fuzzy=True)
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.window.results.count(), 2)
+            tool = self.window.results.item(0).data(Qt.ItemDataRole.UserRole).hit
+            self.assertIsInstance(tool, CommandHit)
+            self.assertEqual(tool.command, claude)
+            self.assertEqual(search.call_args.args[0], file_query)
+
+            self.controller.settings = replace(self.controller.settings, explorer_tools_fuzzy=False)
+            self.controller.search.run()
+            self.tasks.finish(TaskCategory.SEARCH)
+            self.assertEqual(self.window.results.count(), 1)
+            self.assertEqual(self.window.selected_hit(), file)
+
     def test_explorer_tool_search_captures_the_folder_without_worker_ui_access(self):
         self.controller.settings = replace(
             self.controller.settings, menu_commands=(EXPLORER_TERMINAL,)

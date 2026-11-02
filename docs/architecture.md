@@ -203,6 +203,11 @@ or between direct and deeper entries according to `explorer_tools_first`, then
 applies the combined result limit. No command search code reads UI state or
 changes the catalog or either search engine.
 
+Tool matching defaults to contiguous title/alias text. `explorer_tools_fuzzy`
+opts tools into the shared matcher's abbreviation and fuzzy passes independently
+of file matching; the session passes the flag to `search_commands` without
+changing the file query.
+
 `CommandHit` holds the command, captured folder, configuration position and score.
 Its equality ignores score so row selection survives ranking changes, while
 separate configured commands retain separate identities. Search results also

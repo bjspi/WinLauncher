@@ -284,7 +284,9 @@ class SearchSession(QObject):
                 found = merge_hits(found, plugins.hits, limit)
             hits.extend(found)
         if command_folder is not None and isinstance(query, SearchQuery) and not cancel.is_set():
-            commands = search_commands(settings.menu_commands, query, command_folder)
+            commands = search_commands(
+                settings.menu_commands, query, command_folder, fuzzy=settings.explorer_tools_fuzzy
+            )
             hits = _with_commands(hits, commands, settings.explorer_tools_first)
         hits = [] if cancel.is_set() else hits[:limit]
         elapsed_ms = (time.perf_counter() - started) * 1000

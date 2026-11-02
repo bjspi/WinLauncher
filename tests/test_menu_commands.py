@@ -118,7 +118,9 @@ class MenuCommandTest(unittest.TestCase):
 
     def test_explorer_settings_roundtrip_and_validation(self):
         tool = replace(TERMINAL, explorer_search=True, search_keywords=("wt", "terminal"))
-        settings = Settings(roots=(), menu_commands=(tool,), explorer_tools_first=False)
+        settings = Settings(
+            roots=(), menu_commands=(tool,), explorer_tools_first=False, explorer_tools_fuzzy=True
+        )
         with tempfile.TemporaryDirectory() as directory:
             file = SettingsFile(Path(directory) / "settings.json")
             file.save(settings)
@@ -127,6 +129,7 @@ class MenuCommandTest(unittest.TestCase):
         self.assertFalse(loaded.menu_commands[0].explorer_search)
         self.assertEqual(loaded.menu_commands[0].search_keywords, ())
         self.assertTrue(loaded.explorer_tools_first)
+        self.assertFalse(loaded.explorer_tools_fuzzy)
         for changes in (
             {"explorer_search": "yes"},
             {"explorer_search": True, "folders": False, "files": True},
@@ -139,6 +142,8 @@ class MenuCommandTest(unittest.TestCase):
                 replace(TERMINAL, **changes)
         with self.assertRaises(ValueError):
             settings_from_json({"explorer_tools_first": "yes"})
+        with self.assertRaises(ValueError):
+            settings_from_json({"explorer_tools_fuzzy": "yes"})
         loaded = settings_from_json(
             {
                 "menu_commands": [
@@ -165,7 +170,7 @@ class MenuCommandTest(unittest.TestCase):
             ("wt", [terminal]),
             ("TERMINAL", [terminal]),
             ("wt term", [terminal]),
-            ("clde", [claude]),
+            ("clde", []),
             ("claude code", [claude]),
             ("claude unmatchedword", []),
             ("unmatchedword", []),
@@ -185,9 +190,32 @@ class MenuCommandTest(unittest.TestCase):
         fuzzy = MenuCommand("Wartung", "a", explorer_search=True)
         alias = MenuCommand("Terminal", "b", explorer_search=True, search_keywords=("wt",))
         duplicate = replace(alias, command="c")
-        hits = search_commands((fuzzy, alias, duplicate), parse_query("wt"), folder)
+        hits = search_commands((fuzzy, alias, duplicate), parse_query("wt"), folder, fuzzy=True)
         self.assertEqual([hit.command for hit in hits], [alias, duplicate, fuzzy])
         self.assertEqual([hit.position for hit in hits], [1, 2, 0])
+
+    def test_tools_require_contiguous_title_or_alias_matches_unless_fuzzy_is_enabled(self):
+        folder = Path("D:/Project")
+        claude = MenuCommand(
+            "Open in Claude", "claude", explorer_search=True, search_keywords=("assistant",)
+        )
+        for text, matches in (
+            ("Cla", True),
+            ("CLAUDE", True),
+            ("laud", True),
+            ("cla ass", True),
+            ("cud", False),
+            ("oic", False),
+            ("asst", False),
+            ("cla unknown", False),
+        ):
+            with self.subTest(text=text):
+                hits = search_commands((claude,), parse_query(text), folder)
+                self.assertEqual(bool(hits), matches)
+        for text in ("cud", "oic", "asst"):
+            with self.subTest(fuzzy_text=text):
+                hits = search_commands((claude,), parse_query(text), folder, fuzzy=True)
+                self.assertEqual([hit.command for hit in hits], [claude])
 
 
 class MenuCommandRunTest(unittest.TestCase):
@@ -383,6 +411,13 @@ class MenuCommandUiTest(unittest.TestCase):
         self.assertTrue(dialog.read_settings().explorer_tools_first)
         dialog.explorer_tool_order.setCurrentText("Files first")
         self.assertFalse(dialog.read_settings().explorer_tools_first)
+        self.assertFalse(dialog.explorer_tools_fuzzy.isChecked())
+        dialog.explorer_tools_fuzzy.setChecked(True)
+        self.assertTrue(dialog.read_settings().explorer_tools_fuzzy)
+        saved = dialog.read_settings()
+        reopened = SettingsDialog(saved, website_icons=self.icons)
+        self.addCleanup(reopened.deleteLater)
+        self.assertTrue(reopened.explorer_tools_fuzzy.isChecked())
 
     def test_visible_command_switching_keeps_search_toggle_and_editability_in_sync(self):
         enabled = replace(TERMINAL, explorer_search=True)
