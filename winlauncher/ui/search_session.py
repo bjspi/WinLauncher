@@ -155,20 +155,29 @@ class SearchSession(QObject):
         `query.explorer` alone also describes Tab-scoped launcher searches. Tools
         need the actual Explorer session and plain text, without query syntax.
         """
-        if (
-            not isinstance(query, SearchQuery)
-            or not self.window.explorer_mode
-            or self.window.explorer_view is None
-            or self.window.view_kind is not ViewKind.EXPLORER
-            or self.window.scope is None
-            or query.scope != self.window.scope
-            or not _plain_search_words(self.window.query.text())
-        ):
+        if not isinstance(query, SearchQuery) or not self._searches_explorer_folder(query):
             return None
-        plain = SearchQuery(
-            terms=query.terms, spellings=query.spellings, scope=query.scope, explorer=True
+        if not _plain_search_words(self.window.query.text()) or not _is_name_search(query):
+            return None
+        return query.scope
+
+    def _searches_explorer_folder(self, query: SearchQuery) -> bool:
+        """Whether the bar was opened by typing in Explorer's view of `query.scope`."""
+        window = self.window
+        return (
+            window.explorer_mode
+            and window.explorer_view is not None
+            and window.view_kind is ViewKind.EXPLORER
+            and window.scope is not None
+            and query.scope == window.scope
         )
-        return query.scope if query == plain else None
+
+    def _is_displayed(self, query: LauncherQuery) -> bool:
+        """Whether the list shows `query`'s results, including whether it offers tools."""
+        return (
+            self.displayed_query == query
+            and self.displayed_command_folder == self._command_folder(query)
+        )
 
     def prefetch_start_list(self) -> None:
         """Recompute the start list in the background while the bar is hidden."""
@@ -217,9 +226,7 @@ class SearchSession(QObject):
 
     def _must_wait_for_results(self, hit: LauncherHit | None, query: LauncherQuery) -> bool:
         """Enter refers to the typed query; its results may not be displayed yet."""
-        if self.displayed_query != query or self.displayed_command_folder != self._command_folder(
-            query
-        ):
+        if not self._is_displayed(query):
             return True
         return hit is None and self.running is not None
 
@@ -239,11 +246,7 @@ class SearchSession(QObject):
 
     def _shows_other_query(self) -> bool:
         try:
-            query = self.current_query()
-            return (
-                query != self.displayed_query
-                or self._command_folder(query) != self.displayed_command_folder
-            )
+            return not self._is_displayed(self.current_query())
         except ValueError:
             return True
 
@@ -399,6 +402,18 @@ def _plain_search_words(text: str) -> bool:
     )
 
 
+def _is_name_search(query: SearchQuery) -> bool:
+    """Whether `query` only matches names in its Explorer folder, without any filter.
+
+    Plain-looking text can still parse into a filter or another match mode, so the
+    parsed query is compared with one that carries nothing but its terms.
+    """
+    name_search = SearchQuery(
+        terms=query.terms, spellings=query.spellings, scope=query.scope, explorer=True
+    )
+    return query == name_search
+
+
 def _with_commands(
     hits: list[LauncherHit], commands: list[CommandHit], tools_first: bool
 ) -> list[LauncherHit]:
@@ -408,7 +423,8 @@ def _with_commands(
     if tools_first:
         return [*commands, *hits]
     folder = commands[0].folder
-    direct, deeper = [], []
+    direct: list[LauncherHit] = []
+    deeper: list[LauncherHit] = []
     for hit in hits:
         if isinstance(hit, SearchHit) and hit.item.path.parent == folder:
             direct.append(hit)

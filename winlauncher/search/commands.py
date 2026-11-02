@@ -36,9 +36,9 @@ def search_commands(
     """
     if not query.terms:
         return []
-    hits = []
+    hits: list[CommandHit] = []
     for position, command in enumerate(commands):
-        if not command.explorer_search or not command.folders:
+        if not command.explorer_search:  # Only folder commands can opt in.
             continue
         score = _command_score(command, query, fuzzy=fuzzy)
         if score is not None:
@@ -52,12 +52,14 @@ def _command_score(command: MenuCommand, query: SearchQuery, *, fuzzy: bool) -> 
     allow_fuzzy = fuzzy and query.match_mode == MatchMode.FUZZY
     score = 0.0
     for term in query.terms:
-        matches = [
-            match.score
-            for form in forms
-            if (match := match_term(term, form, None, allow_fuzzy)) is not None
-        ]
-        if not matches:
+        best = _best_match(term, forms, fuzzy=allow_fuzzy)
+        if best is None:
             return None
-        score += max(matches)
+        score += best
     return score
+
+
+def _best_match(term: str, forms: list[NameForms], *, fuzzy: bool) -> float | None:
+    """The highest score of `term` against a title or alias, or None if none matches."""
+    matches = (match_term(term, form, None, fuzzy) for form in forms)
+    return max((match.score for match in matches if match is not None), default=None)

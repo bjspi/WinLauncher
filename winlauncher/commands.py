@@ -11,6 +11,8 @@ from pathlib import Path
 # Replaced in one pass, so a path that contains `{name}` is never substituted again.
 _PLACEHOLDER = re.compile(r"\{(path|folder|name)\}")
 _ENVIRONMENT_VARIABLE = re.compile(r"%([^%\s]+)%")
+# Line breaks, tabs and other C0 controls: a command line, icon path or keyword never has them.
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f]")
 # Modifiers that run a command instead of opening: with Enter, a click or Ctrl+1–9.
 # Ctrl is taken (Ctrl+Enter shows the folder, Ctrl+1–9 open), Ctrl+Alt is AltGr
 # on many layouts and Windows keeps Win for itself, so these are the free ones.
@@ -42,13 +44,13 @@ class MenuCommand:
             raise ValueError("Give each command a title.")
         if not isinstance(self.command, str) or not self.command.strip():
             raise ValueError(f"Give the command {self.title!r} a command line.")
-        if any(ord(c) < 32 for c in self.command):
+        if not _is_single_line(self.command):
             raise ValueError(f"The command line of {self.title!r} must be a single line.")
         if type(self.folders) is not bool or type(self.files) is not bool:
             raise ValueError("Command folders/files flags must be JSON booleans.")
         if not (self.folders or self.files):
             raise ValueError(f"Show the command {self.title!r} for folders, files or both.")
-        if not isinstance(self.icon, str) or any(ord(c) < 32 for c in self.icon):
+        if not isinstance(self.icon, str) or not _is_single_line(self.icon):
             raise ValueError(f"The icon of {self.title!r} must be a file path.")
         if self.shortcut not in ("", *SHORTCUT_MODIFIERS):
             raise ValueError(
@@ -58,13 +60,11 @@ class MenuCommand:
             raise ValueError("Command explorer_search flags must be JSON booleans.")
         if self.explorer_search and not self.folders:
             raise ValueError("Only folder commands can appear in Explorer search.")
-        if not isinstance(self.search_keywords, list | tuple) or not all(
-            isinstance(word, str) and word.strip() and not any(ord(c) < 32 for c in word)
-            for word in self.search_keywords
-        ):
+        if not _are_keywords(self.search_keywords):
             raise ValueError(
                 "Command search keywords must be a list of nonempty single-line texts."
             )
+        # The settings JSON yields a list; the frozen command needs a hashable tuple.
         object.__setattr__(
             self, "search_keywords", tuple(word.strip() for word in self.search_keywords)
         )
@@ -95,6 +95,19 @@ def shortcut_clash(commands: tuple[MenuCommand, ...]) -> str | None:
                 return f"{other!r} and {command.title!r} both use {command.shortcut} for {kind}."
             owners.setdefault((command.shortcut, kind), command.title)
     return None
+
+
+def _is_single_line(text: str) -> bool:
+    return _CONTROL_CHARACTER.search(text) is None
+
+
+def _are_keywords(words: object) -> bool:
+    """Whether `words` is a list or tuple of nonempty single-line texts."""
+    if not isinstance(words, list | tuple):
+        return False
+    return all(
+        isinstance(word, str) and bool(word.strip()) and _is_single_line(word) for word in words
+    )
 
 
 def _expand(text: str) -> str:
