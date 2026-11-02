@@ -824,9 +824,6 @@ class LauncherController(QObject):
                 messages.WARNING,
             )
             return
-        if self.updater.latest is not None:
-            self._offer_update(self.updater.latest)
-            return
         self.update_check_requested = True
         self.status.set_activity("Checking for updates…")
         self.updater.check_now()

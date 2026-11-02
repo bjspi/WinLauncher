@@ -484,6 +484,11 @@ logged without repeatedly pulling focus away from another application.
 The updater's post-fetch revision count also runs through QProcess, keeping
 periodic Git work off the GUI thread. `GCM_INTERACTIVE=Never` and
 `GIT_TERMINAL_PROMPT=0` prevent background credential dialogs/prompts.
+Both manual and periodic checks continue when a release is already known;
+`ReleaseUpdater` emits availability changes only when the offered version changes,
+so repeated checks do not repeat tray notifications. The controller waits for a
+manual check before offering the update, and cancelling the dialog leaves the
+offer intact.
 
 ## Operational choices
 

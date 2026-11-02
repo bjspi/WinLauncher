@@ -174,7 +174,7 @@ class ReleaseUpdater(QObject):
             self._start_check()
 
     def _check_in_background(self) -> None:
-        if not (self.available or self.updating or self._check is not None or self._confirming):
+        if not (self.updating or self._check is not None or self._confirming):
             self._start_check()
 
     def _start_check(self) -> None:
@@ -256,6 +256,8 @@ class ReleaseUpdater(QObject):
         return process
 
     def _set_latest(self, release: Release | None) -> None:
+        if release == self.latest:
+            return
         self.latest = release
         self.availability_changed.emit(release is not None)
 

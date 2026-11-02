@@ -2025,6 +2025,35 @@ class UiFlowTest(unittest.TestCase):
         self.assertFalse(self.window.isVisible())
         self.assertIsNone(QApplication.activeModalWidget())
 
+    def test_tray_rechecks_known_updates_and_cancel_keeps_the_offer_available(self):
+        updater = self.controller.updater
+        updater.root = self.root
+        updater._set_latest(Release(1, 1, 0))
+        with (
+            patch("winlauncher.ui.updater.git_available", return_value=True),
+            patch.object(updater, "check_now") as check,
+            patch.object(updater, "apply") as apply,
+            patch(
+                "winlauncher.ui.controller.messages.show_message", return_value="Cancel"
+            ) as offer,
+        ):
+            self.controller.tray.update.trigger()
+            check.assert_called_once_with()
+            offer.assert_not_called()  # Wait for the remote, even with a known update.
+            updater._set_latest(Release(1, 2, 0))
+            updater.checked.emit(True)
+            self.assertIn("1.2.0", offer.call_args.args[1])
+            self.assertEqual(updater.latest, Release(1, 2, 0))
+            self.assertEqual(self.controller.tray.update_version, "1.2.0")
+            apply.assert_not_called()
+
+            self.controller.tray.update.trigger()
+            self.assertEqual(check.call_count, 2)
+            updater.checked.emit(True)
+            self.assertEqual(offer.call_count, 2)
+            self.assertIn("1.2.0", offer.call_args.args[1])
+            apply.assert_not_called()
+
     def test_bar_dialogs_hide_even_a_pinned_bar_and_detach_its_ownership(self):
         self.window.pinned = True
         self.controller.updater.root = None  # Exercise an installed package's update dialog.

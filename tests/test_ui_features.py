@@ -240,6 +240,39 @@ class ReleaseUpdaterTest(unittest.TestCase):
             self.assertIn("more characters not shown", release_changes(self.checkout, "v1.1.0"))
         self.assertIsNone(release_changes(self.checkout, "v9.9.9"))
 
+    def test_checks_keep_finding_new_releases_after_an_update_is_available(self):
+        self.release("second", "v1.1.0")
+        updater = self.updater()
+        notices, checks = [], []
+        updater.availability_changed.connect(notices.append)
+        updater.checked.connect(checks.append)
+        updater.check_now()
+        self.wait_for(lambda: checks)
+        self.assertEqual(updater.latest, Release(1, 1, 0))
+
+        updater._check_in_background()
+        self.wait_for(lambda: len(checks) == 2)
+        self.assertEqual(notices, [True])  # The same version is announced only once.
+
+        self.release("third", "v1.2.0")
+        updater._check_in_background()
+        self.wait_for(lambda: len(checks) == 3)
+        self.assertEqual(updater.latest, Release(1, 2, 0))
+        self.assertEqual(notices, [True, True])
+        self.assertIn("third", release_changes(self.checkout, "v1.2.0"))
+
+    def test_an_unpublished_newer_tag_keeps_the_known_update_and_retries(self):
+        self.release("second", "v1.1.0")
+        updater = self.updater(published=False)
+        updater.latest = Release(1, 0, 1)
+        checks = []
+        updater.checked.connect(checks.append)
+        updater._check_in_background()
+        self.wait_for(lambda: checks)
+        self.assertEqual(checks, [True])
+        self.assertEqual(updater.latest, Release(1, 0, 1))
+        self.assertTrue(updater._unpublished_retry.isActive())
+
     def test_a_forced_update_stashes_local_changes_that_block_the_normal_one(self):
         self.release("second", "v1.1.0")
         (self.checkout / "file.txt").write_text("local edit")

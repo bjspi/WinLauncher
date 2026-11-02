@@ -835,7 +835,12 @@ for a published release and 404 before. A 404 is asked again after 5 minutes;
 an unreachable GitHub waits for the next regular check. A checkout then fetches
 just that tag before announcing it; a failed fetch is retried with the next check.
 A known release turns the tray entry into **Update to X.Y.Z…** and shows a
-notification naming the version.
+notification naming the version. Automatic checks continue while an update is
+available, including the five-minute retry for an unpublished newer tag. An
+unchanged version does not repeat the notification. Clicking the tray entry
+always checks the remote again before offering the newest published release.
+Cancelling the offer keeps that release available for a later attempt; it does
+not skip the version. A failed check keeps the previously known offer in the tray.
 
 In a checkout, **Check for updates** (or **Update to X.Y.Z…**) announces
 "WinLauncher X.Y.Z is available" with the running version; **Show changes** expands the
