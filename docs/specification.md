@@ -614,6 +614,16 @@ offers only the entry itself, since its folders are switched off in Settings.
 **Custom rule…** instead opens the chosen folder's path for editing, for example
 into `**\patches\src`; the edited text, trimmed and unless empty, is added to the
 excluded patterns.
+The editor's **Preview rule…** opens a read-only tree of the entries the current
+text would exclude from the current catalog, using the same pattern and
+application-source rules as search. It reports file/application and folder totals,
+distinguishes matches from descendants of excluded folders and shows parent
+folders as context. The tree can be expanded or collapsed. Evaluation runs in the
+background and closing the preview cancels it; returning to the editor preserves
+the text and saves nothing. Counts cover all affected catalog entries; the tree
+shows at most 2,000 entries and explicitly says when it is limited. Previously
+excluded and unindexed files are outside this preview, as the dialog explains;
+it does not scan disks or probe markers. Empty rules cannot be previewed or added.
 
 ## Search plugins
 

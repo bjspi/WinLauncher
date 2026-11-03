@@ -357,6 +357,17 @@ QWidget#infoFooter { background: $page; border-top: 1px solid $card_border; }
 QLabel#infoTitle { font-size: 15px; font-weight: 600; color: $title; }
 QLabel#infoText { font-size: 13px; color: $subtle; }
 QListWidget#choiceList { background: transparent; border: 0; padding: 0; outline: none; }
+QTreeWidget#exclusionPreview {
+    background: $hover; color: $text; border: 1px solid $card_border; border-radius: 8px;
+    padding: 6px; outline: none; selection-background-color: $chosen; selection-color: $text;
+}
+QTreeWidget#exclusionPreview::item { min-height: 28px; padding: 2px 4px; border-radius: 4px; }
+QTreeWidget#exclusionPreview::item:hover { background: $button_hover; }
+QTreeWidget#exclusionPreview::item:selected { background: $chosen; color: $text; }
+QTreeWidget#exclusionPreview QHeaderView::section {
+    background: $hover; color: $subtle; border: 0; border-bottom: 1px solid $card_border;
+    padding: 6px 4px; font-weight: 600;
+}
 QFrame#factCard { background: $hover; border: 1px solid $card_border; border-radius: 10px; }
 QLabel#factLabel { font-size: 12px; color: $subtle; }
 QLabel#factValue { font-size: 12px; color: $text; }

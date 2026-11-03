@@ -33,6 +33,7 @@ flowchart TD
 | --- | --- |
 | `catalog/model.py` | Catalog values, `CatalogSource`, path identity (`path_key`) versus search normalization (`normalize`) |
 | `catalog/exclusions.py` | Excluded paths, file/folder patterns and marker files, cached per operation |
+| `catalog/exclusion_preview.py` | Cancellable catalog-only evaluation of a proposed pattern, exact totals and bounded tree sample |
 | `catalog/priority.py` | Search classes (ignored/low/normal/high) and numeric boosts |
 | `catalog/sources.py` | Which trees the catalog owns and which source owns a path |
 | `catalog/indexer.py` | Scan policy, traversal, staging, reporting and publication decisions |
@@ -391,6 +392,14 @@ changes, and announces each new version once. `SourceSection`
 the others, and offers to save and restart after a change.
 
 ## Threads, scheduling and cancellation
+
+`ui/exclusion_preview.py` presents a proposed rule as a read-only tree. The
+controller passes its catalog and background tasks through the exclusion picker
+and pattern editor. A preview uses the prefetch pool, the shared `ExclusionPolicy`
+without marker I/O and the catalog's application-source identity. Closing sets
+its cancellation event; late results and errors cannot touch the closed dialog.
+The tree contains at most 2,000 affected entries plus their context ancestors;
+the worker still counts all matches and yields periodically to keep input fluid.
 
 Qt widgets live on the GUI thread. `BackgroundTasks` runs work on separate search
 (2), navigation (2), prefetch (1), index (1), action (1), plugin (2), plugin source (1)

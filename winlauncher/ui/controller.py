@@ -650,7 +650,7 @@ class LauncherController(QObject):
         generated = tuple(f for f in (store_app_folder(), windows_tools_folder()) if f)
         candidates = exclusion_candidates(path, self._configured_roots(), generated)
         choices = [FolderChoice(path, self.store.count_within(path)) for path in candidates]
-        dialog = ExcludeFolderDialog(choices, self.window)
+        dialog = ExcludeFolderDialog(choices, self.window, store=self.store, tasks=self.tasks)
         resume = not self.window.explorer_mode
         self.search_paused = resume
         try:

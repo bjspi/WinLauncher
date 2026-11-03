@@ -21,8 +21,11 @@ from PySide6.QtWidgets import (
 )
 
 from winlauncher.catalog.model import is_within
+from winlauncher.catalog.store import CatalogStore
 from winlauncher.ui.dialogs import run_modal
+from winlauncher.ui.exclusion_preview import RulePreviewDialog
 from winlauncher.ui.messages import Kind, badge
+from winlauncher.ui.tasks import BackgroundTasks
 from winlauncher.ui.theme import colors
 from winlauncher.ui.widgets import InfoDialog, line_icon
 
@@ -154,7 +157,14 @@ class _ChoiceDelegate(QStyledItemDelegate):
 
 
 class ExcludeFolderDialog(InfoDialog):
-    def __init__(self, choices: list[FolderChoice], parent=None):
+    def __init__(
+        self,
+        choices: list[FolderChoice],
+        parent=None,
+        *,
+        store: CatalogStore | None = None,
+        tasks: BackgroundTasks | None = None,
+    ):
         super().__init__(
             "Exclude from search",
             "Choose this entry, or a folder with everything below it. "
@@ -164,6 +174,7 @@ class ExcludeFolderDialog(InfoDialog):
             width=PICKER_WIDTH,
         )
         self.pattern: str | None = None  # Set when a custom rule was accepted instead.
+        self._store, self._tasks = store, tasks
         self.folders = QListWidget()
         self.folders.setObjectName("choiceList")
         self.folders.setAccessibleName("Entries and folders that can be excluded")
@@ -203,7 +214,9 @@ class ExcludeFolderDialog(InfoDialog):
     def edit_pattern(self) -> None:
         """Edit the chosen folder into an exclusion pattern; accepting it closes the picker."""
         folder = self.chosen_folder()
-        editor = PatternDialog(str(folder) if folder else "", self)
+        editor = PatternDialog(
+            str(folder) if folder else "", self, store=self._store, tasks=self._tasks
+        )
         pattern = editor.field.text().strip() if run_modal(editor) else ""
         editor.deleteLater()
         if pattern:
@@ -214,7 +227,14 @@ class ExcludeFolderDialog(InfoDialog):
 class PatternDialog(InfoDialog):
     """Edit a path into an exclusion pattern before it is added."""
 
-    def __init__(self, text: str, parent=None):
+    def __init__(
+        self,
+        text: str,
+        parent=None,
+        *,
+        store: CatalogStore | None = None,
+        tasks: BackgroundTasks | None = None,
+    ):
         super().__init__(
             "Custom exclusion rule",
             "Edit the rule before it is added to the excluded patterns.",
@@ -222,6 +242,7 @@ class PatternDialog(InfoDialog):
             parent,
             width=PATTERN_DIALOG_WIDTH,
         )
+        self._store, self._tasks = store, tasks
         self.field = QLineEdit(text)
         self.field.setObjectName("code")
         self.field.setAccessibleName("Exclusion rule")
@@ -230,7 +251,28 @@ class PatternDialog(InfoDialog):
         help_text.setObjectName("infoText")
         help_text.setWordWrap(True)
         self.add_widget(help_text)
+        self.preview_button = self.add_helper("Preview rule…", self.preview_rule)
         self.add_button("Cancel", self.reject)
-        self.add_button("Add rule", self.accept, primary=True)
+        self.add_rule = self.add_button("Add rule", self.accept, primary=True)
+        self.field.textChanged.connect(self._update_buttons)
+        self._update_buttons()
         self.field.setFocus()
         self.field.selectAll()
+
+    def _update_buttons(self) -> None:
+        filled = bool(self.field.text().strip())
+        self.add_rule.setEnabled(filled)
+        self.preview_button.setEnabled(
+            filled and self._store is not None and self._tasks is not None
+        )
+
+    def preview_rule(self) -> None:
+        """Preview the current edit and return here without accepting the rule."""
+        pattern = self.field.text().strip()
+        if not pattern or self._store is None or self._tasks is None:
+            return
+        preview = RulePreviewDialog(pattern, self._store, self._tasks, self)
+        try:
+            run_modal(preview)
+        finally:
+            preview.deleteLater()
