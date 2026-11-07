@@ -166,6 +166,11 @@ must point to that release's native wheel. Install both wheels from a release
 with `python -m pip install <python-wheel> <native-wheel>` to enable Rust without
 installing a compiler. Source ZIPs retain `native/` for local builds.
 
+The release's text comes from its commits: `tools/release_notes.py` puts the summary
+of the `Release X.Y.Z: <summary>` commit on top and lists every other commit since
+the previous tag with its subject and description. So a commit message is written
+for users, too. Preview it with `python tools/release_notes.py v0.2.2`.
+
 For example, publish version 0.2.2 from a clean, committed checkout with:
 
 ```powershell
