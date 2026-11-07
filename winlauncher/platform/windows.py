@@ -243,6 +243,15 @@ def activate_window(hwnd: int) -> bool:
     return active
 
 
+# The taskbar on the main and on further screens.
+TASKBAR_CLASSES = frozenset({"Shell_TrayWnd", "Shell_SecondaryTrayWnd"})
+
+
+def taskbar_in_front() -> bool:
+    """Whether the taskbar holds the foreground, as it does after its menus closed."""
+    return class_name(user32.GetForegroundWindow()) in TASKBAR_CLASSES
+
+
 def foreground_is_own_process() -> bool:
     """Whether a window of this process, such as the launcher or a dialog, is in front."""
     process_id = wintypes.DWORD()

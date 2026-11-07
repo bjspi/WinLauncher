@@ -136,6 +136,8 @@ FILTERS = (
     ("Folders", ItemKind.FOLDER),
 )
 NO_MATCHES = "No matches. Try a shorter name, another spelling or fewer filters."
+ACTIVATION_CHECK_MS = 100  # After opening: who has the focus now.
+TASKBAR_RECLAIMS = 2  # Times the bar takes the focus back from the taskbar.
 logger = logging.getLogger(__name__)
 
 
@@ -638,6 +640,7 @@ class LauncherWindow(QWidget):
         # controller, which knows the plugins.
         self.plugin_menu: Callable[[PluginHit], ItemMenu] = lambda _hit: ItemMenu()
         self._command_icons: dict[MenuCommand, QIcon] = {}  # Loaded when first shown.
+        self._taskbar_reclaims = 0  # Set when the bar opens; see `_check_activation`.
         self.foreground_watcher = None
         if self._native_focus():
             from winlauncher.platform.windows import ForegroundWatcher
@@ -1157,6 +1160,9 @@ class LauncherWindow(QWidget):
         dimmed. Without hits, `content_search` is offered as the next query.
         """
         previous = self.selected_row() if preserve_selection else None
+        # The same query refreshed, such as after a plugin's refresh: stay where the
+        # user scrolled to; clearing the list would jump back to its top.
+        scrolled = self.results.verticalScrollBar().value() if preserve_selection else 0
         self.delegate.terms = query.terms if query is not None else ()
         rows = _with_result_separators(
             [
@@ -1181,6 +1187,7 @@ class LauncherWindow(QWidget):
                     selected_index = index
             if hits and not self.calculation_selected:
                 self.results.setCurrentRow(selected_index)
+            self.results.verticalScrollBar().setValue(scrolled)
         self._follow_in_explorer(direct_only=True)
         # An empty query without history stays a bare search bar.
         self.content_search = None if hits else content_search
@@ -1371,7 +1378,8 @@ class LauncherWindow(QWidget):
             logger.info(
                 "Launcher presented: foreground_granted=%s scoped=%s", active, scope is not None
             )
-            QTimer.singleShot(100, self._check_activation)
+            self._taskbar_reclaims = TASKBAR_RECLAIMS
+            QTimer.singleShot(ACTIVATION_CHECK_MS, self._check_activation)
         self.query.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
         self.query_changed.emit()
 
@@ -1443,17 +1451,38 @@ class LauncherWindow(QWidget):
         return QApplication.activeWindow() is not None
 
     def _check_activation(self) -> None:
-        if self.isVisible() and self._native_focus():
-            from winlauncher.platform.windows import foreground_details, user32
+        """Shortly after opening: log who has the focus, and take it back from the taskbar.
 
-            active = user32.GetForegroundWindow() == int(self.winId())
-            log = logger.info if active and self.query.hasFocus() else logger.warning
-            log(
-                "Launcher focus check: foreground=%s query_focus=%s owner=%s",
-                active,
-                self.query.hasFocus(),
-                foreground_details(),
-            )
+        Windows hands the foreground over through the window that had it. When
+        that was the taskbar, such as after Restart in the tray menu, the taskbar
+        takes it back a moment later; the bar would then get no typing and close
+        as unused. Nobody means to click the taskbar this soon, so the bar takes
+        the focus back, a few times at most. Another program in front stays.
+        """
+        if not (self.isVisible() and self._native_focus()):
+            return
+        from winlauncher.platform.windows import (
+            activate_window,
+            foreground_details,
+            taskbar_in_front,
+            user32,
+        )
+
+        active = user32.GetForegroundWindow() == int(self.winId())
+        log = logger.info if active and self.query.hasFocus() else logger.warning
+        log(
+            "Launcher focus check: foreground=%s query_focus=%s owner=%s",
+            active,
+            self.query.hasFocus(),
+            foreground_details(),
+        )
+        if active or self._taskbar_reclaims <= 0 or not taskbar_in_front():
+            return
+        self._taskbar_reclaims -= 1
+        activate_window(int(self.winId()))
+        self.query.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+        logger.info("Launcher took the focus back from the taskbar")
+        QTimer.singleShot(ACTIVATION_CHECK_MS, self._check_activation)
 
     def _bar_width(self) -> int:
         if self.explorer_mode:

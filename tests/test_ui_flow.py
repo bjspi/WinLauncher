@@ -773,6 +773,53 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(requested, [file])
         self.assertNotIn("Open with…", self.menu_titles(1))
 
+    def test_a_refresh_of_the_same_query_keeps_the_scroll_position(self):
+        hits = [
+            SearchHit(CatalogItem(self.root / f"file {n:02}.txt", ItemKind.FILE), 100, "fixture")
+            for n in range(60)
+        ]
+        self.window.set_results(hits, 1)
+        bar = self.window.results.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        bar.setValue(bar.maximum() // 2)  # Scrolled with the wheel; row 0 stays selected.
+        scrolled = bar.value()
+        self.window.set_results(hits, 1, preserve_selection=True)  # A plugin refreshed.
+        self.assertEqual(bar.value(), scrolled)
+        self.assertEqual(self.window.results.currentRow(), 0)
+        self.window.set_results(hits, 1, preserve_selection=False)  # Another query.
+        self.assertEqual(bar.value(), 0)
+
+    def test_the_bar_takes_its_focus_back_from_the_taskbar_twice_at_most(self):
+        from winlauncher.platform import windows
+
+        bar = int(self.window.winId())
+        foreground = {"hwnd": bar + 1}  # The taskbar keeps taking it back.
+        reclaimed = []
+
+        def activate(hwnd):
+            reclaimed.append(hwnd)
+            return False
+
+        user32 = Mock(GetForegroundWindow=lambda: foreground["hwnd"])
+        with (
+            patch.object(type(self.window), "_native_focus", return_value=True),
+            patch.object(windows, "user32", user32),
+            patch.object(windows, "foreground_details", return_value="taskbar"),
+            patch.object(windows, "activate_window", activate),
+            patch.object(windows, "taskbar_in_front", return_value=True),
+            patch("winlauncher.ui.window.QTimer.singleShot"),
+        ):
+            self.window._taskbar_reclaims = 2
+            for _check in range(3):
+                self.window._check_activation()
+            self.assertEqual(reclaimed, [bar, bar])
+            self.window._taskbar_reclaims = 2
+            with patch.object(windows, "taskbar_in_front", return_value=False):
+                self.window._check_activation()  # Another program in front: left alone.
+            foreground["hwnd"] = bar
+            self.window._check_activation()  # The bar has it: nothing to do.
+        self.assertEqual(reclaimed, [bar, bar])
+
     def test_menu_actions_reach_their_intents(self):
         requests = []
         for signal, name in (
