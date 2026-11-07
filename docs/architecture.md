@@ -46,8 +46,9 @@ flowchart TD
 | `search/candidates.py` | Query-to-SQL translation for the literal and fuzzy candidate passes |
 | `search/memory_index.py` | What the Rust memory index loads and the candidate plans it evaluates |
 | `search/service.py` | Streaming candidates into a bounded best-hits heap |
+| `search/syntax_help.py` | `?` queries: the search syntax and the user's keywords as help rows |
 | `search/commands.py` | Explorer tool hits bound to their folder, title/alias matching and ranking |
-| `settings.py` | Validated settings value object and atomic JSON file |
+| `settings.py` | Validated settings value object and atomic JSON file, also as an export |
 | `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
 | `commands.py` | The user's context-menu commands and their command lines |
 | `connectivity.py`, `platform/connectivity.py` | Immutable internet hints; Windows Network List Manager and an HTTPS request to Google's HTTP 204 endpoint |
@@ -67,9 +68,12 @@ flowchart TD
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
 | `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
+| `ui/answers.py` | Asks the plugins that answer typed text, on their own worker, for the calculator's row |
+| `ui/welcome.py` | The first start's introduction: shortcuts, folders, tips, Start with Windows |
+| `ui/plugin_dialogs.py`, `ui/option_editors.py` | The checklist and form a plugin command shows; the option editors forms share with the settings cards |
 | `ui/plugin_sources.py`, `ui/source_settings.py` | Periodic source checks, update notices, installs and activations; the Plugins page: what sources offer, and the sources |
 | `ui/` | Search bar window, result icons and highlighting, settings, exclusion picker and About dialogs, tray, status, search session, index scheduler, release updater, worker delivery |
-| `ui/widgets.py` | The settings look: tinted line icons, animated switches, cards with setting rows, info dialogs |
+| `ui/widgets.py` | The settings look: tinted line icons, animated switches, number fields, cards with setting rows, info dialogs |
 | `ui/bar_placement.py` | The launcher bar's remembered widths and relative position, shared by its menu, the tray and Settings; the window records them when a Windows move or resize loop ends |
 | `ui/dialogs.py` | Modal ownership, hiding the bar for application-wide dialogs, and foreground activation; blocked launcher summons return to the active dialog |
 | `ui/theme.py` | Light and dark colors, the stylesheet built from them, following the Windows color scheme; painters read `colors()` and refresh kept icons on `Theme.changed` |
@@ -359,9 +363,12 @@ written to `<data>/plugin-data/<id>/items.json` and read back at start. A
 refreshes to the plugin pool (`TaskCategory.PLUGIN`, two workers), never to the
 index or search pools. `apply()` keeps each plugin's settings as last applied and
 refreshes a running plugin whose options changed; while a refresh runs, one more
-follows it. Commands such as Sign in run there too; their questions
-cross to the GUI thread through `Questions`, a queued signal plus a
-`threading.Event` the worker waits on (released at shutdown). `SearchSession`
+follows it. Commands such as Sign in run there too; their dialogs (a line of
+text, a checklist, a form, bundled as `CommandDialogs`) cross to the GUI thread
+through `Questions`, a queued signal plus a `threading.Event` the worker waits on
+(released at shutdown). A plugin item's own menu entries and Exclude… travel the same
+way: the window asks the host for the item's `ItemMenu` when the menu opens, and the
+scheduler runs the chosen entry on the plugin pool. `SearchSession`
 asks the host: a plugin keyword makes a `PluginQuery` that only that plugin
 answers; plain word searches merge plugin hits into the file hits by band and
 score (`merge_hits`), with the file engine's order preserved. `PluginIcons` loads

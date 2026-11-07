@@ -29,6 +29,8 @@ class TaskCategory(StrEnum):
     # Opening a plugin's item runs third-party code: if it hangs, files and folders
     # still open, and a stuck refresh cannot delay opening an item either.
     PLUGIN_OPEN = "plugin-open"
+    # Plugins answering the typed text: never behind a refresh, nor in the search's way.
+    ANSWER = "answer"
     # Plugin source checks and installs: never behind a stuck plugin, and one at a time,
     # so git never changes a source's clone twice at once.
     PLUGIN_SOURCE = "plugin-source"
@@ -43,6 +45,7 @@ _POOL_SIZES = {
     TaskCategory.ACTION: 1,
     TaskCategory.PLUGIN: 2,
     TaskCategory.PLUGIN_OPEN: 2,
+    TaskCategory.ANSWER: 1,
     TaskCategory.PLUGIN_SOURCE: 1,
     TaskCategory.NETWORK: 1,
 }

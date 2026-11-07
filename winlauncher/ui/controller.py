@@ -44,6 +44,7 @@ from winlauncher.platform.startup import StartupShortcut
 from winlauncher.platform.startup_timing import StartupTimings
 from winlauncher.platform.store_apps import store_app_folder
 from winlauncher.platform.windows_tools import windows_tools_folder
+from winlauncher.plugins.api import PluginAction
 from winlauncher.plugins.host import PluginHost
 from winlauncher.plugins.registry import discover_plugins
 from winlauncher.plugins.search import PluginHit
@@ -53,9 +54,11 @@ from winlauncher.search.commands import CommandHit
 from winlauncher.search.native_engine import native_availability, warm_search_index
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.service import SearchService
+from winlauncher.search.syntax_help import SyntaxTip
 from winlauncher.settings import Appearance, Settings, SettingsFile
 from winlauncher.ui import messages
 from winlauncher.ui.about import AboutDialog
+from winlauncher.ui.answers import PluginAnswers
 from winlauncher.ui.bar_placement import BarPlacement
 from winlauncher.ui.dialogs import bring_to_front, run_modal
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exclusion_candidates
@@ -72,6 +75,7 @@ from winlauncher.ui.tray import TrayMenu
 from winlauncher.ui.update_dialog import UpdateCommandDialog
 from winlauncher.ui.updater import ReleaseUpdater
 from winlauncher.ui.website_icons import WebsiteIcons
+from winlauncher.ui.welcome import WelcomeDialog
 from winlauncher.ui.widgets import InfoDialog, line_icon
 from winlauncher.ui.window import LauncherWindow
 from winlauncher.websites import WebsiteTarget
@@ -113,7 +117,9 @@ class LauncherController(QObject):
         self.hooks_requested = hooks
         self.settings_file = SettingsFile(data_dir / "settings.json")
         self.settings = self.settings_file.load()
-        if not self.settings_file.path.exists():
+        # No settings yet: WinLauncher runs for the first time; see `welcome`.
+        self.first_start = not self.settings_file.path.exists()
+        if self.first_start:
             self.settings_file.save(self.settings)
         theme().use(Appearance(self.settings.appearance))  # Before any window exists.
         self.store = CatalogStore(data_dir / "catalog.sqlite3")
@@ -154,6 +160,9 @@ class LauncherController(QObject):
             self.effective_settings,
             self,
             self.plugins,
+        )
+        self.plugin_answers = PluginAnswers(
+            self.plugins, self.window, self.tasks, lambda: self.settings, self
         )
         self.plugin_refresh = PluginScheduler(self.plugins, self.tasks, lambda: self.settings, self)
         self.plugin_refresh.items_changed.connect(self.search.refresh)
@@ -212,8 +221,13 @@ class LauncherController(QObject):
     def _connect_window(self) -> None:
         window = self.window
         window.query_changed.connect(self.search.text_changed)
+        window.query_changed.connect(self.plugin_answers.text_changed)
         window.open_requested.connect(self.search.request_open)
         window.reveal_requested.connect(self.reveal_item)
+        window.open_with_requested.connect(self.open_with)
+        window.plugin_action_requested.connect(self.run_plugin_action)
+        window.plugin_exclude_requested.connect(self.exclude_plugin_item)
+        window.plugin_menu = self.plugins.item_menu
         window.favorite_requested.connect(self.favorite_item)
         window.explorer_selection.connect(self.follow_in_explorer)
         window.dialog_text_returned.connect(self._return_text_to_dialog)
@@ -513,6 +527,9 @@ class LauncherController(QObject):
     # Item actions -------------------------------------------------------------
 
     def open_item(self, hit: LauncherHit, history_key: str) -> None:
+        if isinstance(hit, SyntaxTip):
+            self.window.type_filter(hit.insert)  # The search continues with it.
+            return
         if isinstance(hit, CommandHit):
             self.window.close_after_action()
             self._run_action(partial(self.actions.run_folder_command, hit.command, hit.folder))
@@ -602,6 +619,41 @@ class LauncherController(QObject):
     def reveal_item(self, hit: SearchHit) -> None:
         self.window.close_after_action()
         self._run_action(partial(self.actions.reveal, hit.item.path))
+
+    def open_with(self, hit: SearchHit) -> None:
+        self.window.close_after_action()
+        self._run_action(partial(self.actions.open_with, hit.item.path))
+
+    def run_plugin_action(self, hit: PluginHit, action: PluginAction) -> None:
+        """One of a plugin item's own menu entries; what it says is shown afterwards."""
+
+        def done(message: str | None, failed: bool) -> None:
+            if failed:
+                self._action_failed(message or "The plugin failed.")
+            elif message:
+                messages.message(self.window, action.label, message, messages.INFO)
+
+        self.plugin_refresh.run_item_action(hit, action, self.window, done)
+
+    def exclude_plugin_item(self, hit: PluginHit) -> None:
+        """Let the plugin exclude its item, then continue the search, as for files.
+
+        The plugin may show a dialog, which hides the bar; the search stays open
+        meanwhile and runs again afterwards without the excluded items.
+        """
+        resume = not self.window.explorer_mode
+        self.search_paused = resume
+
+        def finished(_excluded: bool) -> None:
+            self.search_paused = False
+            if resume and not self._closed:
+                self._resume_search()
+
+        def failed(message: str) -> None:
+            finished(False)
+            self._action_failed(message)
+
+        self.plugin_refresh.exclude(hit, self.window, finished, failed)
 
     def favorite_item(self, hit: SearchHit) -> None:
         """Toggle once; repeated requests wait until the stored state is visible again."""
@@ -701,7 +753,35 @@ class LauncherController(QObject):
 
     # Settings -----------------------------------------------------------------
 
-    def edit_settings(self) -> None:
+    def welcome(self) -> None:
+        """Introduce WinLauncher at its first start, then show the bar to try it."""
+        self._sync_autostart()
+        available = os.name == "nt"
+        dialog = WelcomeDialog(
+            self.settings.roots, autostart=self.tray.autostart.isChecked() if available else None
+        )
+        accepted = run_modal(dialog)
+        start_with_windows, wants_folders = dialog.autostart.isChecked(), dialog.wants_folders
+        dialog.deleteLater()
+        if available and start_with_windows != self.tray.autostart.isChecked():
+            self._toggle_autostart_from_tray(start_with_windows)
+        if wants_folders:
+            self.edit_settings("Search folders")
+        elif accepted:
+            self.window.present()
+
+    def replace_settings(self, settings: Settings) -> None:
+        """Apply imported settings and show them in a fresh Settings window."""
+        try:
+            self.apply_settings(settings)
+        except OSError as exc:
+            messages.message(self.window, "Settings not imported", str(exc), messages.ERROR)
+            return
+        if (dialog := self.settings_dialog) is not None:
+            dialog.done(0)  # Its fields still show the replaced settings.
+        QTimer.singleShot(0, self.edit_settings)
+
+    def edit_settings(self, page: str = "") -> None:
         """Show Settings as a window of its own, so the search bar stays usable in front.
 
         A second request brings the open window forward instead of opening another.
@@ -728,7 +808,10 @@ class LauncherController(QObject):
             plugin_cards=self.data_dir / PLUGIN_CARDS_FILE,
             placement=self.placement,
             restart=self.restart,
+            replace_all=self.replace_settings,
         )
+        if page:
+            dialog.show_page(page)
         dialog.finished.connect(self._settings_closed)
         dialog.show()
         dialog.activateWindow()

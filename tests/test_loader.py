@@ -316,6 +316,7 @@ class LoaderMigrationTest(unittest.TestCase):
             environment = dict(
                 os.environ,
                 QT_QPA_PLATFORM="offscreen",
+                WINLAUNCHER_OFFLINE="1",  # A new temporary host must not alarm a firewall.
                 XDG_BIN_HOME=str(command_bin),
                 LOADER_TEST_STATE=str(folder),
                 PYTHONPATH=os.pathsep.join([str(folder), str(PROJECT)]),

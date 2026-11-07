@@ -13,7 +13,6 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -50,12 +49,14 @@ from winlauncher.settings import (
     RESULT_LIMIT_RANGE,
     Appearance,
     Settings,
+    SettingsFile,
     WindowsSettingsDetail,
     priority_rules,
+    read_exported_settings,
 )
 from winlauncher.ui.bar_placement import BarPlacement
 from winlauncher.ui.commands import CommandList
-from winlauncher.ui.messages import ERROR, WARNING, message
+from winlauncher.ui.messages import ERROR, INFO, WARNING, ask, message
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.theme import app_icon, colors, theme
@@ -63,15 +64,20 @@ from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
 from winlauncher.ui.widgets import (
     Card,
+    NumberField,
     PageHeader,
     ToggleSwitch,
     line_icon,
     pick_path,
+    pick_save_path,
     section_title,
+    sized_number,
 )
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
 SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
+EXPORT_FILE_NAME = "WinLauncher settings.json"
+SETTINGS_FILE_FILTER = "WinLauncher settings (*.json)"
 FOLDER_PRIORITY_FORMAT = "25 | D:\\Projects | high"
 DIALOG_SIZE = QSize(920, 660)  # The smallest size; taller where the screen allows.
 TALLEST_UNSCROLLED_PAGE = 1  # Search folders: the dialog grows to show it whole.
@@ -81,7 +87,6 @@ NAV_ICON_SIZE = 18
 BRAND_ICON_SIZE = 32
 PAGE_MARGINS = (32, 26, 32, 24)  # Left, top, right, bottom around a page's cards.
 PAGE_SPACING = 10
-NUMBER_FIELD_WIDTH = 88
 PATH_LIST_HEIGHT = 132
 APPEARANCE_CHOICES = (
     ("Match Windows", Appearance.SYSTEM),
@@ -164,46 +169,11 @@ def _split_commas(text: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in text.split(",") if part.strip())
 
 
-class NumberField(QLineEdit):
-    """A whole number within `bounds`; arrow keys and the wheel step by one.
-
-    Not a `QSpinBox`: Qt 6.12 collapses the text area of style-sheet spin boxes
-    without buttons, which leaves them empty and impossible to type into.
-    """
-
-    def __init__(self, bounds: tuple[int, int], value: int, unit: str = ""):
-        super().__init__()
-        self.bounds = bounds
-        self._last_valid = value
-        self.setValidator(QIntValidator(*bounds, self))
-        self.setValue(value)
-        unit_text = f" {unit}" if unit else ""
-        self.setToolTip(f"{bounds[0]}–{bounds[1]}{unit_text}; type a value or use the arrow keys")
-
-    def value(self) -> int:
-        """The typed number clamped to `bounds`; the last valid value while empty."""
-        try:
-            number = int(self.text())
-        except ValueError:
-            return self._last_valid
-        return min(max(number, self.bounds[0]), self.bounds[1])
-
-    def setValue(self, value: int) -> None:  # noqa: N802 - mirrors QSpinBox.
-        self._last_valid = min(max(value, self.bounds[0]), self.bounds[1])
-        self.setText(str(self._last_valid))
-
-    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override.
-        steps = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
-        if steps is None:
-            super().keyPressEvent(event)
-        else:
-            self.setValue(self.value() + steps)
-
-    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override.
-        if self.hasFocus() and event.angleDelta().y():
-            self.setValue(self.value() + (1 if event.angleDelta().y() > 0 else -1))
-        else:
-            super().wheelEvent(event)
+def _button(text: str, slot: Callable[[], None]) -> QPushButton:
+    button = QPushButton(text)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.clicked.connect(slot)
+    return button
 
 
 def _page(title: str, subtitle: str, sections: list[QWidget]) -> QScrollArea:
@@ -287,12 +257,6 @@ def _shortcuts_page() -> list[QWidget]:
             card.add_row(action, "", _keys(*combinations))
         sections += [section_title(title), card]
     return sections
-
-
-def _sized(field: NumberField) -> NumberField:
-    field.setFixedWidth(NUMBER_FIELD_WIDTH)
-    field.setAlignment(Qt.AlignmentFlag.AlignRight)
-    return field
 
 
 def _with_unit(field: QWidget, unit: str) -> QWidget:
@@ -418,11 +382,14 @@ class SettingsDialog(QDialog):
         plugin_cards: Path | None = None,
         placement: BarPlacement | None = None,
         restart: Callable[[], None] | None = None,
+        replace_all: Callable[[Settings], None] | None = None,
     ):
         super().__init__(parent)
         self.original = settings
         self.result_settings = settings
         self.persist = save
+        # Applies imported settings and shows them in a new dialog; None hides Import.
+        self.replace_all = replace_all
         self.set_startup = set_startup
         self.startup_state = startup_state
         self.restart_app = restart
@@ -625,7 +592,7 @@ class SettingsDialog(QDialog):
             self.autostart,
         )
         settings = self.original
-        self.ctrl_interval = _sized(
+        self.ctrl_interval = sized_number(
             NumberField(DOUBLE_CTRL_RANGE_MS, settings.double_ctrl_ms, "ms")
         )
         self.ctrl_interval.setAccessibleName("Double-Ctrl interval in milliseconds")
@@ -634,13 +601,13 @@ class SettingsDialog(QDialog):
         self.auto_hide.setToolTip(
             "The search bar inside Explorer closes as soon as it loses focus."
         )
-        self.auto_hide_delay = _sized(
+        self.auto_hide_delay = sized_number(
             NumberField(AUTO_HIDE_RANGE_SECONDS, settings.auto_hide_seconds, "seconds")
         )
         self.auto_hide_delay.setAccessibleName("Close the empty launcher after seconds")
         self.auto_hide_delay.setEnabled(settings.auto_hide)
         self.auto_hide.toggled.connect(self.auto_hide_delay.setEnabled)
-        self.limit = _sized(NumberField(RESULT_LIMIT_RANGE, settings.max_results))
+        self.limit = sized_number(NumberField(RESULT_LIMIT_RANGE, settings.max_results))
         self.limit.setAccessibleName("Maximum results")
         bar = Card()
         bar.add_row(
@@ -683,6 +650,20 @@ class SettingsDialog(QDialog):
             "Light or dark colors; Match Windows follows your Windows setting.",
             self.appearance,
         )
+        transfer = Card()
+        transfer.add_row(
+            "Export settings",
+            "Save all settings as shown here to a file, for another computer or as a backup. "
+            "Plugin sign-ins are not included.",
+            _button("Export…", self.export_settings),
+        )
+        if self.replace_all is not None:
+            transfer.add_row(
+                "Import settings",
+                "Replace all settings with exported ones. Search folders that do not exist on "
+                "this computer are kept, but find nothing.",
+                _button("Import…", self.import_settings),
+            )
         return [
             section_title("Startup"),
             startup,
@@ -690,7 +671,53 @@ class SettingsDialog(QDialog):
             looks,
             section_title("Search bar"),
             bar,
+            section_title("Settings file"),
+            transfer,
         ]
+
+    def export_settings(self) -> None:
+        """Write the settings as shown, unsaved edits included, to a file the user picks."""
+        try:
+            settings = self.read_settings()
+        except ValueError as exc:
+            message(self, "Check your settings", str(exc), WARNING)
+            return
+        path = pick_save_path(self, "Export settings", EXPORT_FILE_NAME, SETTINGS_FILE_FILTER)
+        if path is None:
+            return
+        try:
+            SettingsFile(path).save(settings)
+        except OSError as exc:
+            message(self, "Settings not exported", str(exc), ERROR)
+            return
+        message(self, "Settings exported", str(path), INFO)
+
+    def import_settings(self) -> None:
+        """Replace every setting with an exported file's, after the user confirmed it."""
+        path = pick_path(self, "Import settings", SETTINGS_FILE_FILTER)
+        if path is None or self.replace_all is None:
+            return
+        try:
+            settings = read_exported_settings(path)
+        except (OSError, ValueError) as exc:
+            message(self, "Settings not imported", str(exc), ERROR)
+            return
+        if ask(
+            self,
+            "Replace all settings?",
+            f"Every setting, including unsaved changes here, is replaced by those in "
+            f"{path.name}. Export the current ones first to keep them.",
+            "Replace",
+            kind=WARNING,
+        ):
+            self.replace_all(settings)
+
+    def show_page(self, title: str) -> None:
+        """Open the page with this title, such as Search folders."""
+        for row in range(self.nav.count()):
+            if self.nav.item(row).text() == title:
+                self.nav.setCurrentRow(row)
+                return
 
     def _folders_page(self, settings: Settings) -> list[QWidget]:
         self.roots = PathList(settings.roots, "Search folders")
@@ -715,11 +742,11 @@ class SettingsDialog(QDialog):
         self.windows_tools_english.setEnabled(settings.index_windows_tools and not english_windows)
         if not english_windows:
             self.windows_tools.toggled.connect(self.windows_tools_english.setEnabled)
-        self.scan_interval = _sized(
+        self.scan_interval = sized_number(
             NumberField(RESCAN_RANGE_SECONDS, settings.rescan_seconds, "seconds")
         )
         self.scan_interval.setAccessibleName("Full refresh interval in seconds")
-        self.content_threads = _sized(
+        self.content_threads = sized_number(
             NumberField(CONTENT_SEARCH_THREADS_RANGE, settings.content_search_threads)
         )
         self.content_threads.setAccessibleName("Content search threads")

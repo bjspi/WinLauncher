@@ -28,6 +28,7 @@ from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.service import SearchService
+from winlauncher.search.syntax_help import HelpQuery, help_query, syntax_tips
 from winlauncher.settings import Settings
 from winlauncher.ui.result_rows import LauncherHit
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
@@ -39,7 +40,8 @@ DEBOUNCE_MS = 40
 _PLAIN_WORDS = re.compile(r"[^:!*?\[\]\"\\/%~]+")
 # What the typed text asks for: a file search, a website plus its file search, or
 # one plugin's items.
-LauncherQuery: TypeAlias = SearchQuery | WebsiteQuery | PluginQuery
+# `?` asks for the search syntax instead.
+LauncherQuery: TypeAlias = SearchQuery | WebsiteQuery | PluginQuery | HelpQuery
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +92,8 @@ class SearchSession(QObject):
 
     def current_query(self) -> LauncherQuery:
         """The query as typed, with the filter buttons applied unless `type:` was typed."""
+        if (help := help_query(self.window.query.text())) is not None:
+            return help
         if self.window.scope is None and self.window.kind is None and not self.window.explorer_mode:
             text = self.window.query.text()
             if self.plugins is not None:
@@ -274,7 +278,9 @@ class SearchSession(QObject):
         hits: list[LauncherHit] = []
         limit = settings.max_results
         plugins = PluginSearch()
-        if isinstance(query, PluginQuery):
+        if isinstance(query, HelpQuery):
+            hits.extend(syntax_tips(query, settings.websites, self._plugin_keywords(settings)))
+        elif isinstance(query, PluginQuery):
             plugins = self._search_plugins(query, settings, cancel)
             hits.extend(plugins.hits)
         elif isinstance(query, WebsiteQuery):
@@ -301,6 +307,16 @@ class SearchSession(QObject):
             plugins.summary(),
         )
         return SearchResults(hits, elapsed_ms, _missing_files(hits), command_folder)
+
+    def _plugin_keywords(self, settings: Settings) -> dict[str, str]:
+        """Each enabled plugin keyword and the plugin it searches, for the syntax help."""
+        if self.plugins is None:
+            return {}
+        labels = {}
+        for keyword, target in self.plugins.keywords(settings.plugins).items():
+            plugin = self.plugins.plugin(target.plugin_id)
+            labels[keyword] = plugin.label if plugin is not None else target.plugin_id
+        return labels
 
     def _search_plugins(
         self, query: SearchQuery | PluginQuery, settings: Settings, cancel: threading.Event
@@ -367,6 +383,8 @@ class SearchSession(QObject):
 
 def _file_query(query: LauncherQuery) -> SearchQuery | None:
     """The catalog search behind `query`; a website or plugin query may have none."""
+    if isinstance(query, HelpQuery):
+        return None
     if isinstance(query, WebsiteQuery | PluginQuery):
         return query.files
     return query

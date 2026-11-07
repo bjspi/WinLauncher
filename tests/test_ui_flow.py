@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import struct
 import subprocess
@@ -19,7 +20,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QLocale, QPoint, Qt, QTimer
-from PySide6.QtGui import QColor, QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QColor, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 
 import winlauncher
 from winlauncher.actions import ExplorerTarget
+from winlauncher.calculator import Calculation
 from winlauncher.catalog import long_paths
 from winlauncher.catalog.model import CatalogItem, ItemKind
 from winlauncher.commands import MenuCommand
@@ -43,11 +45,15 @@ from winlauncher.platform.gesture import (
     InputUnavailable,
     ViewKind,
 )
+from winlauncher.plugins.api import PluginAction, PluginItem
+from winlauncher.plugins.host import ItemMenu
+from winlauncher.plugins.search import PluginHit
 from winlauncher.releases import Release
 from winlauncher.search.commands import CommandHit
 from winlauncher.search.native_engine import warm_search_index
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
+from winlauncher.search.syntax_help import SyntaxTip
 from winlauncher.settings import Settings, SettingsFile
 from winlauncher.ui.bar_placement import COMPACT_WIDTH, EXPANDED_WIDTH, BarPlacement
 from winlauncher.ui.controller import BAR_PLACEMENT_FILE, LauncherController
@@ -57,10 +63,10 @@ from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFE
 from winlauncher.ui.indexing import IndexJobKind
 from winlauncher.ui.messages import MessageDialog, message
 from winlauncher.ui.plugins import ask_text
-from winlauncher.ui.settings import NUMBER_FIELD_WIDTH, SettingsDialog
+from winlauncher.ui.settings import SettingsDialog
 from winlauncher.ui.tasks import TaskCategory
 from winlauncher.ui.theme import colors
-from winlauncher.ui.widgets import InfoDialog, pick_path
+from winlauncher.ui.widgets import NUMBER_FIELD_WIDTH, InfoDialog, pick_path
 from winlauncher.ui.window import EXPLORER_RIGHT_GAP, EXPLORER_WIDTH, SHADOW_MARGIN
 from winlauncher.websites import WebsiteQuery, WebsiteShortcut, WebsiteTarget
 
@@ -146,6 +152,144 @@ class UiFlowTest(unittest.TestCase):
 
     def settings_dialog(self, settings: Settings, **options) -> SettingsDialog:
         return SettingsDialog(settings, website_icons=self.controller.website_icons, **options)
+
+    def test_a_plugin_answer_shows_in_the_calculation_row_once_it_arrives(self):
+        answer = Calculation("5 km in mi", "3.10686 mi", "5 km")
+        host = self.controller.plugins
+        with (
+            patch.object(host, "answering", return_value=True),
+            patch.object(host, "answer", return_value=answer) as asked,
+        ):
+            self.window.query.setText("5 km in mi")
+            self.assertTrue(self.window.calculation_row.isHidden())  # Asked after a pause.
+            self.controller.plugin_answers.ask()
+            self.tasks.finish(TaskCategory.ANSWER)
+        asked.assert_called_once_with("5 km in mi", self.controller.settings.plugins)
+        self.assertEqual(self.window.calculation_row.result.text(), "= 3.10686 mi")
+        self.assertEqual(self.window.calculation_row.detail.text(), "5 km")
+        QTest.keyClick(self.window.query, Qt.Key.Key_Return)
+        self.assertEqual(self.app.clipboard().text(), "3.10686 mi")
+        self.window.query.setText("5 km in m")  # Another text: the old answer goes.
+        self.assertTrue(self.window.calculation_row.isHidden())
+
+    def test_arithmetic_needs_no_plugin_and_explorer_asks_none(self):
+        host = self.controller.plugins
+        with patch.object(host, "answering", return_value=True):
+            self.window.query.setText("2 * 21")
+            self.controller.plugin_answers.ask()
+            self.assertEqual(self.tasks.count(TaskCategory.ANSWER), 0)
+            self.assertEqual(self.window.calculation_row.result.text(), "= 42")
+            self.window._set_explorer_mode(True, self.root)
+            self.window.query.setText("5 km in mi")
+            self.controller.plugin_answers.ask()
+            self.assertEqual(self.tasks.count(TaskCategory.ANSWER), 0)
+            self.window._set_explorer_mode(False, None)
+
+    def test_while_an_answer_runs_only_the_newest_text_is_asked_next(self):
+        host = self.controller.plugins
+        with (
+            patch.object(host, "answering", return_value=True),
+            patch.object(host, "answer", return_value=None),
+        ):
+            for text in ("5 km", "5 km in", "5 km in mi"):
+                self.window.query.setText(text)
+                self.controller.plugin_answers.ask()
+            self.assertEqual(self.tasks.count(TaskCategory.ANSWER), 1)
+            self.tasks.finish(TaskCategory.ANSWER)  # Then the newest text, once.
+            self.assertEqual(self.tasks.count(TaskCategory.ANSWER), 2)
+            self.assertEqual(self.tasks.jobs[-1].work.args[0], "5 km in mi")
+
+    def test_the_first_start_is_only_when_no_settings_existed(self):
+        self.assertFalse(self.controller.first_start)
+        fresh = self.root.parent / "fresh"
+        with (
+            patch("winlauncher.ui.controller.BackgroundTasks", DeferredTasks),
+            patch.object(LauncherController, "_start_monitor"),
+            patch("winlauncher.ui.tray.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
+            patch("winlauncher.settings.default_roots", return_value=()),
+        ):
+            first = LauncherController(fresh, hooks=False)
+        self.addCleanup(first.close)
+        self.assertTrue(first.first_start)
+        self.assertTrue((fresh / "settings.json").is_file())
+
+    def test_the_welcome_shows_the_bar_or_the_folder_settings(self):
+        def answer(folders: bool):
+            def run(dialog):
+                self.assertIn(str(self.root), dialog.findChild(QLabel, "factValue").text())
+                if folders:
+                    dialog._choose_folders()
+                else:
+                    dialog.accept()
+                return dialog.result()
+
+            return patch("winlauncher.ui.controller.run_modal", run)
+
+        self.window.hide()
+        with answer(False), patch.object(self.controller, "edit_settings") as settings:
+            self.controller.welcome()
+        self.assertTrue(self.window.isVisible())
+        settings.assert_not_called()
+        self.window.hide()
+        with answer(True), patch.object(self.controller, "edit_settings") as settings:
+            self.controller.welcome()
+        settings.assert_called_once_with("Search folders")
+        self.assertFalse(self.window.isVisible())
+
+    def test_settings_open_on_a_chosen_page(self):
+        self.controller.edit_settings("Search folders")
+        dialog = self.controller.settings_dialog
+        self.assertEqual(dialog.nav.currentItem().text(), "Search folders")
+        dialog.reject()
+
+    def test_settings_export_and_import_replace_everything_after_asking(self):
+        exported = self.root.parent / "exported.json"
+        self.controller.edit_settings()
+        dialog = self.controller.settings_dialog
+        dialog.limit.setValue(17)  # Unsaved, but exported as shown.
+        with (
+            patch("winlauncher.ui.settings.pick_save_path", return_value=exported),
+            patch("winlauncher.ui.settings.message") as told,
+        ):
+            dialog.export_settings()
+        self.assertEqual(told.call_args.args[1], "Settings exported")
+        self.assertEqual(json.loads(exported.read_text(encoding="utf-8"))["max_results"], 17)
+        self.assertNotEqual(self.controller.settings.max_results, 17)
+        with (
+            patch("winlauncher.ui.settings.pick_path", return_value=exported),
+            patch("winlauncher.ui.settings.ask", return_value=False),
+        ):
+            dialog.import_settings()
+        self.assertNotEqual(self.controller.settings.max_results, 17)
+        with (
+            patch("winlauncher.ui.settings.pick_path", return_value=exported),
+            patch("winlauncher.ui.settings.ask", return_value=True),
+        ):
+            dialog.import_settings()
+        self.assertEqual(self.controller.settings.max_results, 17)
+        self.app.processEvents()  # The old window closes, a new one shows the import.
+        reopened = self.controller.settings_dialog
+        self.assertIsNot(reopened, dialog)
+        self.assertEqual(reopened.limit.value(), 17)
+        reopened.reject()
+
+    def test_a_question_mark_lists_the_syntax_and_enter_types_the_filter(self):
+        (self.root / "report.txt").touch()
+        self.window.query.setText("? date")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        rows = [
+            self.window.results.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self.window.results.count())
+        ]
+        self.assertTrue(rows)
+        self.assertTrue(all(isinstance(row.hit, SyntaxTip) for row in rows))
+        self.assertEqual(rows[0].name, "date:today")
+        self.window.results.setCurrentRow(0)
+        self.window.open_selected()
+        self.assertEqual(self.window.query.text(), "date:")
+        self.assertTrue(self.window.isVisible())
+        self.launch.assert_not_called()
 
     def test_website_enter_waits_for_current_query_and_keeps_local_results(self):
         site = WebsiteShortcut("az", "Amazon", "https://www.amazon.de/s?k=%s")
@@ -578,6 +722,49 @@ class UiFlowTest(unittest.TestCase):
             window.set_kind(None)
             self.assertIsNone(search.current_query().kind)
         self.assertFalse(window.footer.isHidden())
+
+    def menu_titles(self, row: int) -> dict[str, QAction]:
+        """The entries of the row's own menu by title, without the shown shortcut."""
+        shown = {}
+
+        def collect(menu, _point):
+            shown.update({action.text().partition("\t")[0]: action for action in menu.actions()})
+
+        with patch("winlauncher.ui.window.Menu.exec", collect):
+            self.window.context_menu(
+                self.window.results.visualItemRect(self.window.results.item(row)).center()
+            )
+        return shown
+
+    def test_plugin_items_offer_their_actions_and_exclude(self):
+        item = PluginItem("u1", "Anna Schmidt", target="tg://resolve?domain=anna")
+        hit = PluginHit("telegram", "Telegram", item, 100, "fixture")
+        rename = PluginAction("Rename…", lambda item, context: None)
+        requests = []
+        self.window.plugin_action_requested.disconnect()
+        self.window.plugin_action_requested.connect(lambda h, a: requests.append((h, a)))
+        self.window.plugin_exclude_requested.disconnect()
+        self.window.plugin_exclude_requested.connect(lambda h: requests.append((h, "exclude")))
+        self.window.set_results([hit], 1)
+        self.window.plugin_menu = lambda _hit: ItemMenu((rename,), can_exclude=True)
+        titles = self.menu_titles(0)
+        self.assertLess(list(titles).index("Rename…"), list(titles).index("Exclude…"))
+        titles["Rename…"].trigger()
+        titles["Exclude…"].trigger()
+        self.assertEqual(requests, [(hit, rename), (hit, "exclude")])
+        self.window.plugin_menu = lambda _hit: ItemMenu()
+        self.assertNotIn("Exclude…", self.menu_titles(0))
+
+    def test_only_files_offer_open_with(self):
+        file = SearchHit(CatalogItem(self.root / "notes.txt", ItemKind.FILE), 100, "fixture")
+        folder = SearchHit(CatalogItem(self.root / "docs", ItemKind.FOLDER), 100, "fixture")
+        self.window.set_results([file, folder], 1)
+        requested = []
+        self.window.open_with_requested.disconnect()
+        self.window.open_with_requested.connect(requested.append)
+        self.menu_titles(0)["Open with…"].trigger()
+        self.assertEqual(requested, [file])
+        self.assertNotIn("Open with…", self.menu_titles(1))
 
     def test_menu_actions_reach_their_intents(self):
         requests = []

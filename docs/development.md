@@ -35,6 +35,11 @@ ordinary application releases. Its prebuilt Windows x64 template is committed in
 `winlauncher/platform/bin`, like pip's launcher stubs, and ships in wheels and
 source distributions. It works without the optional Rust search engine.
 
+Tests that start a real WinLauncher set `WINLAUNCHER_OFFLINE=1` for it: such an
+instance contacts nothing on its own (internet check, update check, plugin source
+check), so a firewall is not asked about a host in a new temporary folder on every
+run. Set it yourself for a manual test start that should stay quiet.
+
 After changing `loader/`, the build script or `docs/images/icon.png`, rebuild on
 Windows with Rust/MSVC and the Windows SDK installed:
 

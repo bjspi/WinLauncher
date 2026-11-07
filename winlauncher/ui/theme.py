@@ -357,6 +357,11 @@ QWidget#infoFooter { background: $page; border-top: 1px solid $card_border; }
 QLabel#infoTitle { font-size: 15px; font-weight: 600; color: $title; }
 QLabel#infoText { font-size: 13px; color: $subtle; }
 QListWidget#choiceList { background: transparent; border: 0; padding: 0; outline: none; }
+QTreeWidget#checklist { background: $field; border: 1px solid $field_border; border-radius: 8px; padding: 4px; outline: none; selection-background-color: $chosen; selection-color: $text; }
+QTreeWidget#checklist::item { min-height: 26px; padding: 0 4px; border: 0; }
+QTreeWidget#checklist::item:hover { background: $button_hover; }
+QTreeWidget#checklist::indicator { width: 15px; height: 15px; border: 1px solid $checkbox_border; border-radius: 4px; background: $field; }
+QTreeWidget#checklist::indicator:checked { background: $accent; border-color: $accent; image: url($check_mark); }
 QTreeWidget#exclusionPreview {
     background: $hover; color: $text; border: 1px solid $card_border; border-radius: 8px;
     padding: 6px; outline: none; selection-background-color: $chosen; selection-color: $text;

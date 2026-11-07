@@ -67,6 +67,7 @@ class StartupTest(unittest.TestCase):
                 QT_QPA_PLATFORM="offscreen",
                 WINLAUNCHER_TEST_START_BARRIER="1",
                 WINLAUNCHER_TEST_FOREGROUND="1",
+                WINLAUNCHER_OFFLINE="1",
             )
             processes = [
                 subprocess.Popen(
@@ -106,7 +107,8 @@ class StartupTest(unittest.TestCase):
             SettingsFile(data / "settings.json").save(
                 Settings(roots=(), index_apps=False, index_windows_tools=False)
             )
-            env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+            # Started instances stay off the network: a firewall would ask about them.
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", WINLAUNCHER_OFFLINE="1")
             process = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--child", str(data)],
                 cwd=PROJECT,

@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -14,9 +15,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QMimeData, QTimer, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QPlainTextEdit, QPushButton
 
 from winlauncher.platform.git import release_changes
+from winlauncher.plugins.api import Choice, PluginOption
 from winlauncher.releases import Release
 from winlauncher.ui import messages
 from winlauncher.ui.exclude_dialog import (
@@ -26,8 +28,11 @@ from winlauncher.ui.exclude_dialog import (
     exclusion_candidates,
 )
 from winlauncher.ui.messages import MessageDialog
+from winlauncher.ui.plugin_dialogs import ChecklistDialog, FormDialog, choose_items, fill_form
+from winlauncher.ui.plugins import Questions
 from winlauncher.ui.settings import PathList, dropped_folders
 from winlauncher.ui.updater import ReleaseUpdater
+from winlauncher.ui.widgets import ToggleSwitch
 
 
 class FolderFeaturesTest(unittest.TestCase):
@@ -406,6 +411,100 @@ class MessageDialogTest(unittest.TestCase):
         self.assertTrue(messages.ask(None, "Remove?", "", "Remove", kind=messages.WARNING))
         click("Cancel")
         self.assertFalse(messages.ask(None, "Remove?", "", "Remove", kind=messages.WARNING))
+
+
+class PluginDialogsTest(unittest.TestCase):
+    """The checklist and the form plugin commands show through their context."""
+
+    CHOICES = (
+        Choice("user:1", "Anna Schmidt", checked=True),
+        Choice("supergroup:2", "Team Annahme", "Group", checked=True),
+        Choice("channel:3", "Tech News", "Channel"),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_filter_and_helpers_touch_only_visible_rows(self):
+        others = tuple(Choice(f"user:{n}", f"Person {n}") for n in range(10, 17))
+        dialog = ChecklistDialog("Chats", "Ticked chats are listed.", self.CHOICES + others)
+        self.assertTrue(dialog.filter.isVisibleTo(dialog))
+        self.assertEqual(dialog.ticked(), {"user:1", "supergroup:2"})
+        dialog.filter.setText("ANN group")
+        hidden = [dialog.rows.topLevelItem(row).isHidden() for row in range(3)]
+        self.assertEqual(hidden, [True, False, True])
+        next(b for b in dialog.findChildren(QPushButton) if b.text() == "None").click()
+        self.assertEqual(dialog.ticked(), {"user:1"})
+        dialog.filter.clear()
+        next(b for b in dialog.findChildren(QPushButton) if b.text() == "All").click()
+        self.assertEqual(len(dialog.ticked()), len(self.CHOICES + others))
+        dialog.deleteLater()
+
+    def test_a_short_checklist_shows_its_rows_without_a_filter(self):
+        dialog = ChecklistDialog("Exclude", "", self.CHOICES)
+        self.assertFalse(dialog.filter.isVisibleTo(dialog))
+        labels = {button.text() for button in dialog.findChildren(QPushButton)}
+        self.assertEqual(labels, {"Cancel", "Save"})
+        dialog.deleteLater()
+
+    def test_save_returns_the_ticked_keys_and_cancel_none(self):
+        def answer(save: bool):
+            def run(dialog: QDialog) -> int:
+                if save:
+                    dialog.accept()
+                else:
+                    dialog.reject()
+                return dialog.result()
+
+            return patch.object(ChecklistDialog, "exec", run)
+
+        with answer(True):
+            self.assertEqual(
+                choose_items(None, "Chats", "", self.CHOICES), {"user:1", "supergroup:2"}
+            )
+        with answer(False):
+            self.assertIsNone(choose_items(None, "Chats", "", self.CHOICES))
+
+    def test_a_form_edits_its_fields_with_the_settings_editors(self):
+        fields = (
+            PluginOption("names", "Names", "anna", multiline=True),
+            PluginOption("unread", "Unread only", False),
+            PluginOption("limit", "At most", 50, bounds=(1, 500)),
+        )
+        dialog = FormDialog("Filter", "", fields)
+        self.assertEqual(dialog.values(), {"names": "anna", "unread": False, "limit": 50})
+        dialog.findChild(QPlainTextEdit).setPlainText("anna\nbob")
+        dialog.findChild(ToggleSwitch).setChecked(True)
+        self.assertEqual(dialog.values(), {"names": "anna\nbob", "unread": True, "limit": 50})
+        dialog.deleteLater()
+
+        def cancel(dialog: QDialog) -> int:
+            dialog.reject()
+            return dialog.result()
+
+        with patch.object(FormDialog, "exec", cancel):
+            self.assertIsNone(fill_form(None, "Filter", "", fields))
+
+    def test_a_worker_waits_for_the_checklist_on_the_gui_thread(self):
+        questions = Questions()
+        answers = []
+        shown_on = []
+
+        def shown(*_args):
+            shown_on.append(threading.current_thread())
+            return frozenset({"channel:3"})
+
+        with patch("winlauncher.ui.plugins.choose_items", shown):
+            worker = threading.Thread(
+                target=lambda: answers.append(questions.choose(None, "Chats", "", self.CHOICES))
+            )
+            worker.start()
+            while worker.is_alive():
+                self.app.processEvents()
+            worker.join()
+        self.assertEqual(answers, [frozenset({"channel:3"})])
+        self.assertEqual(shown_on, [threading.main_thread()])
 
 
 if __name__ == "__main__":

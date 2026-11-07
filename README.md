@@ -137,9 +137,13 @@ Afterwards, start it without a console window:
 ```
 
 WinLauncher starts with your Desktop, Documents and Downloads plus installed
-applications — Start menu programs and Microsoft Store apps alike. Add your work
-folders in **Settings → Search folders** — or just drag them from Explorer into
-the list. The first scan runs in the background.
+applications — Start menu programs and Microsoft Store apps alike. The very first
+start greets you with how to open the bar, what it searches and a switch for Start
+with Windows. Add your work folders in **Settings → Search folders** — or just drag
+them from Explorer into the list. The first scan runs in the background.
+
+Moving to another computer? **Settings → General → Export…** saves every setting to
+a file, **Import…** reads it there, after asking. Plugin sign-ins stay behind.
 
 Tick **Start with Windows** in the tray menu or in Settings to launch WinLauncher at
 sign-in. It manages only its own shortcut in your Startup folder.
@@ -249,7 +253,7 @@ built-in keys and Ctrl+Alt is AltGr on many keyboards.
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> / pin button | Keep the bar open after opening results; <kbd>Esc</kbd> still closes it |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | Select the query |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
-| <kbd>Shift</kbd>+<kbd>F10</kbd> / right-click | Open, reveal, your own commands, copy, favorite, exclude |
+| <kbd>Shift</kbd>+<kbd>F10</kbd> / right-click | Open, open with, reveal, your own commands, copy, favorite, exclude; for plugin results their own entries |
 | <kbd>Esc</kbd> | Hide (indexing keeps running in the tray) |
 
 Click the icon at the right of the bar for the **All / Apps / Files / Folders**
@@ -272,6 +276,9 @@ these buttons; choosing a button replaces any typed kind override.
 Use `t:` as shorthand for `type:`, for example `t:dir`, `t:file` or `t:app`.
 
 ## 🔍 Query language
+
+Type **`?`** for the filters below as results, with your own website and plugin
+keywords; `? date` lists only those about dates, and Enter types the chosen filter.
 
 ```text
 report                                  name or path contains "report"
@@ -431,6 +438,11 @@ functions separate arguments with `,`, or with `;` when the numbers use decimal
 commas. A lone number or constant (`2024`, `pi`) and digits joined by hyphens
 (`2024-06-15`, `2024-2025`) stay searches. The calculator parses the text itself
 and never runs Python code; results larger than about 1000 digits are not shown.
+
+Plugins may answer in the same row, too: the
+[Answers](https://github.com/bjspi/WinLauncher-Plugins/blob/main/docs/answers.md)
+plugin converts units and currencies, counts dates and tells the time elsewhere —
+`5 km in mi`, `100 usd in eur`, `heute + 3 wochen`, `zeit in bangalore`.
 
 ### 📁 Paths and shortcuts
 

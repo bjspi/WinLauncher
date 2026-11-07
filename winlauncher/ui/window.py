@@ -67,11 +67,13 @@ from winlauncher.catalog.model import ItemKind
 from winlauncher.commands import MenuCommand
 from winlauncher.platform.gesture import ViewKind
 from winlauncher.plugins.api import Chip, ChipTone
+from winlauncher.plugins.host import ItemMenu
 from winlauncher.plugins.search import PluginHit
 from winlauncher.search.commands import CommandHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.query_parser import without_type_filter
 from winlauncher.search.ranking import SearchHit
+from winlauncher.search.syntax_help import SyntaxTip
 from winlauncher.ui.bar_placement import MIN_WIDTH, BarPlacement
 from winlauncher.ui.commands import command_icon
 from winlauncher.ui.dialogs import blocking_modal, bring_to_front
@@ -191,7 +193,7 @@ def transfer_data(row: ResultRow, *, cut: bool = False) -> QMimeData:
     """Copy/drag data: a file, a website's URL or an Explorer tool's command text."""
     if (hit := row.file_hit) is not None:
         return file_mime_data([hit.item.path], cut=cut)
-    if isinstance(row.hit, CommandHit):
+    if isinstance(row.hit, CommandHit | SyntaxTip):
         data = QMimeData()
         data.setText(row.target)
         return data
@@ -280,6 +282,8 @@ class ResultDelegate(QStyledItemDelegate):
         if isinstance(hit, CommandHit):
             icon = self.command_icons(hit.command)
             return line_icon("terminal", colors().muted) if icon.isNull() else icon
+        if isinstance(hit, SyntaxTip):
+            return line_icon("help", colors().muted)
         return self.icons.icon_for(hit.item)
 
     @staticmethod
@@ -412,6 +416,8 @@ def _shortcut_hint(
         return ""
     if isinstance(row.hit, CommandHit):
         return "↵ run here · Ctrl+C copy command"
+    if isinstance(row.hit, SyntaxTip):
+        return "↵ type this filter"
     if row.file_hit is None:
         return f"↵ open in {row.opens_in} · Ctrl+C copy {row.target_noun}"
     if dialog:
@@ -528,9 +534,12 @@ class CalculationRow(QFrame):
         self.result = QLabel()
         self.result.setObjectName("calculationResult")
         self.result.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.detail = QLabel()  # What was converted, a rate's date, a place.
+        self.detail.setObjectName("calculationHint")
         self.hint = QLabel()
         self.hint.setObjectName("calculationHint")
-        row.addWidget(self.result, 1)
+        row.addWidget(self.result)
+        row.addWidget(self.detail, 1)
         row.addWidget(self.hint)
         self.setAccessibleName("Calculation result")
         self.hide()
@@ -540,6 +549,11 @@ class CalculationRow(QFrame):
         text = f"= {calculation.result}"
         self.result.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, 480))
         self.result.setToolTip(f"{calculation.expression} = {calculation.result}")
+        detail_metrics = self.detail.fontMetrics()
+        self.detail.setText(
+            detail_metrics.elidedText(calculation.detail, Qt.TextElideMode.ElideRight, 420)
+        )
+        self.detail.setToolTip(calculation.detail)
         self.hint.setText("Enter copies" if selected else "")
         self.setAccessibleDescription(text)
         self.setProperty("selected", selected)
@@ -557,6 +571,10 @@ class LauncherWindow(QWidget):
     query_changed = Signal()
     open_requested = Signal(object)
     reveal_requested = Signal(object)
+    open_with_requested = Signal(object)  # SearchHit of a file.
+    # PluginHit, and the PluginAction to run for it.
+    plugin_action_requested = Signal(object, object)
+    plugin_exclude_requested = Signal(object)  # PluginHit.
     favorite_requested = Signal(object)
     # SearchHit for Explorer to select; None cancels a pending preview on a tool.
     explorer_selection = Signal(object)
@@ -600,6 +618,8 @@ class LauncherWindow(QWidget):
         # Result locations are relative to this folder in an Explorer search.
         self.result_scope: Path | None = None
         self.calculation: Calculation | None = None
+        # A plugin's answer and the text it answers; it arrives after that text.
+        self.plugin_answer: tuple[str, Calculation] | None = None
         # The calculation, not a result, receives Enter while it is selected.
         self.calculation_selected = False
         self._bottom_anchor: int | None = None
@@ -614,6 +634,9 @@ class LauncherWindow(QWidget):
         # Pinned, results open without closing the bar; see `set_pinned`.
         self.pinned = False
         self.menu_commands: tuple[MenuCommand, ...] = ()
+        # What a plugin item's menu offers beyond opening and copying; set by the
+        # controller, which knows the plugins.
+        self.plugin_menu: Callable[[PluginHit], ItemMenu] = lambda _hit: ItemMenu()
         self._command_icons: dict[MenuCommand, QIcon] = {}  # Loaded when first shown.
         self.foreground_watcher = None
         if self._native_focus():
@@ -1054,7 +1077,7 @@ class LauncherWindow(QWidget):
     def _update_calculation(self, *_changed) -> None:
         """Show the result of a typed calculation; the search runs regardless."""
         previous = self.calculation
-        self.calculation = None if self.explorer_mode else calculate(self.query.text())
+        self.calculation = self._answer()
         if self.calculation is None:
             self.calculation_row.hide()
             if self.calculation_selected:
@@ -1066,6 +1089,22 @@ class LauncherWindow(QWidget):
         if not self.calculation_row.isHidden() or previous is not None:
             self.empty.setVisible(self.empty.isVisible() and self.calculation is None)
             self._fit_height()
+
+    def show_answer(self, text: str, answer: Calculation | None) -> None:
+        """A plugin answered `text`; shown while it is still the typed text."""
+        self.plugin_answer = (text, answer) if answer is not None else None
+        self._update_calculation()
+
+    def _answer(self) -> Calculation | None:
+        """Arithmetic first; otherwise a plugin's answer to exactly this text."""
+        if self.explorer_mode:
+            return None
+        text = self.query.text()
+        if (calculation := calculate(text)) is not None:
+            return calculation
+        if self.plugin_answer is not None and self.plugin_answer[0] == text:
+            return self.plugin_answer[1]
+        return None
 
     def _select_calculation(self, selected: bool) -> None:
         self.calculation_selected = selected and self.calculation is not None
@@ -1355,6 +1394,12 @@ class LauncherWindow(QWidget):
         if not enabled:
             self.auto_hide.stop()
 
+    def type_filter(self, text: str) -> None:
+        """Replace the query with a filter from the syntax help, ready to complete."""
+        self.query.setText(text)
+        self.query.setFocus()
+        self.query.end(False)
+
     def set_menu_commands(self, commands: tuple[MenuCommand, ...]) -> None:
         """The user's own entries in the context menu of folder and file results."""
         self.menu_commands = commands
@@ -1621,7 +1666,7 @@ class LauncherWindow(QWidget):
         row = row or self.selected_row()
         if row is None or (cut and row.file_hit is None):
             return False
-        if isinstance(row.hit, CommandHit):
+        if isinstance(row.hit, CommandHit | SyntaxTip):
             self.copy_target(row)
             return True
         QApplication.clipboard().setMimeData(transfer_data(row, cut=cut))
@@ -1656,6 +1701,11 @@ class LauncherWindow(QWidget):
         menu = Menu(self)
         if (hit := row.file_hit) is not None:
             self._add_file_actions(menu, row, hit)
+        elif isinstance(row.hit, PluginHit):
+            self._add_plugin_actions(menu, row, row.hit)
+        elif isinstance(row.hit, SyntaxTip):
+            menu.addAction("Type this filter", lambda: self.open_requested.emit(row.hit))
+            menu.addAction("Copy filter", lambda: self.copy_target(row))
         elif isinstance(row.hit, CommandHit):
             menu.addAction("Run here", lambda: self.open_requested.emit(row.hit))
             menu.addAction("Copy command", lambda: self.copy_target(row))
@@ -1672,9 +1722,23 @@ class LauncherWindow(QWidget):
         menu.addSeparator()
         menu.addAction("Settings…", self.settings_requested.emit)
 
+    def _add_plugin_actions(self, menu: QMenu, row: ResultRow, hit: PluginHit) -> None:
+        """Open and copy as for websites, the plugin's own entries, and Exclude…."""
+        offered = self.plugin_menu(hit)
+        menu.addAction(f"Open in {row.opens_in}", lambda: self.open_requested.emit(hit))
+        for action in offered.actions:
+            menu.addAction(action.label, partial(self.plugin_action_requested.emit, hit, action))
+        menu.addAction(f"Copy {row.target_noun}", lambda: self.copy_target(row))
+        menu.addSeparator()
+        if offered.can_exclude:
+            menu.addAction("Exclude…", partial(self.plugin_exclude_requested.emit, hit))
+        menu.addAction("Settings…", self.settings_requested.emit)
+
     def _add_file_actions(self, menu: QMenu, row: ResultRow, hit: SearchHit) -> None:
         clipboard = QApplication.clipboard()
         menu.addAction("Open", lambda: self.open_requested.emit(hit))
+        if hit.item.kind == ItemKind.FILE:
+            menu.addAction("Open with…", lambda: self.open_with_requested.emit(hit))
         menu.addAction("Show in containing folder", lambda: self.reveal_requested.emit(hit))
         menu.addSeparator()
         if commands := _menu_commands(self.menu_commands, hit.item.kind):

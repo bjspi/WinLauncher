@@ -23,7 +23,7 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -126,6 +126,20 @@ class PluginItem:
 
 
 @dataclass(frozen=True, slots=True)
+class Answer:
+    """A plugin's answer to the typed text, shown above the results like a calculation."""
+
+    result: str  # Shown after "=", and what Enter copies.
+    detail: str = ""  # Muted beside it, never copied: what was converted, a rate's date.
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.result, str) or not self.result.strip():
+            raise ValueError("An answer needs a result.")
+        if not isinstance(self.detail, str):
+            raise ValueError("An answer's detail must be text.")
+
+
+@dataclass(frozen=True, slots=True)
 class PluginOption:
     """A setting of one plugin; its type is the type of `default`."""
 
@@ -170,14 +184,58 @@ def no_questions(title: str, text: str, *, secret: bool = False) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class Choice:
+    """One row of a checklist a command shows, such as a chat that stays listed."""
+
+    key: str  # Returned when the row is ticked; unique within the checklist.
+    label: str
+    detail: str = ""  # Muted text beside the label, such as "Group  ·  12 members".
+    checked: bool = False  # Ticked when the checklist opens.
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or not self.key:
+            raise ValueError("A choice needs a key.")
+        if not isinstance(self.label, str) or not self.label.strip():
+            raise ValueError("A choice needs a label.")
+        if not isinstance(self.detail, str):
+            raise ValueError("A choice's detail must be text.")
+
+
+class Choose(Protocol):
+    def __call__(self, title: str, text: str, choices: Sequence[Choice]) -> frozenset[str] | None:
+        """Let the user tick rows; the keys of the ticked ones, None when they cancel."""
+
+
+def no_choices(title: str, text: str, choices: Sequence[Choice]) -> frozenset[str] | None:
+    raise SetupRequired(f"{title}: open Settings › Plugins to continue.")
+
+
+class Form(Protocol):
+    def __call__(
+        self, title: str, text: str, fields: Sequence[PluginOption]
+    ) -> dict[str, OptionValue] | None:
+        """Let the user edit `fields`, each starting at its default, as on a settings card.
+
+        The edited values by field key, validated like options; None when they cancel.
+        """
+
+
+def no_form(title: str, text: str, fields: Sequence[PluginOption]) -> dict[str, OptionValue] | None:
+    raise SetupRequired(f"{title}: open Settings › Plugins to continue.")
+
+
+@dataclass(frozen=True, slots=True)
 class PluginContext:
     """What one plugin call receives. Calls run on a worker thread, never the GUI's."""
 
     data_dir: Path  # The plugin's own folder for caches, sessions and avatars; it exists.
     options: Mapping[str, OptionValue]  # Every `Plugin.options` key, validated.
     cancel: threading.Event = field(default_factory=threading.Event)
-    # Only commands may ask; a background refresh raises SetupRequired instead.
+    # Only commands may show dialogs: a line of text, a checklist or a form of
+    # fields. A background refresh raises SetupRequired instead.
     ask: Ask = no_questions
+    choose: Choose = no_choices
+    form: Form = no_form
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("winlauncher.plugins"))
     # Read the current shared hint, including during a long refresh or retry loop.
     internet: Callable[[], InternetState] = InternetState
@@ -187,12 +245,26 @@ class PluginContext:
 class PluginCommand:
     """A button on the plugin's settings card, such as Sign in.
 
-    `run` gets a context that may ask questions and returns a message for the user.
+    `run` gets a context that may show dialogs (`ask`, `choose`, `form`) and returns
+    a message for the user.
     """
 
     label: str
     run: Callable[[PluginContext], str | None]
     forgets_items: bool = False  # Such as Sign out: the listed items go, too.
+
+
+@dataclass(frozen=True, slots=True)
+class PluginAction:
+    """An entry in the menu of one of the plugin's items, such as Copy username.
+
+    `run(item, context)` runs on a worker, may show dialogs like a command does and
+    returns a message for the user, or None to say nothing.
+    """
+
+    label: str
+    run: Callable[[PluginItem, PluginContext], str | None]
+    refreshes: bool = False  # The action changes what the plugin lists: refresh afterwards.
 
 
 class Plugin:
@@ -236,6 +308,41 @@ class Plugin:
     def commands(self) -> tuple[PluginCommand, ...]:
         """Buttons for the settings card, such as Sign in and Sign out."""
         return ()
+
+    def actions(self, item: PluginItem) -> tuple[PluginAction, ...]:
+        """Further entries for `item`'s menu. Called on the GUI thread when the menu
+        opens, so it must only look at `item`, never at files or the network."""
+        return ()
+
+    def exclude(self, item: PluginItem, context: PluginContext) -> bool:
+        """Leave `item` out of the list for good; the menu offers Exclude… when defined.
+
+        The plugin decides what goes: the item alone, or, asked in a dialog, more
+        of it, such as its folder or every item of its project. Returns whether
+        anything was excluded, False when the user cancelled. WinLauncher then
+        drops `item` from the results at once and refreshes the plugin.
+        """
+        raise NotImplementedError
+
+    def answer(self, text: str, context: PluginContext) -> Answer | None:
+        """Answer the typed text itself, such as `5 km in mi`; None for anything else.
+
+        Asked a moment after typing pauses, on a worker of its own and while a
+        refresh may be running, so it must be quick and thread-safe: no network,
+        nothing a refresh could not have prepared. Only answer text whose whole
+        shape you recognize, so ordinary searches stay searches.
+        """
+        return None
+
+    @classmethod
+    def answers(cls) -> bool:
+        """Whether the plugin defines `answer`, so the typed text is offered to it."""
+        return cls.answer is not Plugin.answer
+
+    @classmethod
+    def can_exclude(cls) -> bool:
+        """Whether the plugin defines `exclude`, so its items offer Exclude…."""
+        return cls.exclude is not Plugin.exclude
 
 
 def open_target(target: str) -> None:

@@ -449,6 +449,22 @@ def _setting_value(name: str, value: object) -> object:
 _DEFAULTS = Settings(roots=())
 
 
+def read_exported_settings(path: Path) -> Settings:
+    """Settings exported from WinLauncher, here or on another computer.
+
+    Raises OSError when the file cannot be read and ValueError when it holds no
+    usable settings, with a message for the user; nothing is applied then.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{path.name} is not a WinLauncher settings file: {exc}") from exc
+    try:
+        return settings_from_json(data)
+    except ValueError as exc:
+        raise ValueError(f"{path.name} holds settings WinLauncher cannot use: {exc}") from exc
+
+
 class SettingsFile:
     def __init__(self, path: Path):
         self.path = path

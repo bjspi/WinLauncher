@@ -17,28 +17,33 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QPushButton,
     QWidget,
 )
 
 from winlauncher.catalog.model import path_key
-from winlauncher.plugins.api import Plugin, PluginCommand, PluginOption
+from winlauncher.plugins.api import OptionValue, Plugin, PluginCommand, PluginOption
 from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
 from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig
 from winlauncher.plugins.folders import ManifestError, OfferedPlugin, read_manifest
 from winlauncher.plugins.registry import PluginSource
 from winlauncher.settings import BOOST_RANGE, PLUGIN_TIME_LIMIT_RANGE_MS, Settings
 from winlauncher.ui.messages import ERROR, INFO, message
+from winlauncher.ui.option_editors import option_editor
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
-from winlauncher.ui.settings import NumberField, _note, _sized, _split_commas, _with_unit
+from winlauncher.ui.settings import _note, _split_commas, _with_unit
 from winlauncher.ui.source_settings import SourceSection
-from winlauncher.ui.widgets import Card, ToggleSwitch, line_icon, section_title
+from winlauncher.ui.widgets import (
+    Card,
+    NumberField,
+    ToggleSwitch,
+    line_icon,
+    section_title,
+    sized_number,
+)
 
 KEYWORD_FIELD_WIDTH = 160  # Room for a few keywords, separated by commas.
-TEXT_OPTION_WIDTH = 220
-TEXT_OPTION_HEIGHT = 96  # About five lines for a multiline option.
 logger = logging.getLogger(__name__)
 
 
@@ -128,7 +133,7 @@ class PluginCard(Card):
         self.add_row(
             "In every search", "Matching items also appear among files and apps.", self.in_search
         )
-        self.refresh_minutes = _sized(
+        self.refresh_minutes = sized_number(
             NumberField(REFRESH_RANGE_MINUTES, config.refresh_minutes, "minutes")
         )
         self.refresh_minutes.setAccessibleName(f"{plugin.label} refresh interval in minutes")
@@ -137,7 +142,7 @@ class PluginCard(Card):
             "Runs in the background; searches use the last list meanwhile.",
             _with_unit(self.refresh_minutes, "min"),
         )
-        self.boost = _sized(NumberField(BOOST_RANGE, config.boost))
+        self.boost = sized_number(NumberField(BOOST_RANGE, config.boost))
         self.boost.setAccessibleName(f"{plugin.label} ranking boost")
         self.add_row("Boost", "Lifts (up to 100) or lowers its items against files.", self.boost)
         self.options: dict[str, Callable[[], object]] = {}
@@ -172,32 +177,10 @@ class PluginCard(Card):
         self.fold.setEnabled(on)
         self.show_details(on and self.fold.isChecked())
 
-    def _add_option(self, option: PluginOption, value: object) -> None:
-        if isinstance(value, bool):
-            control = ToggleSwitch(option.label)
-            control.setChecked(value)
-            self.options[option.key] = control.isChecked
-            self.add_row(option.label, option.description, control)
-        elif isinstance(value, int):
-            bounds = option.bounds or (-(2**31), 2**31 - 1)
-            field = _sized(NumberField(bounds, value))
-            field.setAccessibleName(option.label)
-            self.options[option.key] = field.value
-            self.add_row(option.label, option.description, field)
-        elif option.multiline:
-            box = QPlainTextEdit(str(value))
-            box.setFixedWidth(TEXT_OPTION_WIDTH)
-            box.setFixedHeight(TEXT_OPTION_HEIGHT)
-            box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-            box.setAccessibleName(option.label)
-            self.options[option.key] = box.toPlainText
-            self.add_row(option.label, option.description, box)
-        else:
-            line = QLineEdit(str(value))
-            line.setFixedWidth(TEXT_OPTION_WIDTH)
-            line.setAccessibleName(option.label)
-            self.options[option.key] = line.text
-            self.add_row(option.label, option.description, line)
+    def _add_option(self, option: PluginOption, value: OptionValue) -> None:
+        editor = option_editor(option, value)
+        self.options[option.key] = editor.read
+        self.add_row(option.label, option.description, editor.control)
 
     def config(self) -> PluginConfig:
         options = dict(self.original.options)
@@ -316,7 +299,7 @@ class PluginPages(QObject):
             else None
         )
         self.install_sections = self._install_sections()
-        self.time_limit = _sized(
+        self.time_limit = sized_number(
             NumberField(PLUGIN_TIME_LIMIT_RANGE_MS, settings.plugin_time_limit_ms, "ms")
         )
         self.time_limit.setAccessibleName("Plugin time limit per search in milliseconds")

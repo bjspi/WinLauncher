@@ -1,8 +1,9 @@
 """Plugins in the GUI: periodic refreshes, questions from plugin workers, item icons.
 
 Refreshes run on the plugin pool, so neither indexing nor searching waits for a
-slow plugin. A plugin command, such as Sign in, may ask questions from its worker;
-`Questions` shows them on the GUI thread and hands the answer back.
+slow plugin. A plugin command, such as Sign in, may show dialogs from its worker
+(a line of text, a checklist, a form); `Questions` shows them on the GUI thread and hands the
+answer back.
 """
 
 from __future__ import annotations
@@ -11,21 +12,28 @@ import logging
 import threading
 import time
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import partial
 
 from PySide6.QtCore import QObject, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QLineEdit, QWidget
 
-from winlauncher.connectivity import InternetState, InternetStatus
+from winlauncher.connectivity import InternetState, InternetStatus, automatic_network_off
 from winlauncher.platform.connectivity import probe_internet
-from winlauncher.plugins.api import PluginCommand
+from winlauncher.plugins.api import (
+    Choice,
+    OptionValue,
+    PluginAction,
+    PluginCommand,
+    PluginOption,
+)
 from winlauncher.plugins.config import PluginConfig
-from winlauncher.plugins.host import PluginHost
+from winlauncher.plugins.host import CommandDialogs, PluginHost
 from winlauncher.plugins.search import PluginHit
 from winlauncher.settings import Settings
 from winlauncher.ui.dialogs import run_modal
+from winlauncher.ui.plugin_dialogs import choose_items, fill_form
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.widgets import InfoDialog, line_icon
 
@@ -87,7 +95,7 @@ class PluginScheduler(QObject):
         )
 
     def _check_internet(self) -> None:
-        if self._closed or self._checking_internet:
+        if self._closed or self._checking_internet or automatic_network_off():
             return
         self._checking_internet = True
         self.tasks.submit(
@@ -220,16 +228,63 @@ class PluginScheduler(QObject):
         the options shown there.
         """
         config = self.host.config(plugin_id, settings.plugins)
-        ask = partial(self.questions.ask, parent)
+        dialogs = self.questions.dialogs(parent)
         self.tasks.submit(
             TaskCategory.PLUGIN,
-            partial(self.host.run_command, plugin_id, command, config, ask),
+            partial(self.host.run_command, plugin_id, command, config, dialogs),
             lambda message: (
                 done(message, False),
                 self.items_changed.emit(),
                 self.refresh(plugin_id),
             ),
             lambda message: done(message, True),
+        )
+
+    def run_item_action(
+        self,
+        hit: PluginHit,
+        action: PluginAction,
+        parent: QWidget | None,
+        done: Callable[[str | None, bool], None],
+    ) -> None:
+        """Run one of an item's own menu entries; `done(message, failed)` follows."""
+        config = self.host.config(hit.plugin_id, self.settings().plugins)
+        dialogs = self.questions.dialogs(parent)
+
+        def finished(message: str | None) -> None:
+            done(message, False)
+            if action.refreshes:
+                self.refresh(hit.plugin_id)
+
+        self.tasks.submit(
+            TaskCategory.PLUGIN,
+            partial(self.host.run_item_action, hit, action, config, dialogs),
+            finished,
+            lambda message: done(message, True),
+        )
+
+    def exclude(
+        self,
+        hit: PluginHit,
+        parent: QWidget | None,
+        done: Callable[[bool], None],
+        failed: Callable[[str], None],
+    ) -> None:
+        """Let the plugin exclude the item; its list shrinks at once, then refreshes."""
+        config = self.host.config(hit.plugin_id, self.settings().plugins)
+        dialogs = self.questions.dialogs(parent)
+
+        def finished(excluded: bool) -> None:
+            if excluded:
+                self.items_changed.emit()
+                self.refresh(hit.plugin_id)
+            done(excluded)
+
+        self.tasks.submit(
+            TaskCategory.PLUGIN,
+            partial(self.host.exclude, hit, config, dialogs),
+            finished,
+            failed,
         )
 
     def close(self) -> None:
@@ -243,7 +298,7 @@ class PluginScheduler(QObject):
 
 
 class Questions(QObject):
-    """Asks the user on the GUI thread for a plugin worker that waits for the answer."""
+    """Shows dialogs on the GUI thread for a plugin worker that waits for the answer."""
 
     _asked = Signal(object)
 
@@ -253,9 +308,39 @@ class Questions(QObject):
         self._closed = False
         self._asked.connect(self._show, Qt.ConnectionType.QueuedConnection)
 
-    def ask(self, parent: QWidget | None, title: str, text: str, *, secret: bool = False):
-        """Called on a worker thread; blocks until the user answers or cancels."""
-        question = _Question(parent, title, text, secret)
+    def ask(
+        self, parent: QWidget | None, title: str, text: str, *, secret: bool = False
+    ) -> str | None:
+        """One line of text. Called on a worker thread; blocks until answered."""
+        return self._wait(partial(ask_text, parent, title, text, secret=secret))
+
+    def choose(
+        self, parent: QWidget | None, title: str, text: str, choices: Sequence[Choice]
+    ) -> frozenset[str] | None:
+        """The ticked keys of a checklist. Called on a worker thread; blocks until answered."""
+        return self._wait(partial(choose_items, parent, title, text, tuple(choices)))
+
+    def form(
+        self, parent: QWidget | None, title: str, text: str, fields: Sequence[PluginOption]
+    ) -> dict[str, OptionValue] | None:
+        """The saved values of a form. Called on a worker thread; blocks until answered."""
+        return self._wait(partial(fill_form, parent, title, text, tuple(fields)))
+
+    def dialogs(self, parent: QWidget | None) -> CommandDialogs:
+        """Every dialog a command may show, owned by `parent`."""
+        return CommandDialogs(
+            ask=partial(self.ask, parent),
+            choose=partial(self.choose, parent),
+            form=partial(self.form, parent),
+        )
+
+    def close(self) -> None:
+        self._closed = True
+        for question in self._pending:
+            question.answered.set()
+
+    def _wait(self, show: Callable[[], object]):
+        question = _Question(show)
         if self._closed:
             return None
         self._pending.append(question)
@@ -263,17 +348,10 @@ class Questions(QObject):
         question.answered.wait(QUESTION_TIMEOUT_S)
         return question.answer
 
-    def close(self) -> None:
-        self._closed = True
-        for question in self._pending:
-            question.answered.set()
-
     def _show(self, question: _Question) -> None:
         try:
             if not self._closed:
-                question.answer = ask_text(
-                    question.parent, question.title, question.text, secret=question.secret
-                )
+                question.answer = question.show()
         finally:
             if question in self._pending:
                 self._pending.remove(question)
@@ -281,9 +359,11 @@ class Questions(QObject):
 
 
 class _Question:
-    def __init__(self, parent: QWidget | None, title: str, text: str, secret: bool):
-        self.parent, self.title, self.text, self.secret = parent, title, text, secret
-        self.answer: str | None = None
+    """A dialog a worker waits for; `show` runs on the GUI thread and returns the answer."""
+
+    def __init__(self, show: Callable[[], object]):
+        self.show = show
+        self.answer: object = None
         self.answered = threading.Event()
 
 

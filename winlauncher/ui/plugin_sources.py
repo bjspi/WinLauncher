@@ -17,6 +17,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from winlauncher.connectivity import automatic_network_off
 from winlauncher.platform.git import checkout_root
 from winlauncher.plugins.config import source_key
 from winlauncher.plugins.packages import install_packages
@@ -85,6 +86,8 @@ class SourceWatcher(QObject):
             self._read,
             partial(logger.warning, "Plugin sources could not be read: %s"),
         )
+        if automatic_network_off():
+            return
         self._timer.start()
         QTimer.singleShot(FIRST_CHECK_DELAY_MS, self, self.check)
 

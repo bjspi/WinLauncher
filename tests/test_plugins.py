@@ -17,13 +17,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from winlauncher.calculator import Calculation
 from winlauncher.catalog.model import CatalogItem, ItemKind
-from winlauncher.connectivity import InternetState, InternetStatus
+from winlauncher.connectivity import OFFLINE_VARIABLE, InternetState, InternetStatus
 from winlauncher.plugins.api import (
     MAX_CHIPS,
+    Answer,
     Chip,
     ChipTone,
+    Choice,
     Plugin,
+    PluginAction,
     PluginCommand,
     PluginError,
     PluginItem,
@@ -33,7 +37,7 @@ from winlauncher.plugins.api import (
 )
 from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
 from winlauncher.plugins.config import PluginConfig
-from winlauncher.plugins.host import CACHE_FILE, PluginHost
+from winlauncher.plugins.host import CACHE_FILE, CommandDialogs, ItemMenu, PluginHost
 from winlauncher.plugins.registry import Discovery, PluginSource, discover_plugins
 from winlauncher.plugins.search import (
     CHECKPOINT_INTERVAL_S,
@@ -52,6 +56,7 @@ from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.settings import Settings, SettingsFile, settings_from_json
 from winlauncher.ui.result_rows import result_row, shortened_breadcrumbs
+from winlauncher.ui.updater import ReleaseUpdater
 from winlauncher.websites import WebsiteShortcut
 
 ANNA = PluginItem("u1", "Anna Schmidt", target="tg://resolve?domain=anna", keywords=("annas",))
@@ -631,6 +636,108 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
                 commands = host.commands("fake")
         self.assertEqual([command.label for command in commands], ["Sign in"])
 
+    def test_commands_show_checklists_and_refreshes_cannot(self):
+        shown = []
+
+        def choose(title, text, choices):
+            shown.append((title, [choice.key for choice in choices]))
+            return frozenset({"b"})
+
+        def pick(context):
+            ticked = context.choose("Pick", "", [Choice("a", "A"), Choice("b", "B")])
+            return f"ticked {sorted(ticked)}"
+
+        command = PluginCommand("Pick…", pick)
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(Discovery([FakePlugin()]), Path(directory))
+            config = PluginConfig("fake", enabled=True)
+            message = host.run_command("fake", command, config, CommandDialogs(choose=choose))
+            with self.assertRaises(SetupRequired):
+                host.context("fake", config).choose("Pick", "", [])
+        self.assertEqual((message, shown), ("ticked ['b']", [("Pick", ["a", "b"])]))
+
+    def test_items_offer_the_plugins_actions_and_exclude(self):
+        class Excludes(FakePlugin):
+            def __init__(self, answer: bool):
+                super().__init__()
+                self.items = [ANNA]
+                self.answer, self.asked = answer, []
+
+            def actions(self, item):
+                return (PluginAction("Copy name", lambda item, context: item.name), "junk")
+
+            def exclude(self, item, context):
+                self.asked.append(context.choose("Exclude", "", [Choice(item.key, item.name)]))
+                return self.answer
+
+        hit = PluginHit("fake", "Fake", ANNA, 1.0, "fixture")
+        for answer, remaining in ((False, ["u1"]), (True, [])):
+            plugin = Excludes(answer)
+            with tempfile.TemporaryDirectory() as directory:
+                host = PluginHost(Discovery([plugin]), Path(directory))
+                config = PluginConfig("fake", enabled=True)
+                host.refresh("fake", config)
+                with self.assertLogs("winlauncher.plugins.host", "WARNING"):
+                    offered = host.item_menu(hit)
+                self.assertTrue(offered.can_exclude)
+                self.assertEqual([action.label for action in offered.actions], ["Copy name"])
+                ran = host.run_item_action(hit, offered.actions[0], config, CommandDialogs())
+                self.assertEqual(ran, "Anna Schmidt")
+                dialogs = CommandDialogs(choose=lambda title, text, choices: frozenset({"u1"}))
+                self.assertIs(host.exclude(hit, config, dialogs), answer)
+                self.assertEqual(plugin.asked, [frozenset({"u1"})])
+                self.assertEqual([item.key for item in host.state("fake").items], remaining)
+                cached = json.loads(host.data_dir.joinpath("fake", CACHE_FILE).read_text())
+                self.assertEqual([item["key"] for item in cached["items"]], remaining)
+
+    def test_the_first_enabled_plugin_that_answers_wins(self):
+        class Converts(FakePlugin):
+            def answer(self, text, context):
+                if text == "boom":
+                    raise RuntimeError("broken")
+                if text == "odd":
+                    return "not an Answer"
+                count = context.options["count"]
+                return Answer(f"{count} km", "detail") if text.startswith("km") else None
+
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(Discovery([Converts()]), Path(directory))
+            on = (PluginConfig("fake", enabled=True, options={"count": 4}),)
+            off = (PluginConfig("fake", enabled=False),)
+            self.assertTrue(host.answering(on))
+            self.assertFalse(host.answering(off))
+            self.assertEqual(host.answer(" km ", on), Calculation("km", "4 km", "detail"))
+            self.assertIsNone(host.answer("km", off))
+            self.assertIsNone(host.answer("files", on))
+            with self.assertLogs("winlauncher.plugins.host", "ERROR"):
+                self.assertIsNone(host.answer("boom", on))
+            with self.assertLogs("winlauncher.plugins.host", "WARNING"):
+                self.assertIsNone(host.answer("odd", on))
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(PluginHost(Discovery([FakePlugin()]), Path(directory)).answering(on))
+
+    def test_answers_need_a_result(self):
+        with self.assertRaisesRegex(ValueError, "needs a result"):
+            Answer(" ")
+        with self.assertRaisesRegex(ValueError, "detail must be text"):
+            Answer("1", None)
+
+    def test_plugins_without_exclude_offer_none(self):
+        hit = PluginHit("fake", "Fake", ANNA, 1.0, "fixture")
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(Discovery([FakePlugin()]), Path(directory))
+            self.assertEqual(host.item_menu(hit), ItemMenu())
+
+    def test_choices_need_a_key_and_a_label(self):
+        for fields, expected in (
+            ({"key": "", "label": "A"}, "needs a key"),
+            ({"key": "a", "label": " "}, "needs a label"),
+            ({"key": "a", "label": "A", "detail": None}, "detail must be text"),
+        ):
+            with self.subTest(expected=expected), self.assertRaises(ValueError) as caught:
+                Choice(**fields)
+            self.assertIn(expected, str(caught.exception))
+
     def test_sys_exit_while_loading_a_plugin_only_skips_that_plugin(self):
         at_import = "import sys; sys.exit(3)"
         in_init = """
@@ -795,6 +902,34 @@ class PluginUiTest(unittest.TestCase):
         self.tasks.finish(self._category("PLUGIN_OPEN"))
         self.assertEqual(self.plugin.opened, [ANNA])
 
+    def test_excluding_a_plugin_item_removes_it_and_continues_the_search(self):
+        plugin = self.plugin
+
+        def exclude(self, item, context):
+            plugin.items = [listed for listed in plugin.items if listed.key != item.key]
+            return True
+
+        hit = next(row for row in self.search("anna") if row.name == "Fake: Anna Schmidt").hit
+        with patch.object(FakePlugin, "exclude", exclude, create=False):
+            self.assertTrue(self.controller.plugins.item_menu(hit).can_exclude)
+            self.controller.exclude_plugin_item(hit)
+            self.assertTrue(self.controller.search_paused)
+            self.tasks.finish(self._category("PLUGIN"))
+        self.assertFalse(self.controller.search_paused)
+        self.assertNotIn(ANNA, self.controller.plugins.state("fake").items)
+        names = [row.name for row in self.search("anna")]
+        self.assertNotIn("Fake: Anna Schmidt", names)
+        self.assertIn("Anna notes.txt", names)
+
+    def test_a_plugin_action_runs_on_the_plugin_pool_and_shows_its_message(self):
+        hit = next(row for row in self.search("anna") if row.name == "Fake: Anna Schmidt").hit
+        action = PluginAction("Greet", lambda item, context: f"Hello {item.name}")
+        with patch("winlauncher.ui.controller.messages.message") as shown:
+            self.controller.run_plugin_action(hit, action)
+            shown.assert_not_called()
+            self.tasks.finish(self._category("PLUGIN"))
+        self.assertEqual(shown.call_args.args[1:3], ("Greet", "Hello Anna Schmidt"))
+
     def test_refresh_catalog_also_refreshes_enabled_plugins(self):
         self.controller.rescan()
         self.assertEqual(self.tasks.count(self._category("PLUGIN")), 1)
@@ -874,6 +1009,23 @@ class PluginUiTest(unittest.TestCase):
         self.tasks.finish(self._category("PLUGIN"))
         self.assertEqual(len(self.plugin.contexts), calls)
         self.assertFalse(scheduler.is_refreshing("fake"))
+
+    def test_an_offline_instance_contacts_nothing_on_its_own(self):
+        network = self._category("NETWORK")
+        sources = self._category("PLUGIN_SOURCE")
+        scheduler, watcher = self.controller.plugin_refresh, self.controller.plugin_sources
+        scheduler._checking_internet = False
+        before = (self.tasks.count(network), self.tasks.count(sources))
+        updater = ReleaseUpdater(self.controller)
+        with patch.dict(os.environ, {OFFLINE_VARIABLE: "1"}):
+            scheduler._check_internet()
+            watcher._timer.stop()
+            watcher.start()  # Reads the sources on disk, asks no remote.
+            updater.start_watching()
+        self.assertEqual(self.tasks.count(network), before[0])
+        self.assertEqual(self.tasks.count(sources), before[1] + 1)
+        self.assertFalse(watcher._timer.isActive())
+        self.assertFalse(updater._timer.isActive())
 
     def test_connectivity_checks_use_their_own_worker_and_stop_with_scheduler(self):
         scheduler = self.controller.plugin_refresh

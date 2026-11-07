@@ -18,18 +18,25 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
+from winlauncher.calculator import Calculation
 from winlauncher.catalog.model import normalize
 from winlauncher.connectivity import InternetState, InternetStatus
 from winlauncher.plugins.api import (
     PLUGIN_FAILURES,
+    Answer,
     Ask,
     Chip,
+    Choose,
+    Form,
     Plugin,
+    PluginAction,
     PluginCommand,
     PluginContext,
     PluginError,
     PluginItem,
     SetupRequired,
+    no_choices,
+    no_form,
     no_questions,
 )
 from winlauncher.plugins.budget import SearchBudget, SearchRecord
@@ -51,6 +58,23 @@ from winlauncher.search.query import SearchQuery
 MAX_ITEMS = 5000  # Per plugin; more would slow down every keystroke.
 CACHE_FILE = "items.json"
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class CommandDialogs:
+    """The dialogs a settings button's command may show; refreshes and opening get none."""
+
+    ask: Ask = no_questions
+    choose: Choose = no_choices
+    form: Form = no_form
+
+
+@dataclass(frozen=True, slots=True)
+class ItemMenu:
+    """What a plugin item's menu offers besides opening and copying it."""
+
+    actions: tuple[PluginAction, ...] = ()  # The plugin's own entries.
+    can_exclude: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +206,7 @@ class PluginHost:
         plugin_id: str,
         config: PluginConfig,
         cancel: threading.Event | None = None,
-        ask: Ask = no_questions,
+        dialogs: CommandDialogs | None = None,
     ) -> PluginContext:
         plugin = self._entries[plugin_id].plugin
         folder = self.data_dir / plugin_id
@@ -190,11 +214,14 @@ class PluginHost:
         options = {
             option.key: option.value(config.options.get(option.key)) for option in plugin.options
         }
+        dialogs = dialogs or CommandDialogs()
         return PluginContext(
             data_dir=folder,
             options=options,
             cancel=cancel or threading.Event(),
-            ask=ask,
+            ask=dialogs.ask,
+            choose=dialogs.choose,
+            form=dialogs.form,
             log=logging.getLogger(f"winlauncher.plugins.{plugin_id}"),
             internet=self.internet_state,
         )
@@ -439,6 +466,94 @@ class PluginHost:
         plugin = self._entries[hit.plugin_id].plugin
         plugin.open(hit.item, self.context(hit.plugin_id, config))
 
+    def answering(self, configs: Sequence[PluginConfig]) -> bool:
+        """Whether any enabled plugin answers typed text."""
+        return any(self._entries[c.id].plugin.answers() for c in self.enabled(configs))
+
+    def answer(self, text: str, configs: Sequence[PluginConfig]) -> Calculation | None:
+        """The first enabled plugin's answer to `text`; runs on the answer worker.
+
+        A plugin that fails is logged and skipped, so another one may still answer.
+        No lock: a refresh of the same plugin may run meanwhile. Plugins get the
+        text without surrounding spaces.
+        """
+        text = text.strip()
+        for config in self.enabled(configs):
+            plugin = self._entries[config.id].plugin
+            if not plugin.answers():
+                continue
+            try:
+                found = plugin.answer(text, self.context(config.id, config))
+            except PLUGIN_FAILURES:
+                logger.exception("Plugin %s failed to answer", config.id)
+                continue
+            if isinstance(found, Answer):
+                return Calculation(text, found.result, found.detail)
+            if found is not None:
+                logger.warning("Plugin %s answered with %s, not Answer", config.id, type(found))
+        return None
+
+    def item_menu(self, hit: PluginHit) -> ItemMenu:
+        """What the item's menu offers besides opening and copying it.
+
+        Runs on the GUI thread while the menu opens, so a failing plugin only loses
+        its entries.
+        """
+        plugin = self._entries[hit.plugin_id].plugin
+        return ItemMenu(self._item_actions(hit), plugin.can_exclude())
+
+    def _item_actions(self, hit: PluginHit) -> tuple[PluginAction, ...]:
+        """The plugin's own entries for the item's menu; anything unusable is ignored."""
+        try:
+            declared = tuple(self._entries[hit.plugin_id].plugin.actions(hit.item))
+        except PLUGIN_FAILURES:
+            logger.exception("Plugin %s item actions unavailable", hit.plugin_id)
+            return ()
+        usable = tuple(
+            action
+            for action in declared
+            if isinstance(action, PluginAction)
+            and isinstance(action.label, str)
+            and action.label.strip()
+            and callable(action.run)
+        )
+        if len(usable) != len(declared):
+            logger.warning("Plugin %s declared unusable item actions", hit.plugin_id)
+        return usable
+
+    def run_item_action(
+        self, hit: PluginHit, action: PluginAction, config: PluginConfig, dialogs: CommandDialogs
+    ) -> str | None:
+        """Run one of the item's own menu entries; it may show dialogs. Runs on a worker."""
+        entry = self._entries[hit.plugin_id]
+        with entry.lock:
+            return action.run(hit.item, self.context(hit.plugin_id, config, dialogs=dialogs))
+
+    def exclude(self, hit: PluginHit, config: PluginConfig, dialogs: CommandDialogs) -> bool:
+        """Let the plugin exclude the item, and drop it at once; runs on a worker.
+
+        The plugin may exclude more than this item, such as its whole folder; the
+        refresh that follows removes those.
+        """
+        entry = self._entries[hit.plugin_id]
+        with entry.lock:
+            excluded = entry.plugin.exclude(
+                hit.item, self.context(hit.plugin_id, config, dialogs=dialogs)
+            )
+            if excluded:
+                self._drop(entry, hit.item.key)
+        return bool(excluded)
+
+    def _drop(self, entry: _Entry, key: str) -> None:
+        """Remove one item from the listed and cached items."""
+        state = entry.state
+        items = tuple(item for item in state.items if item.key != key)
+        if len(items) == len(state.items):
+            return
+        if state.refreshed is not None:
+            self._write_cache(entry.plugin.id, items, state.refreshed)
+        self._set(entry, replace(state, items=items))
+
     def commands(self, plugin_id: str) -> tuple[PluginCommand, ...]:
         """The plugin's settings buttons; anything else it returns is ignored.
 
@@ -462,12 +577,16 @@ class PluginHost:
         return usable
 
     def run_command(
-        self, plugin_id: str, command: PluginCommand, config: PluginConfig, ask: Ask
+        self,
+        plugin_id: str,
+        command: PluginCommand,
+        config: PluginConfig,
+        dialogs: CommandDialogs,
     ) -> str | None:
-        """Run a settings button's command; it may ask questions. Runs on a worker."""
+        """Run a settings button's command; it may show dialogs. Runs on a worker."""
         entry = self._entries[plugin_id]
         with entry.lock:
-            message = command.run(self.context(plugin_id, config, ask=ask))
+            message = command.run(self.context(plugin_id, config, dialogs=dialogs))
         if command.forgets_items:
             self.forget(plugin_id)
         return message

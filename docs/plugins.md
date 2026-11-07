@@ -275,9 +275,34 @@ class Notes(Plugin):
   URI such as `tg://…`, `msteams:/…`, `mailto:` or `https://…`, or a file path,
   opens in its registered program.
 - `commands()` returns `PluginCommand(label, run)` buttons for the settings card,
-  such as *Sign in…*. `run(context)` may call
-  `context.ask(title, text, secret=False)` to ask for a line of text and returns a
-  message to show. With `forgets_items=True`, the list is dropped afterwards.
+  such as *Sign in…*. `run(context)` returns a message to show and may open
+  dialogs, each returning `None` when cancelled:
+  - `context.ask(title, text, secret=False)`: a line of text.
+  - `context.choose(title, text, choices)`: a checklist with a filter. `choices`
+    are `Choice(key, label, detail="", checked=False)` rows; it returns the
+    `frozenset` of the ticked keys.
+  - `context.form(title, text, fields)`: `PluginOption` fields with the editors of
+    the settings card — switches, numbers, a line or a multiline text box — each
+    starting at its `default`; it returns the values by key.
+
+  With `forgets_items=True`, the list is dropped afterwards.
+- `answer(text, context)` may answer the typed text itself, as `Answer(result,
+  detail="")`, shown above the results like a calculation: Enter copies `result`,
+  `detail` is muted beside it. It is asked shortly after typing pauses, on a worker
+  of its own, possibly while a refresh runs: keep it quick, thread-safe and off
+  the network, and answer only text whose whole shape you recognize. Return `None`
+  otherwise. Arithmetic answers first, without plugins.
+- `actions(item)` returns `PluginAction(label, run, refreshes=False)` entries for
+  the item's right-click menu. It is called while the menu opens, so it must only
+  look at `item`; `run(item, context)` runs on a worker, may show the same dialogs
+  as a command and returns a message or `None`.
+- `exclude(item, context)`, when a plugin defines it, puts **Exclude…** into every
+  item's menu. The plugin decides what to leave out — the item, its folder, a
+  pattern — usually after a short `context.choose` or `context.form`, keeps that in
+  its data folder and returns `True`, or `False` when cancelled. WinLauncher drops
+  the item at once and refreshes the plugin. The dialogs, actions and Exclude… exist
+  since WinLauncher 0.17: a plugin that also runs on older versions checks
+  `getattr(context, "choose", None)` first.
 - `context.data_dir` is the plugin's own folder for caches, sessions and pictures.
   `context.options` holds the validated values of `options`. A long refresh
   should stop when `context.cancel` is set. `context.log` writes to

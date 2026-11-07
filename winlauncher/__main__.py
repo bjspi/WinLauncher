@@ -328,7 +328,10 @@ def main() -> int:
         _serve_show_requests(server, controller)
         app.aboutToQuit.connect(controller.close)
         # WinLauncher starts quietly in the tray; without a tray it would be unreachable.
-        if args.show or not QSystemTrayIcon.isSystemTrayAvailable():
+        # The very first start introduces it instead.
+        if controller.first_start:
+            QTimer.singleShot(0, controller.welcome)
+        elif args.show or not QSystemTrayIcon.isSystemTrayAvailable():
             controller.window.present()
         QTimer.singleShot(0, timings.report)  # After the work the controller queued.
         return app.exec()

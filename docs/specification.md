@@ -119,6 +119,14 @@ periodic refresh to rediscover removal of their marker.
 
 ## Query language
 
+The text `?` alone, or `?` followed by a space and words, asks for the syntax
+instead of searching (`search/syntax_help.py`): the results are the filters with
+an example and their meaning, then the user's website keywords and the keywords of
+enabled plugins, only those containing every typed word, ignoring case. Choosing
+one replaces the query with the filter, such as `date:`, and keeps the bar open;
+Ctrl+C copies it. `?eport` and other text that merely starts with `?` stays a
+wildcard search.
+
 Queries are limited to 512 characters, terms to 128 characters; control characters
 and invalid operator values are rejected with a message naming the operator and its
 accepted values. Double-quoted tokens preserve spaces; an empty quoted token (`""`)
@@ -544,6 +552,15 @@ query text changes from a Tab scope to an Explorer session. A tool's context men
 offers Run here, Copy command and Settings; clipboard and drag data contain its
 expanded command line as plain text. File-only actions do not apply.
 
+Plugins answer in the same row when arithmetic does not (`Plugin.answer`,
+`ui/answers.py`): 60 ms after typing pauses, the trimmed text goes to each enabled
+plugin that defines `answer`, in settings order, on the answer worker of its own;
+the first `Answer` wins. A plugin that raises is logged and skipped. The answer
+shows only while the text it answers is still the typed text; while one question
+runs, typing waits for it and then asks once with the newest text. Explorer's bar
+asks nothing. An answer's `result` is what Enter copies; its `detail` is shown
+muted beside it.
+
 When the query is a calculation (`winlauncher/calculator.py`), the launcher shows
 its result in a row above the results and selects it: Enter or a click copies the
 result, Down moves to the first result and Up from there returns to the
@@ -565,6 +582,20 @@ with, Send to, 7-Zip and so on). Shift+right-click opens it directly, including
 the extended entries Explorer shows with Shift. A hidden owner window passes menu
 messages to the shell's IContextMenu3 so lazily filled submenus work; the bar
 closes after a command runs.
+
+A file's menu has **Open with…** below Open: Windows' own dialog
+(`SHOpenWithDialog`, on a thread of its own so no launch waits for it) lets the
+user pick a program, and offers to always use it for the file type. Folders and
+applications have no such entry.
+
+A plugin item's menu has Open in its program, the plugin's own entries
+(`Plugin.actions(item)`, asked on the GUI thread when the menu opens; entries that
+are not usable `PluginAction` values are dropped), Copy, then **Exclude…** if the
+plugin defines `exclude`, and Settings…. An entry or Exclude… runs on the plugin
+pool with the dialogs of a settings button; the bar's search stays open
+meanwhile and runs again afterwards. When `exclude` returns true the item leaves
+the list and the item cache at once, and the plugin refreshes. A failure is shown
+like any failed action, and a message an entry returns is shown afterwards.
 
 Below Open and Show in containing folder, the menu lists the user's own commands
 from Settings → Context menu: a title, a single-line command line and whether it
@@ -680,6 +711,17 @@ Saving changed options of an enabled plugin refreshes it at once, so its list fo
 them, such as an exclusion list; a refresh already running is followed by another
 one with the new options. Changed keywords, routes, boost or **In every search**
 refresh nothing.
+
+A settings button's command may show three dialogs, owned by the Settings
+window, while its worker waits (at most 10 minutes, and never past shutdown):
+`context.ask` asks for one line of text, optionally hidden as a password;
+`context.choose` shows a checklist of `Choice` rows (key, label, muted detail,
+ticked or not) with a filter above them and **All** / **None** helpers that tick or
+untick the rows the filter shows, and returns the keys left ticked, hidden rows
+included; `context.form` shows `PluginOption` fields on a card with the editors of
+the plugin's settings card, each starting at its default, and returns the values
+by key, validated like stored options. Cancel returns `None`. A refresh or open
+call that tries one raises `SetupRequired`.
 Its last list stays searchable during a refresh and after a failed one. A plugin
 that needs setup loses its list. **Refresh catalog** in the tray or the bar's menu also refreshes every enabled
 plugin; each plugin's settings card has **Refresh now**. A plugin lists at most 5,000 items; later items
@@ -802,6 +844,21 @@ page. Clones of sources no longer listed are deleted. A new version of an
 installed plugin is announced once in a tray message.
 
 ## Tray, settings and autostart
+
+The first start, recognized by a missing settings file, shows a welcome instead of
+starting silently in the tray: the shortcuts that open the bar, the indexed folders
+(four by name, the rest counted), three tips and a **Start with Windows** switch
+showing the Startup shortcut's state. **Start searching** applies the switch and
+opens the bar; **Choose folders…** applies it and opens Settings on Search
+folders. Later starts never show it.
+
+**Settings → General → Settings file**: **Export…** writes the settings as the
+dialog shows them, unsaved edits included, as the same JSON as `settings.json`, to
+a file the user picks. **Import…** reads such a file, validated like
+`settings.json`; an unreadable or unusable file changes nothing and says why.
+After confirming, every setting is replaced and saved, and Settings reopens
+showing them. Autostart, plugin data such as sign-ins, the catalog and the history
+are not part of it.
 
 On Windows x64, WinLauncher runs inside its own small `winlauncher.exe` host with
 the WinLauncher icon and file description, so Windows can identify it separately

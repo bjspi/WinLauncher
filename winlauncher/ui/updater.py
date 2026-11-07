@@ -21,6 +21,7 @@ from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, QUrl,
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from winlauncher import __version__
+from winlauncher.connectivity import automatic_network_off
 from winlauncher.platform.git import checkout_root, current_head, git_available
 from winlauncher.releases import (
     REPOSITORY_URL,
@@ -94,7 +95,7 @@ class ReleaseUpdater(QObject):
         return self._update is not None
 
     def start_watching(self) -> None:
-        if not self.supported or self._timer.isActive():
+        if not self.supported or self._timer.isActive() or automatic_network_off():
             return
         self._timer.start()
         QTimer.singleShot(FIRST_CHECK_DELAY_MS, self._check_in_background)

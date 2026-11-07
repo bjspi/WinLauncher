@@ -49,6 +49,8 @@ class CalculationError(ValueError):
 class Calculation:
     expression: str
     result: str  # Formatted for display and the clipboard.
+    # Shown muted beside the result, never copied: what was converted, a rate's date.
+    detail: str = ""
 
 
 @dataclass(frozen=True, slots=True)

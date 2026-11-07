@@ -7,6 +7,7 @@ import functools
 import logging
 import os
 import subprocess
+import threading
 from collections.abc import Iterator
 from ctypes import wintypes
 from pathlib import Path
@@ -44,6 +45,11 @@ FOLDER_SHORTCUTS = (
     "PublicDesktop",
     "PublicDocuments",
 )
+# SHOpenWithDialog: run the chosen program, and offer "Always use this app".
+OAIF_ALLOW_REGISTRATION, OAIF_REGISTER_EXT, OAIF_EXEC = 0x1, 0x2, 0x4
+OPEN_WITH_FLAGS = OAIF_ALLOW_REGISTRATION | OAIF_REGISTER_EXT | OAIF_EXEC
+COINIT_APARTMENTTHREADED = 0x2
+ERROR_CANCELLED_HRESULT = -2147023673  # HRESULT_FROM_WIN32(ERROR_CANCELLED), signed.
 logger = logging.getLogger(__name__)
 
 
@@ -145,6 +151,39 @@ def _is_executable_path(path: Path) -> bool:
 def open_path(path: Path) -> None:
     _require_existing(path)
     os.startfile(str(path), cwd=str(path.parent))
+
+
+class _OpenAsInfo(ctypes.Structure):
+    _fields_ = (
+        ("pcszFile", wintypes.LPCWSTR),
+        ("pcszClass", wintypes.LPCWSTR),
+        ("oaifInFlags", ctypes.c_int),
+    )
+
+
+def open_with(path: Path) -> None:
+    """Windows' own Open with dialog for `path`, as Explorer shows it.
+
+    The dialog is modal and blocks its thread until the user chose, so it gets a
+    thread of its own instead of holding up the launcher's action worker.
+    """
+    _require_existing(path)
+    threading.Thread(target=_open_with_dialog, args=(path,), name="open-with", daemon=True).start()
+
+
+def _open_with_dialog(path: Path) -> None:
+    ole32 = ctypes.WinDLL("ole32")
+    shell32 = ctypes.WinDLL("shell32")
+    shell32.SHOpenWithDialog.argtypes = (wintypes.HWND, ctypes.POINTER(_OpenAsInfo))
+    shell32.SHOpenWithDialog.restype = ctypes.c_long
+    ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+    try:
+        info = _OpenAsInfo(str(path), None, OPEN_WITH_FLAGS)
+        result = shell32.SHOpenWithDialog(None, ctypes.byref(info))
+        if result < 0 and result != ERROR_CANCELLED_HRESULT:
+            logger.warning("Open with failed for %s: HRESULT 0x%08X", path, result & 0xFFFFFFFF)
+    finally:
+        ole32.CoUninitialize()
 
 
 def show_in_folder(path: Path) -> None:

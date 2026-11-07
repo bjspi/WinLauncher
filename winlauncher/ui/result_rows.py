@@ -20,9 +20,10 @@ from winlauncher.plugins.search import PluginHit
 from winlauncher.search.commands import CommandHit
 from winlauncher.search.query import SearchQuery
 from winlauncher.search.ranking import SearchHit
+from winlauncher.search.syntax_help import SyntaxTip
 from winlauncher.websites import WebsiteTarget
 
-LauncherHit: TypeAlias = SearchHit | WebsiteTarget | PluginHit | CommandHit
+LauncherHit: TypeAlias = SearchHit | WebsiteTarget | PluginHit | CommandHit | SyntaxTip
 WEBSITE_REASON = "Opens in your default browser"
 MISSING_LABEL = "Deleted"
 BREADCRUMB_SEPARATOR = " › "
@@ -78,6 +79,8 @@ def result_row(
         return _plugin_row(hit)
     if isinstance(hit, CommandHit):
         return _command_row(hit)
+    if isinstance(hit, SyntaxTip):
+        return _syntax_row(hit)
     row = _file_row(hit, query, scope)
     return _as_missing(row) if missing else row
 
@@ -95,6 +98,20 @@ def _command_row(hit: CommandHit) -> ResultRow:
         detail=description,
         tooltip=description,
         accessible_text=f"{hit.command.title}, run here\n{description}",
+    )
+
+
+def _syntax_row(tip: SyntaxTip) -> ResultRow:
+    """A filter of the search syntax; choosing it types the filter."""
+    return ResultRow(
+        hit=tip,
+        name=tip.example,
+        location=tip.meaning,
+        target=tip.insert,
+        target_noun="Filter",
+        detail=tip.meaning,
+        tooltip=tip.meaning,
+        accessible_text=f"{tip.example}, {tip.meaning}",
     )
 
 

@@ -21,7 +21,7 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPixmap, QShowEvent
+from PySide6.QtGui import QColor, QIcon, QIntValidator, QMouseEvent, QPainter, QPixmap, QShowEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -43,6 +44,7 @@ from PySide6.QtWidgets import (
 from winlauncher.ui.dialogs import run_modal
 from winlauncher.ui.theme import colors, theme
 
+NUMBER_FIELD_WIDTH = 88
 ICONS = Path(__file__).with_name("assets") / "icons"
 ICON_TINT_PLACEHOLDER = "#000000"  # The stroke color the SVG files are drawn with.
 ICON_SIZES = (16, 18, 20, 24, 32)
@@ -77,6 +79,17 @@ def pick_path(parent: QWidget, title: str, filters: str | None = None) -> Path |
     else:
         dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         dialog.setNameFilters(filters.split(";;"))
+    chosen = dialog.selectedFiles() if run_modal(dialog) else []
+    dialog.deleteLater()
+    return Path(chosen[0]) if chosen else None
+
+
+def pick_save_path(parent: QWidget, title: str, name: str, filters: str) -> Path | None:
+    """Where to save a new file, suggesting `name`; None if cancelled. Modal like `pick_path`."""
+    dialog = QFileDialog(parent, title)
+    dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+    dialog.setNameFilters(filters.split(";;"))
+    dialog.selectFile(name)
     chosen = dialog.selectedFiles() if run_modal(dialog) else []
     dialog.deleteLater()
     return Path(chosen[0]) if chosen else None
@@ -370,6 +383,55 @@ def _texts(title: str, description: str) -> QVBoxLayout:
         detail.setWordWrap(True)
         layout.addWidget(detail)
     return layout
+
+
+class NumberField(QLineEdit):
+    """A whole number within `bounds`; arrow keys and the wheel step by one.
+
+    Not a `QSpinBox`: Qt 6.12 collapses the text area of style-sheet spin boxes
+    without buttons, which leaves them empty and impossible to type into.
+    """
+
+    def __init__(self, bounds: tuple[int, int], value: int, unit: str = ""):
+        super().__init__()
+        self.bounds = bounds
+        self._last_valid = value
+        self.setValidator(QIntValidator(*bounds, self))
+        self.setValue(value)
+        unit_text = f" {unit}" if unit else ""
+        self.setToolTip(f"{bounds[0]}–{bounds[1]}{unit_text}; type a value or use the arrow keys")
+
+    def value(self) -> int:
+        """The typed number clamped to `bounds`; the last valid value while empty."""
+        try:
+            number = int(self.text())
+        except ValueError:
+            return self._last_valid
+        return min(max(number, self.bounds[0]), self.bounds[1])
+
+    def setValue(self, value: int) -> None:  # noqa: N802 - mirrors QSpinBox.
+        self._last_valid = min(max(value, self.bounds[0]), self.bounds[1])
+        self.setText(str(self._last_valid))
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override.
+        steps = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())
+        if steps is None:
+            super().keyPressEvent(event)
+        else:
+            self.setValue(self.value() + steps)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override.
+        if self.hasFocus() and event.angleDelta().y():
+            self.setValue(self.value() + (1 if event.angleDelta().y() > 0 else -1))
+        else:
+            super().wheelEvent(event)
+
+
+def sized_number(field: NumberField) -> NumberField:
+    """A number field as wide as the others in Settings, its digits at the right."""
+    field.setFixedWidth(NUMBER_FIELD_WIDTH)
+    field.setAlignment(Qt.AlignmentFlag.AlignRight)
+    return field
 
 
 class InfoDialog(QDialog):

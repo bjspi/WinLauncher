@@ -71,6 +71,10 @@ class ItemActions:
     def reveal(self, path: Path) -> None:
         shell.show_in_folder(path)
 
+    def open_with(self, path: Path) -> None:
+        """Windows' Open with dialog; the launch it makes is not WinLauncher's to count."""
+        shell.open_with(path)
+
     def select_in_explorer(self, path: Path, explorer: ExplorerTarget) -> None:
         """Select `path`, or the subfolder that contains it, in the Explorer tab."""
         entry = explorer.entry_for(path)

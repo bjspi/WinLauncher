@@ -1,7 +1,18 @@
 """Internet reachability hints shared by the launcher and its plugins."""
 
+import os
 from dataclasses import dataclass
 from enum import StrEnum
+
+# Set to 1, WinLauncher contacts nothing on its own: no internet check, update check,
+# or plugin source check. Test runs set it for the instances they
+# start, which a firewall would otherwise ask about, from a new temporary path each
+# time. What the user starts, such as Update or Install, still goes online.
+OFFLINE_VARIABLE = "WINLAUNCHER_OFFLINE"
+
+
+def automatic_network_off() -> bool:
+    return os.environ.get(OFFLINE_VARIABLE, "") not in ("", "0")
 
 
 class InternetStatus(StrEnum):
