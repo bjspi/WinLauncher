@@ -757,9 +757,7 @@ class LauncherController(QObject):
         """Introduce WinLauncher at its first start, then show the bar to try it."""
         self._sync_autostart()
         available = os.name == "nt"
-        dialog = WelcomeDialog(
-            self.settings.roots, autostart=self.tray.autostart.isChecked() if available else None
-        )
+        dialog = WelcomeDialog(self.settings.roots, autostart_available=available)
         accepted = run_modal(dialog)
         start_with_windows, wants_folders = dialog.autostart.isChecked(), dialog.wants_folders
         dialog.deleteLater()

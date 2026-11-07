@@ -216,7 +216,8 @@ class UiFlowTest(unittest.TestCase):
     def test_the_welcome_shows_the_bar_or_the_folder_settings(self):
         def answer(folders: bool):
             def run(dialog):
-                self.assertIn(str(self.root), dialog.findChild(QLabel, "factValue").text())
+                self.assertIn(self.root.name, dialog.findChild(QLabel, "factValue").text())
+                self.assertEqual(dialog.autostart.isChecked(), os.name == "nt")
                 if folders:
                     dialog._choose_folders()
                 else:
@@ -226,10 +227,16 @@ class UiFlowTest(unittest.TestCase):
             return patch("winlauncher.ui.controller.run_modal", run)
 
         self.window.hide()
+        # Never the real Startup folder: the switch is on at first and would be applied.
+        autostart = patch.object(self.controller, "_toggle_autostart_from_tray").start()
+        patch.object(self.controller, "_sync_autostart").start()  # Not this machine's state.
+        self.controller.tray.autostart.setChecked(False)
         with answer(False), patch.object(self.controller, "edit_settings") as settings:
             self.controller.welcome()
         self.assertTrue(self.window.isVisible())
         settings.assert_not_called()
+        if os.name == "nt":
+            autostart.assert_called_with(True)
         self.window.hide()
         with answer(True), patch.object(self.controller, "edit_settings") as settings:
             self.controller.welcome()

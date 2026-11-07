@@ -67,6 +67,7 @@ from winlauncher.ui.widgets import (
     NumberField,
     PageHeader,
     ToggleSwitch,
+    key_caps,
     line_icon,
     pick_path,
     pick_save_path,
@@ -231,30 +232,12 @@ SHORTCUTS = (
 )
 
 
-def _keys(*combinations: tuple[str, ...]) -> QWidget:
-    """Key caps for one or more key combinations, separated by "or"."""
-    keys = QWidget()
-    layout = QHBoxLayout(keys)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(4)
-    for index, combination in enumerate(combinations):
-        if index:
-            separator = QLabel("or")
-            separator.setObjectName("unit")
-            layout.addWidget(separator)
-        for key in combination:
-            cap = QLabel(key)
-            cap.setObjectName("kbd")
-            layout.addWidget(cap)
-    return keys
-
-
 def _shortcuts_page() -> list[QWidget]:
     sections: list[QWidget] = []
     for title, rows in SHORTCUTS:
         card = Card()
         for action, *combinations in rows:
-            card.add_row(action, "", _keys(*combinations))
+            card.add_row(action, "", key_caps(*combinations))
         sections += [section_title(title), card]
     return sections
 

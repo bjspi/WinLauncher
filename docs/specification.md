@@ -846,11 +846,12 @@ installed plugin is announced once in a tray message.
 ## Tray, settings and autostart
 
 The first start, recognized by a missing settings file, shows a welcome instead of
-starting silently in the tray: the shortcuts that open the bar, the indexed folders
-(four by name, the rest counted), three tips and a **Start with Windows** switch
-showing the Startup shortcut's state. **Start searching** applies the switch and
-opens the bar; **Choose folders…** applies it and opens Settings on Search
-folders. Later starts never show it.
+starting silently in the tray: the app icon large and centered, the shortcuts that
+open the bar as key caps, the indexed folders (by their path inside the user's
+profile, such as Documents, else in full; four by name, the rest counted), three
+tips and a **Start with Windows** switch, on at first. **Start searching** applies
+the switch and opens the bar; **Choose folders…** applies it and opens Settings on
+Search folders. Later starts never show it.
 
 **Settings → General → Settings file**: **Export…** writes the settings as the
 dialog shows them, unsaved edits included, as the same JSON as `settings.json`, to

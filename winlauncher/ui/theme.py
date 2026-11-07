@@ -355,6 +355,7 @@ QDialog#infoDialog { background: $field; }
 QWidget#infoBody { background: $field; }
 QWidget#infoFooter { background: $page; border-top: 1px solid $card_border; }
 QLabel#infoTitle { font-size: 15px; font-weight: 600; color: $title; }
+QLabel#heroTitle { font-size: 20px; font-weight: 600; color: $title; }
 QLabel#infoText { font-size: 13px; color: $subtle; }
 QListWidget#choiceList { background: transparent; border: 0; padding: 0; outline: none; }
 QTreeWidget#checklist { background: $field; border: 1px solid $field_border; border-radius: 8px; padding: 4px; outline: none; selection-background-color: $chosen; selection-color: $text; }
@@ -394,6 +395,8 @@ QDialog#infoDialog QPushButton#danger:hover { background: $invalid; color: $on_a
 QDialog#infoDialog QPushButton#linkButton { background: transparent; border: none; color: $accent; padding: 7px 4px; min-width: 0; }
 QDialog#infoDialog QPushButton#linkButton:hover { color: $accent_hover; text-decoration: underline; }
 QLineEdit#code { font-family: 'Cascadia Mono', 'Consolas'; font-size: 9pt; }
+QLabel#kbdLarge { background: $field; border: 1px solid $button_border; border-bottom-width: 3px; border-radius: 7px; padding: 5px 13px; font-size: 12pt; font-weight: 600; color: $text; }
+QLabel#keysOr { color: $subtle; font-size: 10pt; padding: 0 6px; }
 QLabel#kbd { background: $field; border: 1px solid $button_border; border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; font-size: 8pt; color: $secondary; }
 QToolTip { background: $field; color: $text; border: 1px solid $field_border; padding: 5px; }
 QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }

@@ -507,6 +507,24 @@ class PluginDialogsTest(unittest.TestCase):
         self.assertEqual(shown_on, [threading.main_thread()])
 
 
+class WelcomeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_folders_in_the_profile_go_by_their_short_names(self):
+        from winlauncher.ui.welcome import _folders_text
+
+        home = Path.home()
+        text = _folders_text(
+            [str(home / "Desktop"), str(home / "OneDrive" / "Documents"), "D:\\Work"]
+        )
+        self.assertTrue(text.startswith(f"Desktop, {Path('OneDrive') / 'Documents'}, D:\\Work<br>"))
+        many = _folders_text([str(home / name) for name in "abcdef"])
+        self.assertTrue(many.startswith("a, b, c, d, 2 more<br>"))
+        self.assertTrue(_folders_text([]).startswith("No folders yet"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -44,6 +44,8 @@ from PySide6.QtWidgets import (
 from winlauncher.ui.dialogs import run_modal
 from winlauncher.ui.theme import colors, theme
 
+KEY_SPACING = 4
+LARGE_KEY_SPACING = 6
 NUMBER_FIELD_WIDTH = 88
 ICONS = Path(__file__).with_name("assets") / "icons"
 ICON_TINT_PLACEHOLDER = "#000000"  # The stroke color the SVG files are drawn with.
@@ -57,6 +59,7 @@ INFO_ICON_SIZE = 40
 INFO_DIALOG_WIDTH = 480
 INFO_DIALOG_MARGIN = 24
 INFO_HEADER_SPACING = 16  # Between the icon and the texts.
+HERO_ICON_SIZE = 72  # A welcome's icon, centered above its texts.
 ROW_SPACING = 16  # Between a row's text and its control.
 ENTRY_ICON_SIZE = QSize(28, 28)
 HEADER_ICON_SIZE = 28  # The icon before a foldable card's title.
@@ -82,6 +85,27 @@ def pick_path(parent: QWidget, title: str, filters: str | None = None) -> Path |
     chosen = dialog.selectedFiles() if run_modal(dialog) else []
     dialog.deleteLater()
     return Path(chosen[0]) if chosen else None
+
+
+def key_caps(*combinations: tuple[str, ...], large: bool = False) -> QWidget:
+    """Key caps for one or more key combinations, separated by "or".
+
+    Large ones introduce a shortcut, as on the first start; small ones list them.
+    """
+    keys = QWidget()
+    layout = QHBoxLayout(keys)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(LARGE_KEY_SPACING if large else KEY_SPACING)
+    for index, combination in enumerate(combinations):
+        if index:
+            separator = QLabel("or")
+            separator.setObjectName("keysOr" if large else "unit")
+            layout.addWidget(separator)
+        for key in combination:
+            cap = QLabel(key)
+            cap.setObjectName("kbdLarge" if large else "kbd")
+            layout.addWidget(cap)
+    return keys
 
 
 def pick_save_path(parent: QWidget, title: str, name: str, filters: str) -> Path | None:
@@ -434,6 +458,38 @@ def sized_number(field: NumberField) -> NumberField:
     return field
 
 
+def _side_header(icon: QIcon, heading: QLabel, subtitle: QLabel) -> QHBoxLayout:
+    """A small icon at the left, the heading and the text beside it."""
+    header = QHBoxLayout()
+    header.setSpacing(INFO_HEADER_SPACING)
+    logo = QLabel()
+    logo.setFixedSize(INFO_ICON_SIZE, INFO_ICON_SIZE)
+    logo.setPixmap(icon.pixmap(INFO_ICON_SIZE, INFO_ICON_SIZE))
+    header.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
+    texts = QVBoxLayout()
+    texts.setSpacing(6)
+    texts.addWidget(heading)
+    texts.addWidget(subtitle)
+    texts.addStretch(1)
+    header.addLayout(texts, 1)
+    return header
+
+
+def _hero_header(icon: QIcon, heading: QLabel, subtitle: QLabel) -> QVBoxLayout:
+    """A large icon centered above the centered heading and text."""
+    header = QVBoxLayout()
+    header.setSpacing(8)
+    logo = QLabel()
+    logo.setFixedSize(HERO_ICON_SIZE, HERO_ICON_SIZE)
+    logo.setPixmap(icon.pixmap(HERO_ICON_SIZE, HERO_ICON_SIZE))
+    header.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
+    header.addSpacing(4)
+    for label in (heading, subtitle):
+        label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        header.addWidget(label, 0, Qt.AlignmentFlag.AlignHCenter)
+    return header
+
+
 class InfoDialog(QDialog):
     """A small dialog with WinLauncher's look: header, cards of facts, a button bar.
 
@@ -451,7 +507,10 @@ class InfoDialog(QDialog):
         parent: QWidget | None = None,
         *,
         width: int = INFO_DIALOG_WIDTH,
+        hero: bool = False,
     ):
+        """`hero` centers a large icon above the texts, for a welcome; otherwise the
+        icon stands small beside them."""
         super().__init__(parent)
         self.setObjectName("infoDialog")
         self.setWindowTitle(title)
@@ -464,26 +523,17 @@ class InfoDialog(QDialog):
         self._layout = QVBoxLayout(body)
         self._layout.setContentsMargins(INFO_DIALOG_MARGIN, 22, INFO_DIALOG_MARGIN, 20)
         self._layout.setSpacing(16)
-        header = QHBoxLayout()
-        header.setSpacing(INFO_HEADER_SPACING)
-        logo = QLabel()
-        logo.setFixedSize(INFO_ICON_SIZE, INFO_ICON_SIZE)
-        logo.setPixmap(icon.pixmap(INFO_ICON_SIZE, INFO_ICON_SIZE))
-        header.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
-        texts = QVBoxLayout()
-        texts.setSpacing(6)
         heading = QLabel(title)
-        heading.setObjectName("infoTitle")
+        heading.setObjectName("heroTitle" if hero else "infoTitle")
         heading.setWordWrap(True)
         self.subtitle = QLabel(subtitle)
         self.subtitle.setObjectName("infoText")
         self.subtitle.setWordWrap(True)
         self.subtitle.setOpenExternalLinks(True)
         self.subtitle.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        texts.addWidget(heading)
-        texts.addWidget(self.subtitle)
-        texts.addStretch(1)
-        header.addLayout(texts, 1)
+        # Wrapping labels beside the icon are narrower by it; centered ones are not.
+        self._text_inset = 0 if hero else INFO_ICON_SIZE + INFO_HEADER_SPACING
+        header = (_hero_header if hero else _side_header)(icon, heading, self.subtitle)
         self._layout.addLayout(header)
         # Wrapping labels get an explicit width: nested layouts misjudge their height otherwise.
         self._wrapped = [heading, self.subtitle]
@@ -504,7 +554,7 @@ class InfoDialog(QDialog):
         self.content_width = width - 2 * INFO_DIALOG_MARGIN
         for label in self._wrapped:
             if label is not None:
-                label.setFixedWidth(self.content_width - INFO_ICON_SIZE - INFO_HEADER_SPACING)
+                label.setFixedWidth(self.content_width - self._text_inset)
         for widget in self._content:
             widget.setFixedWidth(self.content_width)
         self.setFixedWidth(width)
