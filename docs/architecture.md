@@ -77,6 +77,8 @@ flowchart TD
 | `releases.py` | Release tags, installation kinds and their update commands |
 | `install.py` | The reinstall that finishes a checkout update at the next start |
 | `__main__.py` | CLI, logging, crash logging, per-data-directory single instance and restart handover |
+| `crash_report.py` | Native crashes: `faulthandler` stacks in `crash.log`, moved into the log at the next start |
+| `platform/startup_timing.py` | One log line with the time of each startup phase, from process creation on |
 
 `catalog/` and `search/` do not import Qt or Win32. Their behavior is tested with
 temporary SQLite catalogs and ordinary filesystem fixtures. The search package
@@ -402,7 +404,7 @@ The tree contains at most 2,000 affected entries plus their context ancestors;
 the worker still counts all matches and yields periodically to keep input fluid.
 
 Qt widgets live on the GUI thread. `BackgroundTasks` runs work on separate search
-(2), navigation (2), prefetch (1), index (1), action (1), plugin (2), plugin source (1)
+(2), navigation (2), prefetch (1), index (1), action (1), plugin (2), plugin open (2), plugin source (1)
 and network (1) pools and always delivers
 results through a queued signal to callbacks on the GUI thread. Callbacks never
 run inside `submit`. Its `WorkerPool` takes callables from a queue on daemon
@@ -481,6 +483,12 @@ rotating at 5 MB and keeping five backups. Startup, search engine/timing,
 shortcut dispatch delay, settings changes, focus transitions and event-loop gaps
 over 250 ms are recorded, along with unhandled exceptions. Focus logs identify
 the foreground executable/PID/class without window titles or query text.
+
+Plugins and native libraries share the process, so a fault in native code ends it
+without an exception. `CrashRecorder` keeps `crash.log` open for `faulthandler`, which
+writes all thread stacks from inside the fault. Windows also reports exceptions that
+are handled later, so a clean exit deletes the file; a report at the next start means
+the previous run never exited cleanly, and goes into `winlauncher.log`.
 
 Shell icon queries run on one daemon worker and return `QImage`s through a queued
 Qt signal; only the GUI thread creates pixmaps. Painting uses a generic icon until

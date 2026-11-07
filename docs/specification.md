@@ -634,7 +634,7 @@ entry points of the group `winlauncher.plugins` load first, then every plugin of
 `<data>/plugins` (installed from a source or copied in by hand), then each plugin
 folder activated in a local source (`active_plugins`), from where it lies; nothing
 else is loaded. Every `Plugin` subclass a module defines itself is one plugin. The
-first plugin claiming an id wins. A module that fails to import, an id that is not
+first plugin claiming an id wins. A module that fails to import or calls `sys.exit()` while loading, an id that is not
 `[a-z0-9][a-z0-9_-]*`, an id already taken, an unreadable folder or manifest, a
 folder with a manifest but no `plugin.py` and an activated folder that is gone are
 skipped and named on the Plugins page; a folder that is neither is
@@ -870,7 +870,10 @@ engine, whose `.pyd` Windows locks while it runs. A failed reinstall, for exampl
 offline, stays pending: the next starts try again, three in all, and the message
 shows the command to finish it by hand. For pipx and other installed
 packages, WinLauncher shows the exact install command to copy instead of replacing
-its own running environment. Git never prompts for credentials; a stalled git is
+its own running environment. `install.ps1`, meant for `irm ... | iex`, installs or
+updates to the newest release's wheel through pipx without git: it picks the newest
+Python 3.11-3.14 (x64) outside a virtual environment, installs Python with winget and
+pipx with pip when missing, closes a running instance and starts the new one. Git never prompts for credentials; a stalled git is
 stopped after two minutes.
 
 Search folders and excluded directories accept folders dragged from Explorer,

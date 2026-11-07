@@ -631,6 +631,40 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
                 commands = host.commands("fake")
         self.assertEqual([command.label for command in commands], ["Sign in"])
 
+    def test_sys_exit_while_loading_a_plugin_only_skips_that_plugin(self):
+        at_import = "import sys; sys.exit(3)"
+        in_init = """
+import sys
+from winlauncher.plugins.api import Plugin
+
+class Exits(Plugin):
+    id = "exits"
+    label = "Exits"
+
+    def __init__(self):
+        sys.exit(3)
+
+    def refresh(self, context):
+        return []
+"""
+        for source in (at_import, in_init):
+            with self.subTest(source), tempfile.TemporaryDirectory() as directory:
+                (Path(directory) / "exits.py").write_text(source, encoding="utf-8")
+                with self.assertLogs("winlauncher.plugins.registry", "ERROR"):
+                    found = discover_plugins([Path(directory)], built_in=())
+                self.assertEqual(found.plugins, [])
+                self.assertIn("SystemExit", found.problems[0])
+
+    def test_sys_exit_while_listing_settings_buttons_keeps_the_settings_page(self):
+        class Exits(FakePlugin):
+            def commands(self):
+                raise SystemExit(3)
+
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(Discovery([Exits()]), Path(directory))
+            with self.assertLogs("winlauncher.plugins.host", "ERROR"):
+                self.assertEqual(host.commands("fake"), ())
+
     def test_a_plugin_that_exits_the_interpreter_leaves_nothing_marked_busy(self):
         with tempfile.TemporaryDirectory() as directory:
             plugin = FakePlugin()
@@ -756,7 +790,9 @@ class PluginUiTest(unittest.TestCase):
         self.assertEqual((row.location, row.target, row.opens_in), ("", ANNA.target, "Fake"))
         self.assertFalse(self.window.delegate._icon(row.hit).isNull())
         self.controller.open_item(row.hit, "")
-        self.tasks.finish(self._category("ACTION"))
+        # On a pool of its own, so a plugin that hangs here never blocks opening files.
+        self.assertEqual(self.tasks.count(self._category("ACTION")), 0)
+        self.tasks.finish(self._category("PLUGIN_OPEN"))
         self.assertEqual(self.plugin.opened, [ANNA])
 
     def test_refresh_catalog_also_refreshes_enabled_plugins(self):

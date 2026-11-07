@@ -1,4 +1,4 @@
-include README.md LICENSE THIRD_PARTY_NOTICES.md Start-WinLauncher.ps1
+include README.md LICENSE THIRD_PARTY_NOTICES.md Start-WinLauncher.ps1 install.ps1
 recursive-include docs *.md
 include docs/images/icon.png
 recursive-include winlauncher/ui/assets *.svg

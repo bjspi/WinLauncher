@@ -34,6 +34,9 @@ from winlauncher.connectivity import InternetStatus as InternetStatus
 
 PLUGIN_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 OptionValue = bool | int | str
+# What plugin code may raise on the GUI thread without taking WinLauncher down. It
+# includes SystemExit, because a library's sys.exit() would otherwise end the program.
+PLUGIN_FAILURES = (Exception, SystemExit)
 
 
 class PluginError(Exception):

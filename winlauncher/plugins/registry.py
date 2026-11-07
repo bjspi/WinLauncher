@@ -20,13 +20,20 @@ import inspect
 import logging
 import re
 import sys
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from importlib.metadata import entry_points
 from pathlib import Path
 from types import ModuleType
 
-from winlauncher.plugins.api import PLUGIN_ID, Plugin, PluginOption, PluginRoute
+from winlauncher.plugins.api import (
+    PLUGIN_FAILURES,
+    PLUGIN_ID,
+    Plugin,
+    PluginOption,
+    PluginRoute,
+)
 from winlauncher.plugins.config import KEYWORD, REFRESH_RANGE_MINUTES
 from winlauncher.plugins.encoding import read_python_source
 from winlauncher.plugins.folders import (
@@ -86,8 +93,8 @@ class Discovery:
             return
         try:
             plugin = plugin_class()
-        except Exception as exc:
-            self.problems.append(f"{source.origin}: {exc}")
+        except PLUGIN_FAILURES as exc:
+            self.problems.append(f"{source.origin}: {type(exc).__name__}: {exc}")
             logger.exception("Plugin %s could not be created", source.origin)
             return
         self.plugins.append(plugin)
@@ -213,9 +220,12 @@ def discover_plugins(
 ) -> Discovery:
     """Built-ins and packages, every plugin in `folders`, then each `active` plugin folder."""
     found = Discovery()
+    started = time.perf_counter()
     for reference in built_in:
         _add_reference(found, reference, reference)
-    for entry in entry_points(group=ENTRY_POINT_GROUP):
+    declared = entry_points(group=ENTRY_POINT_GROUP)  # Reads every installed package's metadata.
+    entry_points_ms = (time.perf_counter() - started) * 1000
+    for entry in declared:
         distribution = entry.dist.name if entry.dist else entry.name
         _add_reference(found, entry.value, distribution)
     for folder in folders:
@@ -226,11 +236,13 @@ def discover_plugins(
         else:
             found.problems.append(f"{folder}: the activated plugin folder is gone.")
     logger.info(
-        "Plugins found: %s; folders=%d active=%d problems=%d",
+        "Plugins found: %s; folders=%d active=%d problems=%d entry_points_ms=%.0f total_ms=%.0f",
         ", ".join(plugin.id for plugin in found.plugins) or "none",
         len(folders),
         len(active),
         len(found.problems),
+        entry_points_ms,
+        (time.perf_counter() - started) * 1000,
     )
     return found
 
@@ -240,8 +252,8 @@ def _add_reference(found: Discovery, reference: str, origin: str) -> None:
     module_name, _, attribute = reference.partition(":")
     try:
         found.add(getattr(importlib.import_module(module_name), attribute), PluginSource(origin))
-    except Exception as exc:
-        found.problems.append(f"{origin}: {exc}")
+    except PLUGIN_FAILURES as exc:
+        found.problems.append(f"{origin}: {type(exc).__name__}: {exc}")
         logger.exception("Plugin %s could not be loaded", reference)
 
 
@@ -285,12 +297,16 @@ def _version(found: Discovery, folder: Path) -> str:
 
 def _add_module_file(found: Discovery, file: Path, source: PluginSource) -> None:
     """Import `file` and take every `Plugin` subclass it defines itself."""
+    started = time.perf_counter()
     try:
         module = _load_module(file)
-    except Exception as exc:
+    except PLUGIN_FAILURES as exc:
         found.problems.append(f"{source.origin}: {type(exc).__name__}: {exc}")
         logger.exception("Plugin file %s could not be loaded", file)
         return
+    logger.info(
+        "Plugin file imported: %s elapsed_ms=%.0f", file, (time.perf_counter() - started) * 1000
+    )
     classes = [
         value
         for value in vars(module).values()

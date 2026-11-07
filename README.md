@@ -72,7 +72,21 @@ Explorer & dialogs**.
 
 ## 🚀 Quick start
 
-### With pipx (recommended)
+### One-line install (recommended)
+
+Paste this into PowerShell; it needs no administrator rights:
+
+```powershell
+irm https://raw.githubusercontent.com/bjspi/WinLauncher/main/install.ps1 | iex
+```
+
+The script installs the newest release with pipx, then starts WinLauncher. If they
+are missing, it first installs Python (with winget) and pipx; git and a Rust compiler
+are not needed. Run the same line again to update: it closes a running WinLauncher
+and replaces it, and your settings and catalog stay. You can
+[read the script](install.ps1) before running it.
+
+### With pipx
 
 [pipx](https://pipx.pypa.io/) installs WinLauncher into its own environment and adds
 a `winlauncher` command that starts without a console window:
@@ -519,6 +533,7 @@ the top group; the number fine-tunes the order.
 - 📝 `settings.json` holds user preferences. `winlauncher.log` rotates at 5 MB with five backups.
   Diagnostics record search timing, UI stalls, shortcut dispatch and focus owners
   (process names/PIDs, without query text or window titles). Log writes run in the background.
+  After a native crash, the next start adds the program's stacks to the log.
   Existing settings, favorites and history from `%LOCALAPPDATA%\WinLauncher` are copied
   on first start; originals are retained. Close an older running instance first.
   and contain your paths and queries; treat that folder like other personal data.

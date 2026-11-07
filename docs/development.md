@@ -130,6 +130,18 @@ depend on the data and CPU; some queries still exceed the default 30 ms budget.
 Preparing the fuzzy layouts adds about 100 ms per refresh and 15 MiB of retained
 Python memory for this corpus; cache preparation runs on a background worker.
 
+### Startup and crashes in the log
+
+- `Startup timings: imports=3180ms application=90ms launcher_repair=40ms
+  settings_catalog=30ms plugins=1400ms window=300ms services=200ms first_idle=500ms
+  total=5940ms uptime=54s`. `imports` reaches back to the process's creation, and
+  `uptime` tells a slow WinLauncher from Windows starting it late after a boot.
+- `Plugins found: ... entry_points_ms=900 total_ms=1400` and `Plugin file imported:
+  ... elapsed_ms=120` split the `plugins` phase.
+- `The previous run ended without a clean exit; native faults it recorded...` (error)
+  carries the `faulthandler` stacks of a crash. Without it, a log ending in mid-work
+  usually means Windows shut down: the application then writes no `WinLauncher stopping`.
+
 ## GitHub builds and releases
 
 CI enables `PYTHONFAULTHANDLER=1` for native crash tracebacks. To investigate a

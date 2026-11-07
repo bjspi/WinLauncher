@@ -21,6 +21,7 @@ from pathlib import Path
 from winlauncher.catalog.model import normalize
 from winlauncher.connectivity import InternetState, InternetStatus
 from winlauncher.plugins.api import (
+    PLUGIN_FAILURES,
     Ask,
     Chip,
     Plugin,
@@ -445,7 +446,7 @@ class PluginHost:
         """
         try:
             declared = tuple(self._entries[plugin_id].plugin.commands())
-        except Exception:
+        except PLUGIN_FAILURES:
             logger.exception("Plugin %s commands unavailable", plugin_id)
             return ()
         usable = tuple(

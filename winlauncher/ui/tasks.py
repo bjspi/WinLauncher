@@ -26,6 +26,9 @@ class TaskCategory(StrEnum):
     INDEX = "index"
     ACTION = "action"
     PLUGIN = "plugin"  # Plugin refreshes and commands, which may wait for the network.
+    # Opening a plugin's item runs third-party code: if it hangs, files and folders
+    # still open, and a stuck refresh cannot delay opening an item either.
+    PLUGIN_OPEN = "plugin-open"
     # Plugin source checks and installs: never behind a stuck plugin, and one at a time,
     # so git never changes a source's clone twice at once.
     PLUGIN_SOURCE = "plugin-source"
@@ -39,6 +42,7 @@ _POOL_SIZES = {
     TaskCategory.INDEX: 1,
     TaskCategory.ACTION: 1,
     TaskCategory.PLUGIN: 2,
+    TaskCategory.PLUGIN_OPEN: 2,
     TaskCategory.PLUGIN_SOURCE: 1,
     TaskCategory.NETWORK: 1,
 }

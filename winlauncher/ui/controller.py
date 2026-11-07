@@ -41,6 +41,7 @@ from winlauncher.platform.git import release_changes
 from winlauncher.platform.launcher import PACKAGE_PARENT, application_command
 from winlauncher.platform.shell import folder_shortcuts, indexed_application_roots
 from winlauncher.platform.startup import StartupShortcut
+from winlauncher.platform.startup_timing import StartupTimings
 from winlauncher.platform.store_apps import store_app_folder
 from winlauncher.platform.windows_tools import windows_tools_folder
 from winlauncher.plugins.host import PluginHost
@@ -103,8 +104,11 @@ def _drain(events: queue.SimpleQueue[_Event]) -> Iterator[_Event]:
 
 
 class LauncherController(QObject):
-    def __init__(self, data_dir: Path, *, hooks: bool = True):
+    def __init__(
+        self, data_dir: Path, *, hooks: bool = True, timings: StartupTimings | None = None
+    ):
         super().__init__()
+        timings = timings or StartupTimings()
         self.data_dir = data_dir
         self.hooks_requested = hooks
         self.settings_file = SettingsFile(data_dir / "settings.json")
@@ -125,12 +129,14 @@ class LauncherController(QObject):
         # The launcher's search, hidden only while the Exclude picker is open.
         self.search_paused = False
         self._closed = False
+        timings.mark("settings_catalog")
 
         # Shared by the result list and the Websites settings.
         self.website_icons = WebsiteIcons(self)
         self.plugins = PluginHost(
             discover_plugins([self.own_plugin_folder], self.active_plugin_folders()), data_dir
         )
+        timings.mark("plugins")
         # Shared by the bar's menu, the tray and the Settings dialog.
         self.placement = BarPlacement(data_dir / BAR_PLACEMENT_FILE, self)
         self.window = LauncherWindow(
@@ -140,6 +146,7 @@ class LauncherController(QObject):
         self.tray = TrayMenu(self, autostart_available=os.name == "nt")
         self.tray.centered.setChecked(self.placement.centered)
         self.status = StatusBoard(self.window.set_activity, self.tray.icon)
+        timings.mark("window")
         self.search = SearchSession(
             self.window,
             SearchService(self.store, folder_shortcuts),
@@ -198,6 +205,7 @@ class LauncherController(QObject):
         QTimer.singleShot(0, self.indexing.request_full)
         self.plugin_refresh.start()
         self.plugin_sources.start()
+        timings.mark("services")
 
     # Wiring -------------------------------------------------------------------
 
@@ -512,7 +520,7 @@ class LauncherController(QObject):
         if isinstance(hit, PluginHit):
             self.window.close_after_action()
             config = self.plugins.config(hit.plugin_id, self.settings.plugins)
-            self._run_action(partial(self.plugins.open, hit, config))
+            self._run_action(partial(self.plugins.open, hit, config), TaskCategory.PLUGIN_OPEN)
             return
         if isinstance(hit, WebsiteTarget):
             self.window.close_after_action()
@@ -630,12 +638,12 @@ class LauncherController(QObject):
         logger.info("Search history cleared at the user's request")
         self._run_action(self.store.clear_history, on_success=self.search.refresh)
 
-    def _run_action(self, work, *, on_success=None) -> None:
+    def _run_action(self, work, category=TaskCategory.ACTION, *, on_success=None) -> None:
         def succeeded(_result) -> None:
             if on_success is not None:
                 on_success()
 
-        self.tasks.submit(TaskCategory.ACTION, work, succeeded, self._action_failed)
+        self.tasks.submit(category, work, succeeded, self._action_failed)
 
     def _action_failed(self, message: str) -> None:
         messages.message(self.window, "That did not work", message, messages.WARNING)

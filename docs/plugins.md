@@ -157,9 +157,15 @@ of the program may trust what it declares:
   are dropped with a warning in the log.
 - `PluginItem` refuses a field the launcher could not show, so a bad item fails the
   refresh instead of a later search.
-- No plugin runs on the GUI thread, and worker threads are daemons: a plugin stuck
-  in a network call delays only other plugin work and never keeps WinLauncher from
-  quitting.
+- Refresh, commands and `open` run on worker threads, and those are daemons: a plugin
+  stuck in a network call delays only other plugin work and never keeps WinLauncher
+  from quitting. A stuck `open` delays only opening other plugin items.
+- Importing your plugin and creating its class run on the GUI thread at every start,
+  before the shortcut works. An exception or `sys.exit()` there skips the plugin, but
+  a slow import delays WinLauncher, so import heavy packages inside `refresh`.
+- All plugins share WinLauncher's process. A crash in native code, such as a C
+  extension or a DLL, ends all of WinLauncher; the next start writes the stacks of
+  its threads to `winlauncher.log`.
 
 - A plugin whose items take too long to rank — several thousand, say — is left out
   of ordinary searches after 3 slow searches in a row, until it lists new items;

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QApplication, QProgressDialog, QSystemTrayIcon
 
 from winlauncher import __version__
 from winlauncher.catalog.model import path_key
+from winlauncher.crash_report import CrashRecorder
 from winlauncher.install import (
     REINSTALL_TIMEOUT_MS,
     finish_reinstall,
@@ -39,6 +40,7 @@ from winlauncher.platform.launcher import (
     running_in_host,
 )
 from winlauncher.platform.startup import StartupShortcut, install_start_menu_shortcut
+from winlauncher.platform.startup_timing import StartupTimings
 from winlauncher.settings import Appearance
 from winlauncher.ui.controller import LauncherController
 from winlauncher.ui.messages import ERROR, PRIMARY, WARNING, message, show_message
@@ -266,6 +268,7 @@ def _migrate_launcher(data_dir: Path) -> bool:
 
 
 def main() -> int:
+    timings = StartupTimings()
     args = _parse_arguments()
     app = _create_application()
     data_dir = args.data_dir.expanduser().resolve()
@@ -299,6 +302,7 @@ def main() -> int:
 
     server = QLocalServer()
     listener = None
+    crashes = CrashRecorder(data_dir)
     try:
         # Only the elected owner writes logs, so a second start cannot race rotation.
         listener = _configure_logging(data_dir)
@@ -310,19 +314,23 @@ def main() -> int:
             data_dir,
             not args.no_hooks,
         )
+        crashes.start()
+        timings.mark("application")
         if take_pending_reinstall(data_dir) and (root := checkout_root()) is not None:
             _finish_update(root, data_dir)
         if _migrate_launcher(data_dir):
             return 0
+        timings.mark("launcher_repair")
         server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         if not server.listen(instance):
             raise OSError(server.errorString())
-        controller = LauncherController(data_dir, hooks=not args.no_hooks)
+        controller = LauncherController(data_dir, hooks=not args.no_hooks, timings=timings)
         _serve_show_requests(server, controller)
         app.aboutToQuit.connect(controller.close)
         # WinLauncher starts quietly in the tray; without a tray it would be unreachable.
         if args.show or not QSystemTrayIcon.isSystemTrayAvailable():
             controller.window.present()
+        QTimer.singleShot(0, timings.report)  # After the work the controller queued.
         return app.exec()
     except Exception as exc:
         logging.exception("Startup failed")
@@ -331,6 +339,7 @@ def main() -> int:
         return 1
     finally:
         server.close()
+        crashes.stop()
         if listener is not None:
             logging.info("WinLauncher stopping")
             listener.stop()
