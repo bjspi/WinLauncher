@@ -357,7 +357,9 @@ written to `<data>/plugin-data/<id>/items.json` and read back at start. A
 
 `PluginScheduler` (`ui/plugins.py`) runs a `QTimer` per enabled plugin and submits
 refreshes to the plugin pool (`TaskCategory.PLUGIN`, two workers), never to the
-index or search pools. Commands such as Sign in run there too; their questions
+index or search pools. `apply()` keeps each plugin's settings as last applied and
+refreshes a running plugin whose options changed; while a refresh runs, one more
+follows it. Commands such as Sign in run there too; their questions
 cross to the GUI thread through `Questions`, a queued signal plus a
 `threading.Event` the worker waits on (released at shutdown). `SearchSession`
 asks the host: a plugin keyword makes a `PluginQuery` that only that plugin

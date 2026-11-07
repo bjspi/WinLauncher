@@ -15,7 +15,8 @@ Telegram: Team Annahme        Group  ·  3 unread
 - **Refresh.** Each enabled plugin lists all of its items on a worker thread at its
   interval (Settings → Plugins → Refresh every). Neither indexing nor searching
   waits for it: searches use the last list until the new one is complete, then
-  the shown results update.
+  the shown results update. Saving changed options of a plugin, such as an
+  exclusion list, refreshes it at once.
 - **Cache.** The last list is kept in `%USERPROFILE%\.WinLauncher\plugin-data\<id>\items.json`,
   so the items appear right after a restart and survive a failed refresh (offline,
   rate limit). If the plugin says it needs setup, such as after signing out, its

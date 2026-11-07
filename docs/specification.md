@@ -676,6 +676,10 @@ ignoring case and accents; a route the plugin no longer declares claims no word.
 
 An enabled plugin refreshes 4 s after start (or after it is enabled) if its cached
 list is older than its interval or the last refresh failed, then at its interval.
+Saving changed options of an enabled plugin refreshes it at once, so its list follows
+them, such as an exclusion list; a refresh already running is followed by another
+one with the new options. Changed keywords, routes, boost or **In every search**
+refresh nothing.
 Its last list stays searchable during a refresh and after a failed one. A plugin
 that needs setup loses its list. **Refresh catalog** in the tray or the bar's menu also refreshes every enabled
 plugin; each plugin's settings card has **Refresh now**. A plugin lists at most 5,000 items; later items

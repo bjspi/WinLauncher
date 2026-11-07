@@ -799,6 +799,33 @@ class PluginUiTest(unittest.TestCase):
         self.controller.rescan()
         self.assertEqual(self.tasks.count(self._category("PLUGIN")), 1)
 
+    def save_plugin(self, **changes):
+        settings = self.controller.settings
+        config = replace(settings.plugins[0], **changes)
+        self.controller.apply_settings(replace(settings, plugins=(config,)))
+
+    def test_saving_changed_options_refreshes_the_plugin_at_once(self):
+        plugin_tasks = self._category("PLUGIN")
+        count = self.tasks.count(plugin_tasks)
+        self.save_plugin(keywords=("fake",))  # Keywords change no list.
+        self.assertEqual(self.tasks.count(plugin_tasks), count)
+        self.save_plugin(options={"count": 5})
+        self.assertEqual(self.tasks.count(plugin_tasks), count + 1)
+        self.tasks.finish(plugin_tasks)
+        self.assertEqual(self.plugin.contexts[-1].options["count"], 5)
+
+    def test_options_changed_during_a_refresh_refresh_again_after_it(self):
+        plugin_tasks = self._category("PLUGIN")
+        scheduler = self.controller.plugin_refresh
+        scheduler.refresh("fake")
+        count = self.tasks.count(plugin_tasks)
+        self.save_plugin(options={"count": 7})
+        self.assertEqual(self.tasks.count(plugin_tasks), count)  # One refresh at a time.
+        self.tasks.finish(plugin_tasks)
+        self.tasks.finish(plugin_tasks)
+        self.assertEqual(self.plugin.contexts[-1].options["count"], 7)
+        self.assertFalse(scheduler.is_refreshing("fake"))
+
     def test_cached_forms_are_prepared_on_the_plugin_worker(self):
         from winlauncher.ui.plugins import PluginScheduler
 

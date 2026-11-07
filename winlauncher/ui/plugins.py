@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QLineEdit, QWidget
 from winlauncher.connectivity import InternetState, InternetStatus
 from winlauncher.platform.connectivity import probe_internet
 from winlauncher.plugins.api import PluginCommand
+from winlauncher.plugins.config import PluginConfig
 from winlauncher.plugins.host import PluginHost
 from winlauncher.plugins.search import PluginHit
 from winlauncher.settings import Settings
@@ -56,6 +57,8 @@ class PluginScheduler(QObject):
         self.questions = Questions(self)
         self._timers: dict[str, QTimer] = {}
         self._running: dict[str, threading.Event] = {}
+        self._applied: dict[str, PluginConfig] = {}  # Each plugin's settings at the last apply().
+        self._changed_while_running: set[str] = set()
         self._closed = False
         self._checking_internet = False
         self._internet_was_offline = False
@@ -117,11 +120,21 @@ class PluginScheduler(QObject):
                     self.refresh(plugin.id, automatic=True)
 
     def apply(self) -> None:
-        """Follow the settings: start, stop or reschedule each plugin's refreshes."""
+        """Follow the settings: start, stop or reschedule each plugin's refreshes.
+
+        A running plugin whose options changed lists its items again at once: its list
+        may follow them, such as an exclusion list or the folders it reads. Keywords,
+        boost and the like change no list. One just turned on refreshes as usual, below.
+        """
         configs = self.settings().plugins
         for plugin in self.host.plugins:
             config = self.host.config(plugin.id, configs)
             timer = self._timers.get(plugin.id)
+            previous = self._applied.get(plugin.id)
+            self._applied[plugin.id] = config
+            running = config.enabled and timer is not None and timer.isActive()
+            if running and previous is not None and previous.options != config.options:
+                self.refresh_after_change(plugin.id)
             if not config.enabled:
                 if timer is not None:
                     timer.stop()
@@ -146,6 +159,13 @@ class PluginScheduler(QObject):
     def refresh_all(self) -> None:
         for plugin in self.host.plugins:
             self.refresh(plugin.id)
+
+    def refresh_after_change(self, plugin_id: str) -> None:
+        """Refresh now, or once the running refresh, which still has the old options, ends."""
+        if plugin_id in self._running:
+            self._changed_while_running.add(plugin_id)
+        else:
+            self.refresh(plugin_id)
 
     def refresh(self, plugin_id: str, *, automatic: bool = False) -> None:
         if self._closed or plugin_id in self._running:
@@ -175,6 +195,9 @@ class PluginScheduler(QObject):
             del self._running[plugin_id]
         self.items_changed.emit()
         self.status_changed.emit()
+        if plugin_id in self._changed_while_running and plugin_id not in self._running:
+            self._changed_while_running.discard(plugin_id)
+            self.refresh(plugin_id)
 
     def _refresh_failed(self, plugin_id: str, cancel: threading.Event, message: str) -> None:
         logger.info("Plugin %s refresh failed: %s", plugin_id, message)
