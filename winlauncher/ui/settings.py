@@ -63,6 +63,7 @@ from winlauncher.ui.messages import ERROR, INFO, WARNING, ask, message
 from winlauncher.ui.plugin_dialogs import choose_items
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
+from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
@@ -499,6 +500,7 @@ class SettingsDialog(QDialog):
         restart: Callable[[], None] | None = None,
         replace_all: Callable[[Settings], None] | None = None,
         catalog: CatalogStore | None = None,
+        tasks: BackgroundTasks | None = None,
     ):
         super().__init__(parent)
         self.original = settings
@@ -508,6 +510,8 @@ class SettingsDialog(QDialog):
         self.replace_all = replace_all
         # Counts entries per search folder and feeds Analyze catalog…; None hides both.
         self.catalog = catalog
+        self.tasks = tasks  # Runs the analysis off the GUI thread; None runs it inline.
+        self.analyzing = False
         self.set_startup = set_startup
         self.startup_state = startup_state
         self.restart_app = restart
@@ -839,7 +843,35 @@ class SettingsDialog(QDialog):
         except ValueError as exc:
             message(self, "Check your settings", str(exc), WARNING)
             return
-        suggestions = analyze(settings, self.catalog.catalog_paths(), self.catalog.opened_keys())
+        if self.analyzing:
+            return
+        catalog = self.catalog
+
+        def work() -> list[Suggestion]:
+            return analyze(settings, catalog.catalog_paths(), catalog.opened_keys())
+
+        self.analyzing = True
+        self.analyze_button.setEnabled(False)
+        self.analyze_button.setText("Analyzing…")
+        if self.tasks is None:
+            self._analyzed(work())
+        else:
+            self.tasks.submit(TaskCategory.PREFETCH, work, self._analyzed, self._analysis_failed)
+
+    def _analysis_failed(self, failure: str) -> None:
+        self._analysis_done()
+        message(self, "Analysis failed", failure, ERROR)
+
+    def _analysis_done(self) -> None:
+        self.analyzing = False
+        self.analyze_button.setEnabled(True)
+        self.analyze_button.setText("Analyze…")
+
+    def _analyzed(self, suggestions: list[Suggestion]) -> None:
+        """Offer the suggestions, unless the dialog went away meanwhile."""
+        self._analysis_done()
+        if not self.isVisible():
+            return
         if not suggestions:
             message(
                 self,
@@ -884,6 +916,7 @@ class SettingsDialog(QDialog):
 
     def _folders_page(self, settings: Settings) -> list[QWidget]:
         self.roots = SearchFolderList(settings.roots, settings.folder_depths, self.catalog)
+        self.analyze_button = _button("Analyze…", self.analyze_catalog)
         self.code_projects = ToggleSwitch("List code projects with their top level only")
         self.code_projects.setChecked(settings.code_projects_top_level)
         self.apps = ToggleSwitch("Include Start menu, Store and registered applications")
@@ -938,7 +971,7 @@ class SettingsDialog(QDialog):
                 "Analyze catalog",
                 "Where many entries pile up that you never open, and what would thin them "
                 "out. Ticked suggestions fill in the settings; Save keeps them.",
-                _button("Analyze…", self.analyze_catalog),
+                self.analyze_button,
             )
         folders.add_row(
             "Include applications",

@@ -68,6 +68,7 @@ from winlauncher.ui.plugins import PluginIcons, PluginScheduler
 from winlauncher.ui.result_rows import LauncherHit
 from winlauncher.ui.search_session import SearchSession
 from winlauncher.ui.settings import SettingsDialog
+from winlauncher.ui.stall_tracer import StallTracer
 from winlauncher.ui.status import ProblemTopic, StatusBoard
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.theme import colors, theme
@@ -203,6 +204,8 @@ class LauncherController(QObject):
         # Measures UI responsiveness while the launcher is visible; idle in the tray.
         self.ui_timer = self._poll(self._check_ui_delay, UI_DELAY_POLL_MS)
         self.ui_timer.stop()
+        self.stall_tracer = StallTracer()  # Logs who held the GUI thread during a delay.
+        self.stall_tracer.start()
         self.window.shown.connect(self._start_ui_delay_check)
         self._report_search_engine()
         self.tray.show()
@@ -349,6 +352,7 @@ class LauncherController(QObject):
         now = time.monotonic()
         elapsed_ms = (now - self._ui_tick) * 1000
         self._ui_tick = now
+        self.stall_tracer.heartbeat()
         if elapsed_ms > UI_DELAY_WARNING_MS:
             logger.warning(
                 "UI event loop delayed: %.0f ms search_running=%s indexing=%s "
@@ -808,6 +812,7 @@ class LauncherController(QObject):
             restart=self.restart,
             replace_all=self.replace_settings,
             catalog=self.store,
+            tasks=self.tasks,
         )
         if page:
             dialog.show_page(page)
@@ -1074,6 +1079,7 @@ class LauncherController(QObject):
         self.keyboard_timer.stop()
         self.watch_timer.stop()
         self.ui_timer.stop()
+        self.stall_tracer.stop()
         self.search.close()
         self.indexing.close()
         self.plugin_refresh.close()

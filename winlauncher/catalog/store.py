@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -321,11 +321,12 @@ class CatalogStore:
         connection.commit()
 
     @staticmethod
-    def mark_staged(connection: sqlite3.Connection, path: Path, bits: int) -> None:
-        """Add attribute bits to a staged row, such as a folder found to be a project."""
-        connection.execute(
+    def mark_staged(connection: sqlite3.Connection, marks: Mapping[str, int]) -> None:
+        """Add attribute bits to staged rows by path key, such as folders found to be
+        projects, in one transaction."""
+        connection.executemany(
             "UPDATE staged SET attributes = attributes | ? WHERE path_key = ?",
-            (bits, path_key(path)),
+            [(bits, key) for key, bits in marks.items()],
         )
         connection.commit()
 

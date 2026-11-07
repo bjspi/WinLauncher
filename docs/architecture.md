@@ -70,6 +70,7 @@ flowchart TD
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
 | `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
 | `ui/answers.py` | Asks the plugins that answer typed text, on their own worker, for the calculator's row |
+| `ui/stall_tracer.py` | Logs the GUI thread's stack in the middle of an event-loop stall |
 | `ui/welcome.py` | The first start's introduction: shortcuts, folders, tips, Start with Windows |
 | `ui/plugin_dialogs.py`, `ui/option_editors.py` | The checklist and form a plugin command shows; the option editors forms share with the settings cards |
 | `ui/plugin_sources.py`, `ui/source_settings.py` | Periodic source checks, update notices, installs and activations; the Plugins page: what sources offer, and the sources |
@@ -491,7 +492,10 @@ Only the instance-lock owner opens `winlauncher.log`. A standard-library
 `QueueHandler`/`QueueListener` writes UTF-8 logs outside the GUI/keyboard threads,
 rotating at 5 MB and keeping five backups. Startup, search engine/timing,
 shortcut dispatch delay, settings changes, focus transitions and event-loop gaps
-over 250 ms are recorded, along with unhandled exceptions. Focus logs identify
+over 250 ms are recorded, along with unhandled exceptions. During such a gap,
+`ui/stall_tracer.py`, a watchdog thread fed by the same 100 ms heartbeat, logs the
+GUI thread's Python stack once, so the log names what blocked rather than only how
+long. Focus logs identify
 the foreground executable/PID/class without window titles or query text.
 
 Plugins and native libraries share the process, so a fault in native code ends it

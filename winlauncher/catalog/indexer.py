@@ -137,6 +137,7 @@ class _StagedRows:
         self.store, self.connection, self.progress = store, connection, progress
         self.count = 0
         self._batch: list[tuple[CatalogItem, str]] = []
+        self._marks: dict[str, int] = {}  # Bits for rows staged in earlier batches.
 
     def add(self, item: CatalogItem, source_id: str) -> None:
         self._batch.append((item, source_id))
@@ -150,16 +151,21 @@ class _StagedRows:
     def flush(self) -> None:
         self.store.stage(self.connection, self._batch)
         self._batch.clear()
+        if self._marks:
+            self.store.mark_staged(self.connection, self._marks)
+            self._marks.clear()
 
     def mark(self, path: Path, bits: int) -> None:
-        """Add attribute bits to an item staged before, in this batch or an earlier one."""
+        """Add attribute bits to an item staged before: in this batch at once, in an
+        earlier one with the next flush, so a scan with many projects commits once per
+        batch instead of once per project."""
         key = path_key(path)
         for index, (item, source_id) in enumerate(self._batch):
             if item.identity == key:
                 marked = replace(item, attributes=item.attributes | bits)
                 self._batch[index] = (marked, source_id)
                 return
-        self.store.mark_staged(self.connection, path, bits)
+        self._marks[key] = self._marks.get(key, 0) | bits
 
     def retain_previous(self, paths: Iterable[Path]) -> None:
         """Copy the previous rows of unreadable or untouched subtrees into the snapshot."""

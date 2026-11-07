@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -523,6 +524,24 @@ class WelcomeTest(unittest.TestCase):
         many = _folders_text([str(home / name) for name in "abcdef"])
         self.assertTrue(many.startswith("a, b, c, d, 2 more<br>"))
         self.assertTrue(_folders_text([]).startswith("No folders yet"))
+
+
+class StallTracerTest(unittest.TestCase):
+    def test_a_stalled_thread_gets_its_stack_logged_once(self):
+        from winlauncher.ui.stall_tracer import StallTracer
+
+        tracer = StallTracer(threading.get_ident(), stall_ms=120)
+        self.addCleanup(tracer.stop)
+        tracer.start()
+        tracer.heartbeat()
+        with self.assertLogs("winlauncher.ui.stall_tracer", "WARNING") as logged:
+            time.sleep(0.5)  # No heartbeat: a stall, seen from the tracer's thread.
+        self.assertEqual(len(logged.records), 1)
+        self.assertIn("test_a_stalled_thread_gets_its_stack_logged_once", logged.output[0])
+        tracer.heartbeat()
+        with self.assertLogs("winlauncher.ui.stall_tracer", "WARNING") as logged:
+            time.sleep(0.5)  # The next stall is logged again.
+        self.assertEqual(len(logged.records), 1)
 
 
 if __name__ == "__main__":

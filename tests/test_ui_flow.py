@@ -309,6 +309,10 @@ class UiFlowTest(unittest.TestCase):
             patch("winlauncher.ui.settings.choose_items", tick_all),
         ):
             dialog.analyze_catalog()
+            self.assertFalse(dialog.analyze_button.isEnabled())  # Working on a worker.
+            self.assertEqual(shown, [])
+            self.tasks.finish(TaskCategory.PREFETCH)
+        self.assertTrue(dialog.analyze_button.isEnabled())
         self.assertEqual([c.label for c in shown], [s.title for s in suggestions])
         read = dialog.read_settings()
         self.assertEqual(read.folder_depths, (FolderDepth(str(self.root), 3),))
