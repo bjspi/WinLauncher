@@ -140,6 +140,21 @@ class Answer:
 
 
 @dataclass(frozen=True, slots=True)
+class PluginTip:
+    """A row of the `?` help: an example, what it does, and the text choosing it types."""
+
+    example: str  # Such as "5 km in mi".
+    meaning: str  # Such as "Units; also 100 °F in C".
+    insert: str = ""  # Typed when chosen; empty types the example itself.
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(text, str) for text in (self.example, self.meaning, self.insert)):
+            raise ValueError("A tip's example, meaning and insert must be text.")
+        if not self.example.strip() or not self.meaning.strip():
+            raise ValueError("A tip needs an example and its meaning.")
+
+
+@dataclass(frozen=True, slots=True)
 class PluginOption:
     """A setting of one plugin; its type is the type of `default`."""
 
@@ -333,6 +348,13 @@ class Plugin:
         shape you recognize, so ordinary searches stay searches.
         """
         return None
+
+    def tips(self, context: PluginContext) -> tuple[PluginTip, ...]:
+        """Rows for the `?` help, such as the questions `answer` understands.
+
+        Asked when the help is shown, on a search worker: only look at the options.
+        """
+        return ()
 
     @classmethod
     def answers(cls) -> bool:

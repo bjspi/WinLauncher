@@ -278,7 +278,7 @@ Use `t:` as shorthand for `type:`, for example `t:dir`, `t:file` or `t:app`.
 ## 🔍 Query language
 
 Type **`?`** for the filters below as results, with your own website and plugin
-keywords; `? date` lists only those about dates, and Enter types the chosen filter.
+keywords and what plugins such as Answers understand; `? date` lists only those about dates, and Enter types the chosen filter.
 
 ```text
 report                                  name or path contains "report"

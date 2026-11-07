@@ -33,6 +33,7 @@ from winlauncher.plugins.api import (
     PluginItem,
     PluginOption,
     PluginRoute,
+    PluginTip,
     SetupRequired,
 )
 from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
@@ -54,6 +55,7 @@ from winlauncher.plugins.search import (
 )
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
+from winlauncher.search.syntax_help import SyntaxTip
 from winlauncher.settings import Settings, SettingsFile, settings_from_json
 from winlauncher.ui.result_rows import result_row, shortened_breadcrumbs
 from winlauncher.ui.updater import ReleaseUpdater
@@ -729,6 +731,36 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
                 self.assertIsNone(host.answer("odd", on))
         with tempfile.TemporaryDirectory() as directory:
             self.assertFalse(PluginHost(Discovery([FakePlugin()]), Path(directory)).answering(on))
+
+    def test_plugins_add_rows_to_the_question_mark_help(self):
+        class Tips(FakePlugin):
+            def tips(self, context):
+                if context.options["count"] == 9:
+                    raise RuntimeError("broken")
+                return (PluginTip("5 km in mi", "Units"), PluginTip("kw", "Week", "kw "), "junk")
+
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(Discovery([Tips()]), Path(directory))
+            on = (PluginConfig("fake", enabled=True),)
+            with self.assertLogs("winlauncher.plugins.host", "WARNING"):
+                rows = host.tips(on)
+            self.assertEqual(
+                rows,
+                [
+                    SyntaxTip("5 km in mi", "Fake: Units", "5 km in mi"),
+                    SyntaxTip("kw", "Fake: Week", "kw "),
+                ],
+            )
+            self.assertEqual(host.tips((PluginConfig("fake", enabled=False),)), [])
+            broken = (PluginConfig("fake", enabled=True, options={"count": 9}),)
+            with self.assertLogs("winlauncher.plugins.host", "ERROR"):
+                self.assertEqual(host.tips(broken), [])
+
+    def test_tips_need_an_example_and_a_meaning(self):
+        with self.assertRaisesRegex(ValueError, "needs an example"):
+            PluginTip(" ", "Units")
+        with self.assertRaisesRegex(ValueError, "must be text"):
+            PluginTip("5 km", "Units", None)
 
     def test_answers_need_a_result(self):
         with self.assertRaisesRegex(ValueError, "needs a result"):

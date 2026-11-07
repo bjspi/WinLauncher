@@ -2,7 +2,8 @@
 
 A help row shows a filter with an example and what it does; choosing it puts the
 filter into the search field, ready to be completed. The user's own website and
-plugin keywords are listed too, since those are the words nobody remembers.
+plugin keywords are listed too, since those are the words nobody remembers, and
+the rows plugins add, such as the questions a plugin answers.
 
 Only `?` alone or followed by a space asks for help, so a wildcard search such as
 `?eport` stays a search.
@@ -78,8 +79,10 @@ def syntax_tips(
     query: HelpQuery,
     websites: Iterable[WebsiteShortcut],
     plugin_keywords: Mapping[str, str],
+    plugin_tips: Iterable[SyntaxTip] = (),
 ) -> list[SyntaxTip]:
-    """The filters, then the user's keywords, that contain every word of `query`.
+    """The filters, the user's keywords, then the plugins' own rows, such as what
+    the Answers plugin understands, that contain every word of `query`.
 
     `plugin_keywords` maps each keyword to what it searches, such as "Telegram".
     """
@@ -95,4 +98,5 @@ def syntax_tips(
             for keyword, label in plugin_keywords.items()
         ),
     ]
-    return [tip for tip in (*FILTER_TIPS, *keyword_tips) if tip.matches(query.words)]
+    every = (*FILTER_TIPS, *keyword_tips, *plugin_tips)
+    return [tip for tip in every if tip.matches(query.words)]

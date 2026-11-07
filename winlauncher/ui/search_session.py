@@ -279,7 +279,9 @@ class SearchSession(QObject):
         limit = settings.max_results
         plugins = PluginSearch()
         if isinstance(query, HelpQuery):
-            hits.extend(syntax_tips(query, settings.websites, self._plugin_keywords(settings)))
+            plugin_tips = self.plugins.tips(settings.plugins) if self.plugins is not None else []
+            keywords = self._plugin_keywords(settings)
+            hits.extend(syntax_tips(query, settings.websites, keywords, plugin_tips))
         elif isinstance(query, PluginQuery):
             plugins = self._search_plugins(query, settings, cancel)
             hits.extend(plugins.hits)

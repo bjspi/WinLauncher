@@ -34,6 +34,7 @@ from winlauncher.plugins.api import (
     PluginContext,
     PluginError,
     PluginItem,
+    PluginTip,
     SetupRequired,
     no_choices,
     no_form,
@@ -54,6 +55,7 @@ from winlauncher.plugins.search import (
     searchable_items,
 )
 from winlauncher.search.query import SearchQuery
+from winlauncher.search.syntax_help import SyntaxTip
 
 MAX_ITEMS = 5000  # Per plugin; more would slow down every keystroke.
 CACHE_FILE = "items.json"
@@ -470,6 +472,27 @@ class PluginHost:
         """Let the plugin open its item; runs on the action worker."""
         plugin = self._entries[hit.plugin_id].plugin
         plugin.open(hit.item, self.context(hit.plugin_id, config))
+
+    def tips(self, configs: Sequence[PluginConfig]) -> list[SyntaxTip]:
+        """The `?` help rows of the enabled plugins, each meaning named after its plugin.
+
+        A plugin that fails or returns something else loses its rows only.
+        """
+        rows: list[SyntaxTip] = []
+        for config in self.enabled(configs):
+            plugin = self._entries[config.id].plugin
+            try:
+                declared = tuple(plugin.tips(self.context(config.id, config)))
+            except PLUGIN_FAILURES:
+                logger.exception("Plugin %s tips unavailable", config.id)
+                continue
+            for tip in declared:
+                if not isinstance(tip, PluginTip):
+                    logger.warning("Plugin %s declared a tip that is no PluginTip", config.id)
+                    continue
+                meaning = f"{plugin.label}: {tip.meaning}"
+                rows.append(SyntaxTip(tip.example, meaning, tip.insert or tip.example))
+        return rows
 
     def answering(self, configs: Sequence[PluginConfig]) -> bool:
         """Whether any enabled plugin answers typed text."""

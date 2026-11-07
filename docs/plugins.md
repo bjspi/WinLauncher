@@ -287,6 +287,9 @@ class Notes(Plugin):
     starting at its `default`; it returns the values by key.
 
   With `forgets_items=True`, the list is dropped afterwards.
+- `tips(context)` returns `PluginTip(example, meaning, insert="")` rows for the `?`
+  help, such as the questions `answer` understands; choosing one types `insert`, or
+  the example itself. Their meaning is shown after the plugin's label.
 - `answer(text, context)` may answer the typed text itself, as `Answer(result,
   detail="")`, shown above the results like a calculation: Enter copies `result`,
   `detail` is muted beside it. It is asked shortly after typing pauses, on a worker

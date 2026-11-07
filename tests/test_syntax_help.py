@@ -44,5 +44,13 @@ class HelpQueryTest(unittest.TestCase):
         self.assertEqual(syntax_tips(HelpQuery(("amazon",)), (AMAZON,), {}), [tips[-2]])
 
 
+class PluginTipsTest(unittest.TestCase):
+    def test_plugin_rows_come_last_and_are_found_by_their_words(self):
+        units = SyntaxTip("5 km in mi", "Answer: Units", "5 km in mi")
+        tips = syntax_tips(HelpQuery(), (), {}, [units])
+        self.assertEqual(tips[-1], units)
+        self.assertEqual(syntax_tips(HelpQuery(("units",)), (), {}, [units]), [units])
+
+
 if __name__ == "__main__":
     unittest.main()

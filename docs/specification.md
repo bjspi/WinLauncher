@@ -142,7 +142,9 @@ periodic refresh to rediscover removal of their marker.
 The text `?` alone, or `?` followed by a space and words, asks for the syntax
 instead of searching (`search/syntax_help.py`): the results are the filters with
 an example and their meaning, then the user's website keywords and the keywords of
-enabled plugins, only those containing every typed word, ignoring case. Choosing
+enabled plugins, then the rows enabled plugins add (`Plugin.tips`, meanings prefixed
+with the plugin's label; choosing one types its insert, else its example), only those
+containing every typed word, ignoring case. Choosing
 one replaces the query with the filter, such as `date:`, and keeps the bar open;
 Ctrl+C copies it. `?eport` and other text that merely starts with `?` stays a
 wildcard search.
