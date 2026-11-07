@@ -36,7 +36,7 @@ import winlauncher
 from winlauncher.actions import ExplorerTarget
 from winlauncher.calculator import Calculation
 from winlauncher.catalog import long_paths
-from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.catalog.model import CatalogItem, FolderDepth, ItemKind
 from winlauncher.commands import MenuCommand
 from winlauncher.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from winlauncher.platform.gesture import (
@@ -242,6 +242,28 @@ class UiFlowTest(unittest.TestCase):
             self.controller.welcome()
         settings.assert_called_once_with("Search folders")
         self.assertFalse(self.window.isVisible())
+
+    def test_search_folders_show_and_change_their_depth(self):
+        projects, docs = str(self.root / "Projects"), str(self.root / "Docs")
+        settings = replace(
+            self.controller.settings,
+            roots=(projects, docs),
+            folder_depths=(FolderDepth(projects, 3),),
+        )
+        dialog = self.settings_dialog(settings)
+        folders = dialog.roots
+        texts = [folders.list.item(row).text() for row in range(folders.list.count())]
+        self.assertEqual(texts, [f"{projects}   ·   3 levels", docs])
+        self.assertFalse(folders.depth.isEnabled())  # Nothing selected yet.
+        folders.list.setCurrentRow(1)
+        self.assertEqual(folders.depth.currentData(), None)
+        folders.depth.setCurrentIndex(folders.depth.findData(2))
+        folders.depth.activated.emit(folders.depth.currentIndex())
+        folders.list.setCurrentRow(0)
+        self.assertEqual(folders.depth.currentData(), 3)
+        read = dialog.read_settings()
+        self.assertEqual(read.roots, (projects, docs))
+        self.assertEqual(read.folder_depths, (FolderDepth(projects, 3), FolderDepth(docs, 2)))
 
     def test_settings_open_on_a_chosen_page(self):
         self.controller.edit_settings("Search folders")

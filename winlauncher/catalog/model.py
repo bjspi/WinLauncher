@@ -71,6 +71,27 @@ def is_within(path: Path | str, parent: Path | str) -> bool:
     return path_key(path).startswith(path_key(parent))
 
 
+def levels_below(path: Path | str, parent: Path | str) -> int:
+    """How many folders deep `path` lies in `parent`: 0 for `parent` itself, 1 for an
+    entry directly in it. `path` must lie within `parent`."""
+    return path_key(path)[len(path_key(parent)) :].count("/")
+
+
+FOLDER_DEPTH_RANGE = (1, 30)
+
+
+@dataclass(frozen=True, slots=True)
+class FolderDepth:
+    """How deep the catalog lists a search folder: `levels` below it, nothing deeper.
+
+    With 3 for D:\\Projects: Python, Python\\tinder_cli and what lies directly in
+    tinder_cli are listed; the contents of tinder_cli\\src are not.
+    """
+
+    path: str
+    levels: int
+
+
 class ItemKind(StrEnum):
     FILE = "file"
     FOLDER = "folder"
@@ -118,6 +139,8 @@ class CatalogSource:
 
     root: Path
     apps_only: bool = False
+    # Levels below `root` the catalog lists; None lists every level. Not part of `id`.
+    depth: int | None = None
 
     @property
     def id(self) -> str:
@@ -125,10 +148,29 @@ class CatalogSource:
         return prefix + path_key(self.root)
 
     def covers(self, other: CatalogSource) -> bool:
-        """A full source covers every source below it; an app-only source only app sources."""
+        """A full source covers every source below it that it reaches as deep; an
+        app-only source only app sources.
+
+        A source limited in depth leaves a source below it that reaches deeper, such
+        as a theme folder inside D:\\Projects listed in full, to that source.
+        """
         if other == self or not is_within(other.root, self.root):
             return False
-        return not self.apps_only or other.apps_only
+        if self.apps_only and not other.apps_only:
+            return False
+        if self.depth is None:
+            return True
+        if other.depth is None:
+            return False
+        return levels_below(other.root, self.root) + other.depth <= self.depth
+
+    def lists(self, path: Path) -> bool:
+        """Whether `path`, inside `root`, lies within the source's depth."""
+        return self.depth is None or levels_below(path, self.root) <= self.depth
+
+    def descends_into(self, folder: Path) -> bool:
+        """Whether the scan lists the contents of `folder`, inside `root`."""
+        return self.depth is None or levels_below(folder, self.root) < self.depth
 
     def accepts(self, item: CatalogItem) -> bool:
         return not self.apps_only or item.kind == ItemKind.APP

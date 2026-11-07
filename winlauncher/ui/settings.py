@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from winlauncher import __version__
-from winlauncher.catalog.model import path_key
+from winlauncher.catalog.model import FolderDepth, path_key
 from winlauncher.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
@@ -89,6 +89,8 @@ BRAND_ICON_SIZE = 32
 PAGE_MARGINS = (32, 26, 32, 24)  # Left, top, right, bottom around a page's cards.
 PAGE_SPACING = 10
 PATH_LIST_HEIGHT = 132
+DEPTH_CHOICES = 10  # Levels offered for a search folder; the file allows more.
+DEPTH_ROLE = Qt.ItemDataRole.UserRole + 1  # A search folder row's depth, None for all.
 APPEARANCE_CHOICES = (
     ("Match Windows", Appearance.SYSTEM),
     ("Light", Appearance.LIGHT),
@@ -305,7 +307,8 @@ class FolderDropList(QListWidget):
 class PathList(QWidget):
     """An editable list of folders, without duplicate Windows path identities.
 
-    Folders can be added with the button or dragged in from Explorer.
+    Folders can be added with the button or dragged in from Explorer. Each row keeps
+    its path apart from its text, which subclasses may extend.
     """
 
     def __init__(self, paths: tuple[str, ...], accessible_name: str, parent=None):
@@ -315,19 +318,26 @@ class PathList(QWidget):
         self.list = FolderDropList()
         self.list.setObjectName("itemList")
         self.list.setFixedHeight(PATH_LIST_HEIGHT)
-        self.list.addItems(paths)
         self.list.setAccessibleName(accessible_name)
         self.list.setToolTip("Drag folders here from Explorer, or use Add folder…")
         self.list.folders_dropped.connect(self.add_folders)
         layout.addWidget(self.list)
-        buttons = QHBoxLayout()
+        self.buttons = QHBoxLayout()
         add, remove = QPushButton("Add folder…"), QPushButton("Remove selected")
         add.clicked.connect(self.add_folder)
         remove.clicked.connect(self.remove_selected)
-        buttons.addWidget(add)
-        buttons.addWidget(remove)
-        buttons.addStretch()
-        layout.addLayout(buttons)
+        self.buttons.addWidget(add)
+        self.buttons.addWidget(remove)
+        self.buttons.addStretch()
+        layout.addLayout(self.buttons)
+        for path in paths:
+            self._add_row(path)
+
+    def _add_row(self, path: str) -> QListWidgetItem:
+        item = QListWidgetItem(path)
+        item.setData(Qt.ItemDataRole.UserRole, path)
+        self.list.addItem(item)
+        return item
 
     def add_folder(self) -> None:
         if folder := pick_path(self, "Choose folder"):
@@ -338,14 +348,82 @@ class PathList(QWidget):
         for folder in folders:
             if path_key(folder) not in known:
                 known.add(path_key(folder))
-                self.list.addItem(str(folder))
+                self._add_row(str(folder))
 
     def remove_selected(self) -> None:
         for item in self.list.selectedItems():
             self.list.takeItem(self.list.row(item))
 
     def paths(self) -> tuple[str, ...]:
-        return tuple(self.list.item(row).text() for row in range(self.list.count()))
+        return tuple(item.data(Qt.ItemDataRole.UserRole) for item in self._items())
+
+    def _items(self) -> list[QListWidgetItem]:
+        return [self.list.item(row) for row in range(self.list.count())]
+
+
+class SearchFolderList(PathList):
+    """Search folders, each with how many levels below it are listed.
+
+    The depth of the selected folders is chosen beside the buttons; a row shows
+    its own, such as D:\Projects · 3 levels.
+    """
+
+    def __init__(self, paths: tuple[str, ...], depths: tuple[FolderDepth, ...], parent=None):
+        self._depths = {path_key(rule.path): rule.levels for rule in depths}
+        super().__init__(paths, "Search folders", parent)
+        self.depth = QComboBox()
+        self.depth.setAccessibleName("Depth of the selected search folders")
+        self.depth.setToolTip(
+            "How many levels below the folder are searched, such as 3 for D:\Projects: "
+            "its groups, their projects and what lies directly in them."
+        )
+        self.depth.addItem("All levels", None)
+        for levels in range(1, DEPTH_CHOICES + 1):
+            self.depth.addItem(_levels_text(levels), levels)
+        label = QLabel("Depth")
+        label.setObjectName("unit")
+        self.buttons.addWidget(label)
+        self.buttons.addWidget(self.depth)
+        self.depth.activated.connect(self._depth_chosen)
+        self.list.itemSelectionChanged.connect(self._show_selected_depth)
+        self._show_selected_depth()
+
+    def depths(self) -> tuple[FolderDepth, ...]:
+        """The limited folders among the listed ones."""
+        limited = []
+        for item in self._items():
+            levels = item.data(DEPTH_ROLE)
+            if levels is not None:
+                limited.append(FolderDepth(item.data(Qt.ItemDataRole.UserRole), levels))
+        return tuple(limited)
+
+    def _add_row(self, path: str) -> QListWidgetItem:
+        item = super()._add_row(path)
+        self._set_depth(item, self._depths.get(path_key(path)))
+        return item
+
+    def _set_depth(self, item: QListWidgetItem, levels: int | None) -> None:
+        path = item.data(Qt.ItemDataRole.UserRole)
+        item.setData(DEPTH_ROLE, levels)
+        item.setText(path if levels is None else f"{path}   ·   {_levels_text(levels)}")
+
+    def _depth_chosen(self, index: int) -> None:
+        levels = self.depth.itemData(index)
+        for item in self.list.selectedItems():
+            self._set_depth(item, levels)
+
+    def _show_selected_depth(self) -> None:
+        selected = self.list.selectedItems()
+        self.depth.setEnabled(bool(selected))
+        if selected:
+            levels = selected[0].data(DEPTH_ROLE)
+            if self.depth.findData(levels) < 0:  # Set in the settings file beyond the choices.
+                self.depth.addItem(_levels_text(levels), levels)
+            self.depth.setCurrentIndex(self.depth.findData(levels))
+
+
+def _levels_text(levels: int) -> str:
+    return "1 level" if levels == 1 else f"{levels} levels"
 
 
 class SettingsDialog(QDialog):
@@ -703,7 +781,7 @@ class SettingsDialog(QDialog):
                 return
 
     def _folders_page(self, settings: Settings) -> list[QWidget]:
-        self.roots = PathList(settings.roots, "Search folders")
+        self.roots = SearchFolderList(settings.roots, settings.folder_depths)
         self.apps = ToggleSwitch("Include Start menu, Store and registered applications")
         self.apps.setChecked(settings.index_apps)
         self.windows_tools = ToggleSwitch("Include Windows tools and settings")
@@ -738,7 +816,12 @@ class SettingsDialog(QDialog):
             "More threads can increase disk activity and memory use."
         )
         folders = Card()
-        folders.add_block("Folders", "Drag folders here from Explorer, or add them.", self.roots)
+        folders.add_block(
+            "Folders",
+            "Drag folders here from Explorer, or add them. Depth limits how far below a "
+            "folder is searched; a folder inside it may reach deeper.",
+            self.roots,
+        )
         folders.add_row(
             "Include applications",
             "Start menu shortcuts, Microsoft Store apps and registered programs.",
@@ -932,6 +1015,7 @@ class SettingsDialog(QDialog):
         return replace(
             self.original,
             roots=self.roots.paths(),
+            folder_depths=self.roots.depths(),
             excluded_paths=self.excluded.paths(),
             excluded_patterns=_split_lines(self.patterns.toPlainText()),
             marker_files=_split_commas(self.markers.text()),

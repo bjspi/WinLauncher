@@ -478,6 +478,12 @@ writing plugins, and how they run and are ranked.
 
 ## 🎛️ Exclusions and priorities
 
+**Settings → Search folders → Depth** lists a folder only some levels deep. With
+`D:\Projects` at 3 levels, `Python`, `Python\tinder_cli` and what lies directly in
+it are found, but not the thousands of files in its `src`, `.venv` or test data —
+ideal for code projects you open as folders. A folder inside it, added as a search
+folder of its own, may still be listed in full.
+
 **Settings → Exclusions** takes absolute folders (drag & drop works), file/folder-name
 patterns with `*`, `?` and `[…]` wildcards, and marker file names. Defaults:
 

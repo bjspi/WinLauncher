@@ -48,7 +48,7 @@ flowchart TD
 | `search/service.py` | Streaming candidates into a bounded best-hits heap |
 | `search/syntax_help.py` | `?` queries: the search syntax and the user's keywords as help rows |
 | `search/commands.py` | Explorer tool hits bound to their folder, title/alias matching and ranking |
-| `settings.py` | Validated settings value object and atomic JSON file, also as an export |
+| `settings.py` | Validated settings value object and atomic JSON file, also as an export; search folder depths |
 | `actions.py` | Open, reveal, own menu command and favorite use cases; only successful opens are learned |
 | `commands.py` | The user's context-menu commands and their command lines |
 | `connectivity.py`, `platform/connectivity.py` | Immutable internet hints; Windows Network List Manager and an HTTPS request to Google's HTTP 204 endpoint |

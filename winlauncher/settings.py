@@ -9,7 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from winlauncher.catalog.exclusions import DEFAULT_MARKER_FILES, ExclusionPolicy
-from winlauncher.catalog.model import normalize, path_key
+from winlauncher.catalog.model import FOLDER_DEPTH_RANGE, FolderDepth, normalize, path_key
 from winlauncher.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
@@ -141,6 +141,8 @@ class WindowsSettingsDetail(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Settings:
     roots: tuple[str, ...] = field(default_factory=default_roots)
+    # Search folders listed only some levels deep, such as D:\Projects with 3.
+    folder_depths: tuple[FolderDepth, ...] = ()
     excluded_paths: tuple[str, ...] = ()
     excluded_patterns: tuple[str, ...] = DEFAULT_EXCLUDED_PATTERNS
     marker_files: tuple[str, ...] = DEFAULT_MARKER_FILES
@@ -202,6 +204,7 @@ class Settings:
         """Settings that change catalog membership or stored metadata."""
         return (
             self.roots,
+            self.folder_depths,
             self.excluded_paths,
             self.excluded_patterns,
             self.marker_files,
@@ -219,6 +222,10 @@ class Settings:
     def input_key(self) -> tuple:
         """Settings that the global keyboard listener reads at start."""
         return self.double_ctrl_ms, self.explorer_typing, self.quick_switch
+
+    def folder_depth_by_key(self) -> dict[str, int]:
+        """The depth of each limited search folder, by its path key."""
+        return {path_key(rule.path): rule.levels for rule in self.folder_depths}
 
     def exclusions(self, *, raise_marker_errors: bool = False) -> ExclusionPolicy:
         return ExclusionPolicy(
@@ -270,6 +277,12 @@ class Settings:
             raise ValueError("Search roots and excluded paths must be absolute.")
         if not all(Path(rule.path).is_absolute() for rule in self.folder_priorities):
             raise ValueError("Priority folders must be absolute paths.")
+        low, high = FOLDER_DEPTH_RANGE
+        for rule in self.folder_depths:
+            if not Path(rule.path).is_absolute():
+                raise ValueError("Folder depths must name absolute paths.")
+            if type(rule.levels) is not int or not low <= rule.levels <= high:
+                raise ValueError(f"A folder's depth must be {low} to {high} levels.")
         sources = [source_key(source) for source in self.plugin_sources]
         if not all(sources):
             raise ValueError("Plugin sources need a repository address or a folder.")
@@ -417,6 +430,7 @@ def _offered(folder: Path) -> tuple[OfferedPlugin, ...]:
 
 # Settings fields holding a list of records, with the record type and its name in messages.
 _RECORD_TYPES = {
+    "folder_depths": (FolderDepth, "folder depth"),
     "websites": (WebsiteShortcut, "website"),
     "menu_commands": (MenuCommand, "command"),
     "plugins": (PluginConfig, "plugin"),

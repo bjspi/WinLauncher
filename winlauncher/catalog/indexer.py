@@ -187,7 +187,9 @@ class _ScanSession:
     """Walks directories, applies the entry rules, and stages accepted items.
 
     `nested_source_keys` names configured sources that a broad Explorer scope may
-    contain. They keep their own catalog rows and indexing mode.
+    contain. They keep their own catalog rows and indexing mode. A full scan stops
+    at the sources inside another one, such as a folder listed in full inside a
+    source limited in depth, without keeping their rows: they are scanned too.
     """
 
     def __init__(
@@ -196,12 +198,15 @@ class _ScanSession:
         rows: _StagedRows,
         cancel: threading.Event,
         nested_source_keys: frozenset[str] = frozenset(),
+        *,
+        keep_nested_rows: bool = True,
     ):
         self.rules = _EntryRules(settings)
         self.rows = rows
         self.outcome = _ScanOutcome()
         self.cancel = cancel
         self.nested_source_keys = nested_source_keys
+        self.keep_nested_rows = keep_nested_rows
 
     @property
     def cancelled(self) -> bool:
@@ -217,11 +222,15 @@ class _ScanSession:
 
     def scan_tree(self, root: Path, source: CatalogSource, *, configured: bool) -> None:
         """Scan `root` below `source`; `configured` says the user chose the source."""
+        if not source.lists(root):
+            return  # Deeper than the source lists, such as a change far down a project.
         if self.cancelled or not self._enter_root(root, source, configured=configured):
             return
         pending = [root]
         while pending and not self.cancelled:
-            pending.extend(self._scan_folder(pending.pop(), source))
+            folder = pending.pop()
+            if source.descends_into(folder):
+                pending.extend(self._scan_folder(folder, source))
 
     def scan_applications(self, paths: Iterable[Path]) -> None:
         for path in paths:
@@ -284,7 +293,8 @@ class _ScanSession:
     def _visit(self, entry: os.DirEntry, source: CatalogSource) -> Path | None:
         path = long_paths.ordinary_path(entry.path)
         if path_key(path) in self.nested_source_keys:
-            self._retain_nested_source(path)
+            if self.keep_nested_rows:
+                self._retain_nested_source(path)
             return None
         try:
             directory = entry.is_dir(follow_symlinks=False)
@@ -311,7 +321,7 @@ class _ScanSession:
             self.outcome.retain(root)
 
     def _file_item(self, path: Path, source: CatalogSource) -> CatalogItem | None:
-        if not self.rules.allows_scope(path.parent, source.root):
+        if not source.lists(path) or not self.rules.allows_scope(path.parent, source.root):
             return None
         info = long_paths.lstat(path)
         if not stat.S_ISREG(info.st_mode):
@@ -380,8 +390,15 @@ class CatalogIndexer:
         cancel: threading.Event,
         progress: ProgressCallback | None,
     ) -> ScanReport:
+        # Sources inside another one, which then reaches less deep, scan themselves.
+        nested = frozenset(
+            path_key(inner.root)
+            for inner in sources
+            if any(outer != inner and is_within(inner.root, outer.root) for outer in sources)
+        )
         with self.store.snapshot() as connection:
-            session = _ScanSession(settings, _StagedRows(self.store, connection, progress), cancel)
+            rows = _StagedRows(self.store, connection, progress)
+            session = _ScanSession(settings, rows, cancel, nested, keep_nested_rows=False)
             for source in sources:
                 session.scan_tree(source.root, source, configured=True)
             active = {source.id for source in sources}

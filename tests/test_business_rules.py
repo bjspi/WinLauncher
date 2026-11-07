@@ -20,6 +20,7 @@ from winlauncher.catalog.indexer import CatalogIndexer
 from winlauncher.catalog.model import (
     CatalogItem,
     CatalogSource,
+    FolderDepth,
     ItemKind,
     is_within,
     path_key,
@@ -657,6 +658,68 @@ class BusinessRulesTest(unittest.TestCase):
         self.indexer.scan(settings, scope=app.parent, application_roots=(self.root / "Programs",))
         self.assertEqual(self.store.count(), 1)
         self.assertEqual(self.hits("editor", settings)[0].item.path, app)
+
+    def indexed(self) -> dict[str, str]:
+        """Each catalog path, relative to the test library, with its source."""
+        with self.store.connect() as connection:
+            rows = connection.execute("SELECT path, root FROM entries").fetchall()
+        return {Path(path).relative_to(self.root).as_posix(): source for path, source in rows}
+
+    def limited(self, levels: int, *inner: str) -> None:
+        """The library listed `levels` deep, and `inner` folders as search folders in full."""
+        roots = (str(self.root), *(str(self.root / folder) for folder in inner))
+        depths = (FolderDepth(str(self.root), levels),)
+        self.settings = replace(self.settings, roots=roots, folder_depths=depths)
+
+    def test_a_search_folder_is_listed_only_as_deep_as_its_depth(self):
+        self.file("Python/tinder_cli/README.md")
+        self.file("Python/tinder_cli/src/tinder/api.py")
+        self.limited(3)
+        self.scan()
+        self.assertEqual(
+            sorted(self.indexed()),
+            [".", "Python", "Python/tinder_cli", "Python/tinder_cli/README.md",
+             "Python/tinder_cli/src"],
+        )  # fmt: skip
+
+    def test_a_folder_inside_reaches_deeper_and_keeps_its_own_rows(self):
+        theme = self.file("TFB/DupProFiles/site/wp-content/themes/child/style.css")
+        self.file("TFB/DupProFiles/site/wp-content/plugins/big/plugin.php")
+        self.limited(2, "TFB/DupProFiles/site/wp-content/themes/child")
+        self.scan()
+        indexed = self.indexed()
+        self.assertIn("TFB/DupProFiles", indexed)
+        self.assertNotIn("TFB/DupProFiles/site", indexed)
+        relative = theme.relative_to(self.root).as_posix()
+        self.assertTrue(indexed[relative].endswith("THEMES/CHILD/"))
+        self.assertNotIn("TFB/DupProFiles/site/wp-content/plugins/big/plugin.php", indexed)
+        self.scan()  # A second full scan keeps the inner rows with their own source.
+        self.assertEqual(self.indexed(), indexed)
+
+    def test_changes_below_the_depth_stay_out(self):
+        self.limited(2)
+        self.file("Python/tinder_cli/README.md")
+        self.scan()
+        deep = self.file("Python/tinder_cli/src/new.py")
+        self.indexer.refresh_files(self.settings, [deep])
+        self.scan(scope=self.root / "Python/tinder_cli/src")
+        self.scan(scope=self.root / "Python")
+        self.assertEqual(sorted(self.indexed()), [".", "Python", "Python/tinder_cli"])
+
+    def test_a_smaller_depth_removes_what_was_listed_deeper(self):
+        self.file("Python/tinder_cli/src/api.py")
+        self.scan()
+        self.assertIn("Python/tinder_cli/src/api.py", self.indexed())
+        self.limited(1)
+        self.scan()
+        self.assertEqual(sorted(self.indexed()), [".", "Python"])
+
+    def test_a_limited_folder_still_covers_folders_it_reaches(self):
+        outer = CatalogSource(self.root, depth=3)
+        self.assertTrue(outer.covers(CatalogSource(self.root / "a", depth=2)))
+        self.assertFalse(outer.covers(CatalogSource(self.root / "a", depth=3)))
+        self.assertFalse(outer.covers(CatalogSource(self.root / "a")))
+        self.assertTrue(CatalogSource(self.root).covers(CatalogSource(self.root / "a", depth=1)))
 
     def test_parent_scope_preserves_ownership_and_mode_of_nested_sources(self):
         path = self.file("docs/report.txt")

@@ -7,8 +7,14 @@ modification time and Windows attribute bits. Executables and `.lnk`, `.url` and
 `.appref-ms` files are applications; other ordinary files are files. Directory
 entries are folders. Application display names omit their extension.
 
-Configured roots are recursive, and each root folder is itself an entry, so `D:\Projects`
-is found by name; drive roots have no name and are not listed, and an Explorer
+Configured roots are recursive unless they have a depth (`folder_depths`, 1–30
+levels, chosen beside the folder list): then entries up to that many levels below
+the root are listed, folders on the last level without their contents, and file
+changes and folder rescans deeper down list nothing. A root inside another root is
+dropped when the outer one reaches as deep; otherwise both stay, the outer scan
+stops at the inner root and the inner one lists its own tree, as for a theme folder
+listed in full inside `D:\Projects` limited to 3 levels. Each root folder is itself
+an entry, so `D:\Projects` is found by name; drive roots have no name and are not listed, and an Explorer
 folder outside every root only lends its scope. With application discovery enabled, Start menu
 directories are scanned for launchable entries and HKCU/HKLM App Paths are read in
 both registry views. Store apps, which have neither, are taken from Windows' "All apps"

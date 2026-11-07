@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from winlauncher.catalog.model import FolderDepth
 from winlauncher.settings import Settings, SettingsFile, read_exported_settings
 
 
@@ -19,6 +20,20 @@ class SettingsTransferTest(unittest.TestCase):
         path = self.folder / "WinLauncher settings.json"
         SettingsFile(path).save(exported)
         self.assertEqual(read_exported_settings(path), exported)
+
+    def test_folder_depths_are_kept_and_checked(self):
+        rule = FolderDepth("D:\\Projects", 3)
+        settings = Settings(roots=("D:\\Projects",), folder_depths=(rule,))
+        path = self.folder / "depths.json"
+        SettingsFile(path).save(settings)
+        self.assertEqual(read_exported_settings(path).folder_depths, (rule,))
+        for broken in (
+            FolderDepth("Projects", 3),
+            FolderDepth("D:\\P", 0),
+            FolderDepth("D:\\P", 31),
+        ):
+            with self.subTest(broken=broken), self.assertRaises(ValueError):
+                Settings(roots=(), folder_depths=(broken,))
 
     def test_a_file_that_is_no_settings_file_is_refused(self):
         for content, expected in (

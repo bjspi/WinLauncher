@@ -14,7 +14,10 @@ def catalog_sources(settings: Settings, application_roots: Iterable[Path]) -> li
 
     The caller passes only the application roots the settings include.
     """
-    candidates = [CatalogSource(Path(root)) for root in settings.roots]
+    depths = settings.folder_depth_by_key()
+    candidates = [
+        CatalogSource(Path(root), depth=depths.get(path_key(root))) for root in settings.roots
+    ]
     candidates.extend(CatalogSource(root, apps_only=True) for root in application_roots)
     unique = list(dict.fromkeys(candidates))
     return [source for source in unique if not any(other.covers(source) for other in unique)]
