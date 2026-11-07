@@ -9,7 +9,13 @@ from enum import StrEnum
 from pathlib import Path
 
 from winlauncher.catalog.exclusions import DEFAULT_MARKER_FILES, ExclusionPolicy
-from winlauncher.catalog.model import FOLDER_DEPTH_RANGE, FolderDepth, normalize, path_key
+from winlauncher.catalog.model import (
+    FOLDER_DEPTH_RANGE,
+    PROJECT_ATTRIBUTE,
+    FolderDepth,
+    normalize,
+    path_key,
+)
 from winlauncher.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
@@ -138,11 +144,20 @@ class WindowsSettingsDetail(StrEnum):
     EVERY_SETTING = "every-setting"
 
 
+# Code projects' folders first, as `rank_code_projects` asks; scans mark them.
+PROJECT_RANKING = AttributePriority(PROJECT_ATTRIBUTE, 25, SearchPriority.HIGH)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     roots: tuple[str, ...] = field(default_factory=default_roots)
     # Search folders listed only some levels deep, such as D:\Projects with 3.
     folder_depths: tuple[FolderDepth, ...] = ()
+    # Code projects (a folder with .git, pyproject.toml, package.json …) listed with
+    # their top level only, wherever they lie; off by default.
+    code_projects_top_level: bool = False
+    # Lift code projects' folders in the results, as a high priority rule would.
+    rank_code_projects: bool = False
     excluded_paths: tuple[str, ...] = ()
     excluded_patterns: tuple[str, ...] = DEFAULT_EXCLUDED_PATTERNS
     marker_files: tuple[str, ...] = DEFAULT_MARKER_FILES
@@ -205,6 +220,7 @@ class Settings:
         return (
             self.roots,
             self.folder_depths,
+            self.code_projects_top_level,
             self.excluded_paths,
             self.excluded_patterns,
             self.marker_files,
@@ -233,11 +249,12 @@ class Settings:
         )
 
     def priorities(self) -> PriorityPolicy:
+        lift = (PROJECT_RANKING,) if self.rank_code_projects else ()
         return PriorityPolicy(
             self.folder_priorities,
             self.name_priorities,
             self.extension_priorities,
-            self.attribute_priorities,
+            (*self.attribute_priorities, *lift),
         )
 
     def _validate_limits(self) -> None:

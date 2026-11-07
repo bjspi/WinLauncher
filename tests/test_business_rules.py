@@ -18,6 +18,7 @@ from winlauncher.catalog import long_paths
 from winlauncher.catalog.exclusions import ExclusionPolicy
 from winlauncher.catalog.indexer import CatalogIndexer
 from winlauncher.catalog.model import (
+    PROJECT_ATTRIBUTE,
     CatalogItem,
     CatalogSource,
     FolderDepth,
@@ -41,7 +42,7 @@ from winlauncher.search.query import MatchMode
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import rank
 from winlauncher.search.service import SearchService
-from winlauncher.settings import Settings, SettingsFile
+from winlauncher.settings import PROJECT_RANKING, Settings, SettingsFile
 
 
 class BusinessRulesTest(unittest.TestCase):
@@ -720,6 +721,66 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertFalse(outer.covers(CatalogSource(self.root / "a", depth=3)))
         self.assertFalse(outer.covers(CatalogSource(self.root / "a")))
         self.assertTrue(CatalogSource(self.root).covers(CatalogSource(self.root / "a", depth=1)))
+
+    def project(self) -> None:
+        """A code project in the library, with a source folder and a top-level readme."""
+        self.file("Python/tinder_cli/pyproject.toml")
+        self.file("Python/tinder_cli/README.md")
+        self.file("Python/tinder_cli/src/tinder/api.py")
+        self.file("Notes/ideas/deep/plan.txt")  # No project: listed in full.
+
+    def test_projects_are_listed_in_full_unless_switched_to_their_top_level(self):
+        self.project()
+        self.scan()
+        self.assertIn("Python/tinder_cli/src/tinder/api.py", self.indexed())
+        self.settings = replace(self.settings, code_projects_top_level=True)
+        self.scan()
+        indexed = self.indexed()
+        self.assertIn("Python/tinder_cli/README.md", indexed)
+        self.assertIn("Python/tinder_cli/src", indexed)
+        self.assertNotIn("Python/tinder_cli/src/tinder", indexed)
+        self.assertIn("Notes/ideas/deep/plan.txt", indexed)
+
+    def test_a_project_chosen_as_search_folder_is_listed_in_full(self):
+        self.project()
+        project = self.root / "Python/tinder_cli"
+        self.settings = replace(self.settings, roots=(str(project),), code_projects_top_level=True)
+        self.scan()
+        with self.store.connect() as connection:
+            paths = {Path(row[0]) for row in connection.execute("SELECT path FROM entries")}
+        self.assertIn(project / "src/tinder/api.py", paths)
+
+    def test_changes_inside_a_projects_subfolders_stay_out(self):
+        self.project()
+        self.settings = replace(self.settings, code_projects_top_level=True)
+        self.scan()
+        deep = self.file("Python/tinder_cli/src/new.py")
+        top = self.file("Python/tinder_cli/CHANGELOG.md")
+        self.indexer.refresh_files(self.settings, [deep, top])
+        self.scan(scope=self.root / "Python/tinder_cli/src")
+        self.scan(scope=self.root / "Python/tinder_cli/src/tinder")
+        indexed = self.indexed()
+        self.assertIn("Python/tinder_cli/CHANGELOG.md", indexed)
+        self.assertIn("Python/tinder_cli/src", indexed)
+        self.assertNotIn("Python/tinder_cli/src/new.py", indexed)
+        self.assertNotIn("Python/tinder_cli/src/tinder", indexed)
+
+    def test_projects_are_marked_and_may_rank_first(self):
+        self.project()
+        self.file("Python/tinder_notes/readme.txt")  # Same name, but no project.
+        self.scan()
+        with self.store.connect() as connection:
+            marked = {
+                Path(row[0]).relative_to(self.root).as_posix()
+                for row in connection.execute("SELECT path, attributes FROM entries")
+                if row[1] & PROJECT_ATTRIBUTE
+            }
+        self.assertEqual(marked, {"Python/tinder_cli"})
+        ranked = replace(self.settings, rank_code_projects=True)
+        first = self.hits("tinder", ranked)[0].item.path
+        self.assertEqual(first, self.root / "Python/tinder_cli")
+        self.assertIn(PROJECT_RANKING, ranked.priorities().attributes)
+        self.assertNotIn(PROJECT_RANKING, self.settings.priorities().attributes)
 
     def test_parent_scope_preserves_ownership_and_mode_of_nested_sources(self):
         path = self.file("docs/report.txt")

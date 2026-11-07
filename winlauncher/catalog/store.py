@@ -276,6 +276,33 @@ class CatalogStore:
             query = "SELECT count(*) FROM entries WHERE path_key > ? AND path_key < ?"
             return connection.execute(query, path_range(folder)).fetchone()[0]
 
+    def count_listed(self, source_id: str) -> int:
+        """Entries a search folder lists, without those of search folders inside it."""
+        with self.connect() as connection:
+            query = "SELECT count(*) FROM entries WHERE root = ?"
+            return connection.execute(query, (source_id,)).fetchone()[0]
+
+    def count_deeper(self, source_id: str, folder: Path, levels: int) -> int:
+        """Entries of a search folder more than `levels` folders deep inside `folder`."""
+        base = path_key(folder).count("/")
+        with self.connect() as connection:
+            query = """SELECT count(*) FROM entries WHERE root = ?
+                       AND length(path_key) - length(replace(path_key, '/', '')) > ?"""
+            return connection.execute(query, (source_id, base + levels)).fetchone()[0]
+
+    def catalog_paths(self) -> list[tuple[str, str, int]]:
+        """Path, path key and attribute bits of every entry, for the catalog analysis."""
+        with self.connect() as connection:
+            query = "SELECT path, path_key, attributes FROM entries"
+            return [(row[0], row[1], row[2]) for row in connection.execute(query)]
+
+    def opened_keys(self) -> frozenset[str]:
+        """Path keys the user ever opened, from any query, or made a favorite."""
+        with self.connect() as connection:
+            query = """SELECT path_key FROM usage UNION SELECT path_key FROM query_usage
+                       UNION SELECT path_key FROM favorites"""
+            return frozenset(row[0] for row in connection.execute(query))
+
     # Staged publication -------------------------------------------------------
 
     @contextmanager
@@ -291,6 +318,15 @@ class CatalogStore:
         """Stage `(item, source id)` pairs; the first staging of a path wins."""
         rows = [_staged_row(item, source_id) for item, source_id in items]
         connection.executemany("INSERT OR IGNORE INTO staged VALUES(?,?,?,?,?,?,?,?,?,?)", rows)
+        connection.commit()
+
+    @staticmethod
+    def mark_staged(connection: sqlite3.Connection, path: Path, bits: int) -> None:
+        """Add attribute bits to a staged row, such as a folder found to be a project."""
+        connection.execute(
+            "UPDATE staged SET attributes = attributes | ? WHERE path_key = ?",
+            (bits, path_key(path)),
+        )
         connection.commit()
 
     @staticmethod

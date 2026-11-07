@@ -13,8 +13,22 @@ the root are listed, folders on the last level without their contents, and file
 changes and folder rescans deeper down list nothing. A root inside another root is
 dropped when the outer one reaches as deep; otherwise both stay, the outer scan
 stops at the inner root and the inner one lists its own tree, as for a theme folder
-listed in full inside `D:\Projects` limited to 3 levels. Each root folder is itself
-an entry, so `D:\Projects` is found by name; drive roots have no name and are not listed, and an Explorer
+listed in full inside `D:\Projects` limited to 3 levels. With
+`code_projects_top_level` (off by default) a folder holding a project marker
+(`.git`, `pyproject.toml`, `setup.py`, `package.json`, `composer.json`, `Cargo.toml`,
+`go.mod`, `pom.xml`, `build.gradle[.kts]`, `settings.gradle[.kts]`, `*.sln`) lists its
+own entries but not the contents of its subfolders, also for file changes and
+rescans below it; a root that is a project is listed in full. Every scan marks such
+folders with attribute bit 2^40, and `rank_code_projects` adds a high priority rule
+(+25) for that bit, which both search engines apply. The Search folders page shows
+how many entries each root lists and, for a chosen depth, how many of them would go;
+**Analyze…** (`catalog/analysis.py`) suggests a depth for roots listed in full from
+2,000 entries, as deep as the deepest entry ever opened (3 to 6 levels) when it
+leaves out at least 30 %, the projects switch when projects' subfolders hold 1,000
+entries or more, and a low rank (-20) for up to five of the largest folders from
+1,000 entries of which nothing was opened, each with the entries it touches and the
+opened ones among them; ticked suggestions fill in the dialog, unsaved. Each root
+folder is itself an entry, so `D:\Projects` is found by name; drive roots have no name and are not listed, and an Explorer
 folder outside every root only lends its scope. With application discovery enabled, Start menu
 directories are scanned for launchable entries and HKCU/HKLM App Paths are read in
 both registry views. Store apps, which have neither, are taken from Windows' "All apps"

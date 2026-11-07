@@ -482,7 +482,19 @@ writing plugins, and how they run and are ranked.
 `D:\Projects` at 3 levels, `Python`, `Python\tinder_cli` and what lies directly in
 it are found, but not the thousands of files in its `src`, `.venv` or test data —
 ideal for code projects you open as folders. A folder inside it, added as a search
-folder of its own, may still be listed in full.
+folder of its own, may still be listed in full. Each search folder shows how many
+entries it lists, and choosing a depth tells how many of them would go.
+
+**Code projects: top level only** (off by default) does the same for every code
+project wherever it lies: a folder with `.git`, `pyproject.toml`, `package.json`,
+`build.gradle`, `composer.json`, `Cargo.toml` or a `.sln` lists only what lies
+directly in it. **Settings → Ranking → Code projects first** lifts these folders, so
+typing a project's name finds its folder before anything inside.
+
+**Analyze…** on the same page looks at where the catalog piles up entries you never
+opened and suggests a depth, the projects switch or a low rank, each with how many
+entries it touches and how many of those you opened. Ticked suggestions fill in the
+settings; nothing changes before you save.
 
 **Settings → Exclusions** takes absolute folders (drag & drop works), file/folder-name
 patterns with `*`, `?` and `[…]` wildcards, and marker file names. Defaults:

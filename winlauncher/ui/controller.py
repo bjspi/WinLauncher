@@ -807,6 +807,7 @@ class LauncherController(QObject):
             placement=self.placement,
             restart=self.restart,
             replace_all=self.replace_settings,
+            catalog=self.store,
         )
         if page:
             dialog.show_page(page)

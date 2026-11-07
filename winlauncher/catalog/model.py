@@ -78,6 +78,23 @@ def levels_below(path: Path | str, parent: Path | str) -> int:
 
 
 FOLDER_DEPTH_RANGE = (1, 30)
+# A folder holding one of these is a code project, such as a git checkout.
+PROJECT_MARKERS = frozenset(
+    {
+        ".git", "pyproject.toml", "setup.py", "package.json", "composer.json", "cargo.toml",
+        "go.mod", "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle",
+        "settings.gradle.kts",
+    }
+)  # fmt: skip
+PROJECT_SOLUTION_SUFFIX = ".sln"  # A Visual Studio solution names a project, too.
+# Marks a code project's folder in the catalog's attribute bits, far above Windows'
+# own attributes, so priority rules of both search engines can lift it.
+PROJECT_ATTRIBUTE = 1 << 40
+
+
+def is_project_marker(name: str) -> bool:
+    folded = name.casefold()
+    return folded in PROJECT_MARKERS or folded.endswith(PROJECT_SOLUTION_SUFFIX)
 
 
 @dataclass(frozen=True, slots=True)

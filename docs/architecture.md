@@ -46,6 +46,7 @@ flowchart TD
 | `search/candidates.py` | Query-to-SQL translation for the literal and fuzzy candidate passes |
 | `search/memory_index.py` | What the Rust memory index loads and the candidate plans it evaluates |
 | `search/service.py` | Streaming candidates into a bounded best-hits heap |
+| `catalog/analysis.py` | Where the catalog piles up unopened entries, and suggestions to thin it out |
 | `search/syntax_help.py` | `?` queries: the search syntax and the user's keywords as help rows |
 | `search/commands.py` | Explorer tool hits bound to their folder, title/alias matching and ranking |
 | `settings.py` | Validated settings value object and atomic JSON file, also as an export; search folder depths |

@@ -32,7 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from winlauncher import __version__
-from winlauncher.catalog.model import FolderDepth, path_key
+from winlauncher.catalog.analysis import LOW_WEIGHT, Suggestion, SuggestionKind, analyze
+from winlauncher.catalog.model import CatalogSource, FolderDepth, path_key
 from winlauncher.catalog.priority import (
     AttributePriority,
     ExtensionPriority,
@@ -40,7 +41,9 @@ from winlauncher.catalog.priority import (
     NamePriority,
     SearchPriority,
 )
+from winlauncher.catalog.store import CatalogStore
 from winlauncher.platform.windows_tools import display_languages
+from winlauncher.plugins.api import Choice
 from winlauncher.settings import (
     AUTO_HIDE_RANGE_SECONDS,
     CONTENT_SEARCH_THREADS_RANGE,
@@ -57,6 +60,7 @@ from winlauncher.settings import (
 from winlauncher.ui.bar_placement import BarPlacement
 from winlauncher.ui.commands import CommandList
 from winlauncher.ui.messages import ERROR, INFO, WARNING, ask, message
+from winlauncher.ui.plugin_dialogs import choose_items
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.theme import app_icon, colors, theme
@@ -365,16 +369,23 @@ class SearchFolderList(PathList):
     """Search folders, each with how many levels below it are listed.
 
     The depth of the selected folders is chosen beside the buttons; a row shows
-    its own, such as D:\Projects · 3 levels.
+    its own, such as D:\\Projects · 3 levels.
     """
 
-    def __init__(self, paths: tuple[str, ...], depths: tuple[FolderDepth, ...], parent=None):
+    def __init__(
+        self,
+        paths: tuple[str, ...],
+        depths: tuple[FolderDepth, ...],
+        catalog: CatalogStore | None = None,
+        parent=None,
+    ):
         self._depths = {path_key(rule.path): rule.levels for rule in depths}
+        self.catalog = catalog  # Counts each folder's entries; None shows no counts.
         super().__init__(paths, "Search folders", parent)
         self.depth = QComboBox()
         self.depth.setAccessibleName("Depth of the selected search folders")
         self.depth.setToolTip(
-            "How many levels below the folder are searched, such as 3 for D:\Projects: "
+            "How many levels below the folder are searched, such as 3 for D:\\Projects: "
             "its groups, their projects and what lies directly in them."
         )
         self.depth.addItem("All levels", None)
@@ -386,6 +397,10 @@ class SearchFolderList(PathList):
         self.buttons.addWidget(self.depth)
         self.depth.activated.connect(self._depth_chosen)
         self.list.itemSelectionChanged.connect(self._show_selected_depth)
+        self.effect = QLabel()  # What the selected folder's depth leaves out.
+        self.effect.setObjectName("unit")
+        self.effect.setWordWrap(True)
+        self.layout().addWidget(self.effect)
         self._show_selected_depth()
 
     def depths(self) -> tuple[FolderDepth, ...]:
@@ -402,15 +417,34 @@ class SearchFolderList(PathList):
         self._set_depth(item, self._depths.get(path_key(path)))
         return item
 
+    def set_depth(self, path: str, levels: int | None) -> None:
+        """Give the listed folder `path` a depth, such as a suggestion of the analysis."""
+        for item in self._items():
+            if path_key(item.data(Qt.ItemDataRole.UserRole)) == path_key(path):
+                self._set_depth(item, levels)
+        self._show_selected_depth()
+
     def _set_depth(self, item: QListWidgetItem, levels: int | None) -> None:
         path = item.data(Qt.ItemDataRole.UserRole)
         item.setData(DEPTH_ROLE, levels)
-        item.setText(path if levels is None else f"{path}   ·   {_levels_text(levels)}")
+        parts = [path]
+        if levels is not None:
+            parts.append(_levels_text(levels))
+        if (count := self._listed(path)) is not None:
+            parts.append(f"{count:,} entries")
+        item.setText("   ·   ".join(parts))
+
+    def _listed(self, path: str) -> int | None:
+        """Entries the catalog lists for the folder now; None without the catalog."""
+        if self.catalog is None:
+            return None
+        return self.catalog.count_listed(CatalogSource(Path(path)).id)
 
     def _depth_chosen(self, index: int) -> None:
         levels = self.depth.itemData(index)
         for item in self.list.selectedItems():
             self._set_depth(item, levels)
+        self._show_effect()
 
     def _show_selected_depth(self) -> None:
         selected = self.list.selectedItems()
@@ -420,6 +454,26 @@ class SearchFolderList(PathList):
             if self.depth.findData(levels) < 0:  # Set in the settings file beyond the choices.
                 self.depth.addItem(_levels_text(levels), levels)
             self.depth.setCurrentIndex(self.depth.findData(levels))
+        self._show_effect()
+
+    def _show_effect(self) -> None:
+        """For the selected folder with a depth: what of its entries listed now goes."""
+        selected = self.list.selectedItems()
+        levels = selected[0].data(DEPTH_ROLE) if selected else None
+        if self.catalog is None or levels is None:
+            self.effect.hide()
+            return
+        path = selected[0].data(Qt.ItemDataRole.UserRole)
+        source = CatalogSource(Path(path)).id
+        deeper = self.catalog.count_deeper(source, Path(path), levels)
+        listed = self.catalog.count_listed(source)
+        self.effect.setText(
+            f"At {_levels_text(levels)}, {deeper:,} of the {listed:,} entries listed now "
+            "go at the next scan."
+            if deeper
+            else f"At {_levels_text(levels)}, all {listed:,} entries listed now stay."
+        )
+        self.effect.show()
 
 
 def _levels_text(levels: int) -> str:
@@ -444,6 +498,7 @@ class SettingsDialog(QDialog):
         placement: BarPlacement | None = None,
         restart: Callable[[], None] | None = None,
         replace_all: Callable[[Settings], None] | None = None,
+        catalog: CatalogStore | None = None,
     ):
         super().__init__(parent)
         self.original = settings
@@ -451,6 +506,8 @@ class SettingsDialog(QDialog):
         self.persist = save
         # Applies imported settings and shows them in a new dialog; None hides Import.
         self.replace_all = replace_all
+        # Counts entries per search folder and feeds Analyze catalog…; None hides both.
+        self.catalog = catalog
         self.set_startup = set_startup
         self.startup_state = startup_state
         self.restart_app = restart
@@ -773,6 +830,51 @@ class SettingsDialog(QDialog):
         ):
             self.replace_all(settings)
 
+    def analyze_catalog(self) -> None:
+        """Suggest how to thin out the catalog; ticked suggestions fill in the fields."""
+        if self.catalog is None:
+            return
+        try:
+            settings = self.read_settings()
+        except ValueError as exc:
+            message(self, "Check your settings", str(exc), WARNING)
+            return
+        suggestions = analyze(settings, self.catalog.catalog_paths(), self.catalog.opened_keys())
+        if not suggestions:
+            message(
+                self,
+                "Nothing to thin out",
+                "No large folder piles up entries you never open.",
+                INFO,
+            )
+            return
+        choices = [
+            Choice(str(index), suggestion.title, suggestion.detail, checked=not suggestion.opened)
+            for index, suggestion in enumerate(suggestions)
+        ]
+        ticked = choose_items(
+            self,
+            "Analyze catalog",
+            "Ticked suggestions fill in the settings. Nothing changes before you save; "
+            "the next scan applies them.",
+            choices,
+        )
+        if not ticked:
+            return
+        for index, suggestion in enumerate(suggestions):
+            if str(index) in ticked:
+                self._apply_suggestion(suggestion)
+
+    def _apply_suggestion(self, suggestion: Suggestion) -> None:
+        if suggestion.kind == SuggestionKind.DEPTH:
+            self.roots.set_depth(suggestion.path, suggestion.levels)
+        elif suggestion.kind == SuggestionKind.PROJECTS:
+            self.code_projects.setChecked(True)
+        else:
+            line = f"{LOW_WEIGHT} | {suggestion.path} | {SearchPriority.LOW}"
+            current = self.priorities.toPlainText().rstrip("\n")
+            self.priorities.setPlainText(f"{current}\n{line}" if current else line)
+
     def show_page(self, title: str) -> None:
         """Open the page with this title, such as Search folders."""
         for row in range(self.nav.count()):
@@ -781,7 +883,9 @@ class SettingsDialog(QDialog):
                 return
 
     def _folders_page(self, settings: Settings) -> list[QWidget]:
-        self.roots = SearchFolderList(settings.roots, settings.folder_depths)
+        self.roots = SearchFolderList(settings.roots, settings.folder_depths, self.catalog)
+        self.code_projects = ToggleSwitch("List code projects with their top level only")
+        self.code_projects.setChecked(settings.code_projects_top_level)
         self.apps = ToggleSwitch("Include Start menu, Store and registered applications")
         self.apps.setChecked(settings.index_apps)
         self.windows_tools = ToggleSwitch("Include Windows tools and settings")
@@ -822,6 +926,20 @@ class SettingsDialog(QDialog):
             "folder is searched; a folder inside it may reach deeper.",
             self.roots,
         )
+        folders.add_row(
+            "Code projects: top level only",
+            "A folder with .git, pyproject.toml, package.json or the like lists only what "
+            "lies directly in it, wherever it is. A project chosen as search folder is "
+            "listed in full.",
+            self.code_projects,
+        )
+        if self.catalog is not None:
+            folders.add_row(
+                "Analyze catalog",
+                "Where many entries pile up that you never open, and what would thin them "
+                "out. Ticked suggestions fill in the settings; Save keeps them.",
+                _button("Analyze…", self.analyze_catalog),
+            )
         folders.add_row(
             "Include applications",
             "Start menu shortcuts, Microsoft Store apps and registered programs.",
@@ -944,6 +1062,15 @@ class SettingsDialog(QDialog):
         return [card]
 
     def _ranking_page(self, settings: Settings) -> list[QWidget]:
+        self.rank_projects = ToggleSwitch("Rank code projects first")
+        self.rank_projects.setChecked(settings.rank_code_projects)
+        projects = Card()
+        projects.add_row(
+            "Code projects first",
+            "Lift the folders of code projects, such as git checkouts, in the results; "
+            "typing a project's name finds its folder first.",
+            self.rank_projects,
+        )
         self.priorities = QPlainTextEdit(format_folder_priorities(settings.folder_priorities))
         self.priorities.setPlaceholderText(f"{FOLDER_PRIORITY_FORMAT}\n-20 | C:\\Archive | low")
         self.priorities.setAccessibleName("Folder priorities, one per line")
@@ -959,7 +1086,7 @@ class SettingsDialog(QDialog):
             "Favorites and what you open also lift results. Exact names and name prefixes "
             "score highest."
         )
-        return [card, note]
+        return [projects, card, note]
 
     def _advanced_page(self, settings: Settings) -> list[QWidget]:
         self.rule_json = QPlainTextEdit(format_advanced_rules(settings))
@@ -1016,6 +1143,8 @@ class SettingsDialog(QDialog):
             self.original,
             roots=self.roots.paths(),
             folder_depths=self.roots.depths(),
+            code_projects_top_level=self.code_projects.isChecked(),
+            rank_code_projects=self.rank_projects.isChecked(),
             excluded_paths=self.excluded.paths(),
             excluded_patterns=_split_lines(self.patterns.toPlainText()),
             marker_files=_split_commas(self.markers.text()),

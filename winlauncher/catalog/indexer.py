@@ -19,15 +19,18 @@ import stat
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import replace
 from pathlib import Path
 
 from winlauncher.catalog import long_paths
 from winlauncher.catalog.model import (
+    PROJECT_ATTRIBUTE,
     REGISTRY_SOURCE,
     CatalogItem,
     CatalogSource,
     ItemKind,
     ScanReport,
+    is_project_marker,
     is_within,
     path_key,
 )
@@ -148,6 +151,16 @@ class _StagedRows:
         self.store.stage(self.connection, self._batch)
         self._batch.clear()
 
+    def mark(self, path: Path, bits: int) -> None:
+        """Add attribute bits to an item staged before, in this batch or an earlier one."""
+        key = path_key(path)
+        for index, (item, source_id) in enumerate(self._batch):
+            if item.identity == key:
+                marked = replace(item, attributes=item.attributes | bits)
+                self._batch[index] = (marked, source_id)
+                return
+        self.store.mark_staged(self.connection, path, bits)
+
     def retain_previous(self, paths: Iterable[Path]) -> None:
         """Copy the previous rows of unreadable or untouched subtrees into the snapshot."""
         for path in paths:
@@ -207,6 +220,9 @@ class _ScanSession:
         self.cancel = cancel
         self.nested_source_keys = nested_source_keys
         self.keep_nested_rows = keep_nested_rows
+        # Code projects listed with their top level only; see `_inside_project`.
+        self.project_top_level = settings.code_projects_top_level
+        self._projects: dict[str, bool] = {}  # Folder key: holds a project marker.
 
     @property
     def cancelled(self) -> bool:
@@ -222,10 +238,12 @@ class _ScanSession:
 
     def scan_tree(self, root: Path, source: CatalogSource, *, configured: bool) -> None:
         """Scan `root` below `source`; `configured` says the user chose the source."""
-        if not source.lists(root):
+        if not source.lists(root) or self._inside_project(root.parent, source):
             return  # Deeper than the source lists, such as a change far down a project.
         if self.cancelled or not self._enter_root(root, source, configured=configured):
             return
+        if self._inside_project(root, source):
+            return  # A folder of a project's top level: listed, its contents are not.
         pending = [root]
         while pending and not self.cancelled:
             folder = pending.pop()
@@ -278,16 +296,25 @@ class _ScanSession:
         error keeps everything already staged (the folder's old rows are retained).
         """
         subfolders = []
+        project = False
         try:
             with long_paths.scandir(folder) as entries:
                 for entry in entries:
                     if self.cancelled:
                         break
+                    project = project or is_project_marker(entry.name)
                     subfolder = self._visit(entry, source)
                     if subfolder is not None:
                         subfolders.append(subfolder)
         except OSError as exc:
             self.outcome.failure(folder, "Cannot scan", exc)
+        self._projects[path_key(folder)] = project
+        if not project:
+            return subfolders
+        self.rows.mark(folder, PROJECT_ATTRIBUTE)
+        # A search folder the user chose is listed in full, even if it is a project.
+        if self.project_top_level and path_key(folder) != path_key(source.root):
+            return []
         return subfolders
 
     def _visit(self, entry: os.DirEntry, source: CatalogSource) -> Path | None:
@@ -310,6 +337,31 @@ class _ScanSession:
             self.rows.add(item, source.id)
         return path if directory else None
 
+    def _inside_project(self, folder: Path, source: CatalogSource) -> bool:
+        """Whether `folder` lies inside a code project below the search folder, so that
+        its contents are not listed when projects are listed with their top level only.
+
+        The project's own folder lists its contents; its subfolders do not.
+        """
+        if not self.project_top_level or not is_within(folder, source.root):
+            return False
+        root_key = path_key(source.root)
+        return any(
+            self._is_project(ancestor)
+            for ancestor in folder.parents
+            if is_within(ancestor, source.root) and path_key(ancestor) != root_key
+        )
+
+    def _is_project(self, folder: Path) -> bool:
+        key = path_key(folder)
+        if key not in self._projects:
+            try:
+                with long_paths.scandir(folder) as entries:
+                    self._projects[key] = any(is_project_marker(e.name) for e in entries)
+            except OSError:
+                self._projects[key] = False
+        return self._projects[key]
+
     def _retain_nested_source(self, root: Path) -> None:
         self.outcome.skip()
         try:
@@ -321,7 +373,9 @@ class _ScanSession:
             self.outcome.retain(root)
 
     def _file_item(self, path: Path, source: CatalogSource) -> CatalogItem | None:
-        if not source.lists(path) or not self.rules.allows_scope(path.parent, source.root):
+        if not source.lists(path) or self._inside_project(path.parent, source):
+            return None
+        if not self.rules.allows_scope(path.parent, source.root):
             return None
         info = long_paths.lstat(path)
         if not stat.S_ISREG(info.st_mode):

@@ -36,7 +36,8 @@ import winlauncher
 from winlauncher.actions import ExplorerTarget
 from winlauncher.calculator import Calculation
 from winlauncher.catalog import long_paths
-from winlauncher.catalog.model import CatalogItem, FolderDepth, ItemKind
+from winlauncher.catalog.model import CatalogItem, CatalogSource, FolderDepth, ItemKind
+from winlauncher.catalog.priority import FolderPriority
 from winlauncher.commands import MenuCommand
 from winlauncher.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from winlauncher.platform.gesture import (
@@ -264,6 +265,65 @@ class UiFlowTest(unittest.TestCase):
         read = dialog.read_settings()
         self.assertEqual(read.roots, (projects, docs))
         self.assertEqual(read.folder_depths, (FolderDepth(projects, 3), FolderDepth(docs, 2)))
+
+    def test_search_folders_count_their_entries_and_preview_a_depth(self):
+        for name in ("a/b/c/one.txt", "a/b/c/two.txt", "a/top.txt"):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+        self.indexing.request_full()
+        self.tasks.finish(TaskCategory.INDEX)
+        self.controller.edit_settings("Search folders")
+        dialog = self.controller.settings_dialog
+        self.addCleanup(dialog.reject)
+        folders = dialog.roots
+        listed = self.controller.store.count_listed(CatalogSource(self.root).id)
+        self.assertIn(f"{listed:,} entries", folders.list.item(0).text())
+        folders.list.setCurrentRow(0)
+        self.assertTrue(folders.effect.isHidden())  # All levels: nothing goes.
+        folders.depth.setCurrentIndex(folders.depth.findData(1))
+        folders.depth.activated.emit(folders.depth.currentIndex())
+        self.assertIn("1 level", folders.list.item(0).text())
+        self.assertIn(f"of the {listed:,} entries listed now go", folders.effect.text())
+
+    def test_analysis_suggestions_fill_in_the_settings_before_saving(self):
+        from winlauncher.catalog.analysis import Suggestion, SuggestionKind
+
+        low = str(self.root / "Old")
+        suggestions = [
+            Suggestion(SuggestionKind.DEPTH, str(self.root), 900, 0, 3),
+            Suggestion(SuggestionKind.PROJECTS, "", 800, 0),
+            Suggestion(SuggestionKind.LOWER, low, 700, 0),
+        ]
+        self.controller.edit_settings("Search folders")
+        dialog = self.controller.settings_dialog
+        self.addCleanup(dialog.reject)
+        shown = []
+
+        def tick_all(parent, title, text, choices):
+            shown.extend(choices)
+            return frozenset(choice.key for choice in choices)
+
+        with (
+            patch("winlauncher.ui.settings.analyze", return_value=suggestions),
+            patch("winlauncher.ui.settings.choose_items", tick_all),
+        ):
+            dialog.analyze_catalog()
+        self.assertEqual([c.label for c in shown], [s.title for s in suggestions])
+        read = dialog.read_settings()
+        self.assertEqual(read.folder_depths, (FolderDepth(str(self.root), 3),))
+        self.assertTrue(read.code_projects_top_level)
+        self.assertEqual(read.folder_priorities[-1], FolderPriority(low, -20, "low"))
+        self.assertEqual(self.controller.settings.folder_depths, ())  # Not saved yet.
+
+    def test_the_project_switches_are_read_back(self):
+        dialog = self.settings_dialog(self.controller.settings)
+        self.assertFalse(dialog.code_projects.isChecked())
+        self.assertFalse(dialog.rank_projects.isChecked())
+        dialog.code_projects.setChecked(True)
+        dialog.rank_projects.setChecked(True)
+        read = dialog.read_settings()
+        self.assertTrue(read.code_projects_top_level and read.rank_code_projects)
 
     def test_settings_open_on_a_chosen_page(self):
         self.controller.edit_settings("Search folders")
