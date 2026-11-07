@@ -74,6 +74,9 @@ class Discovery:
     plugins: list[Plugin] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)  # For the user: what did not load.
     sources: dict[str, PluginSource] = field(default_factory=dict)  # By plugin id.
+    # Further copies of a loaded plugin, skipped because the loaded one came first;
+    # its settings card names them, which a line among the problems would not.
+    shadowed: dict[str, list[PluginSource]] = field(default_factory=dict)
 
     def add(self, plugin_class: object, source: PluginSource) -> None:
         """Instantiate `plugin_class` unless it is no usable, unclaimed plugin."""
@@ -87,6 +90,7 @@ class Discovery:
         if plugin_id in self.sources:
             taken = self.sources[plugin_id].origin
             self.problems.append(f"{source.origin}: the id {plugin_id} is already used by {taken}.")
+            self.shadowed.setdefault(plugin_id, []).append(source)
             return
         if (problem := _declaration_problem(plugin_class)) is not None:
             self.problems.append(f"{source.origin}: {problem}")

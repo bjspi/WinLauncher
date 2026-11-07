@@ -668,7 +668,8 @@ else is loaded. Every `Plugin` subclass a module defines itself is one plugin. T
 first plugin claiming an id wins. A module that fails to import or calls `sys.exit()` while loading, an id that is not
 `[a-z0-9][a-z0-9_-]*`, an id already taken, an unreadable folder or manifest, a
 folder with a manifest but no `plugin.py` and an activated folder that is gone are
-skipped and named on the Plugins page; a folder that is neither is
+skipped and named on the Plugins page; a skipped copy of a loaded plugin is also
+named on that plugin's settings card, with its place and version. A folder that is neither is
 ignored silently and an entry whose name starts with `_` is never loaded. A loaded
 plugin without a settings entry is on.
 

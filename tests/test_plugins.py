@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from winlauncher.calculator import Calculation
 from winlauncher.catalog.model import CatalogItem, ItemKind
@@ -590,6 +590,20 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
                 self.assertEqual(found.plugins, [])
                 self.assertIn(expected, " ".join(found.problems))
 
+    def test_a_second_copy_is_skipped_and_remembered_for_its_card(self):
+        first = PluginSource("private", Path("C:/mine/fake/plugin.py"), "1.0.0")
+        second = PluginSource("clone", Path("D:/clone/fake/plugin.py"), "1.1.0")
+        found = Discovery()
+        found.add(FakePlugin, first)
+        found.add(FakePlugin, second)
+        self.assertEqual([plugin.id for plugin in found.plugins], ["fake"])
+        self.assertEqual(found.shadowed, {"fake": [second]})
+        self.assertIn("already used by private", found.problems[0])
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(found, Path(directory))
+            self.assertEqual((host.source("fake"), host.shadowed("fake")), (first, (second,)))
+            self.assertEqual(host.shadowed("other"), ())
+
     def test_a_correct_declaration_is_accepted(self):
         found = Discovery()
         found.add(
@@ -1071,6 +1085,22 @@ class PluginUiTest(unittest.TestCase):
             [row.name for row in self.search("@fk anna")],
             ["Fake: Anna Schmidt", "Fake: Team Annahme"],
         )
+
+    def test_the_card_names_a_skipped_copy(self):
+        from winlauncher.ui.settings import SettingsDialog
+
+        skipped = PluginSource("clone", Path("D:/clone/fake/plugin.py"), "1.1.0")
+        self.controller.plugins._shadowed = {"fake": (skipped,)}
+        dialog = SettingsDialog(
+            self.controller.settings,
+            website_icons=self.controller.website_icons,
+            plugins=self.controller.plugin_refresh,
+        )
+        self.addCleanup(dialog.deleteLater)
+        texts = [label.text() for label in dialog.plugin_pages.cards[0].findChildren(QLabel)]
+        self.assertIn("Skipped copy", texts)
+        self.assertIn("Version 1.1.0", texts)
+        self.assertTrue(any(str(Path("D:/clone/fake")) in text for text in texts))
 
     def test_settings_page_edits_the_plugin(self):
         from winlauncher.ui.settings import SettingsDialog

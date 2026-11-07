@@ -112,6 +112,15 @@ class PluginCard(Card):
         version = QLabel(f"Version {source.version}" if source.version else "No version")
         version.setObjectName("unit")
         self.add_row("Installed from", _source_location(source), version)
+        for other in scheduler.host.shadowed(plugin.id):
+            skipped = QLabel(f"Version {other.version}" if other.version else "No version")
+            skipped.setObjectName("unit")
+            self.add_row(
+                "Skipped copy",
+                f"{_source_location(other)} is not loaded: the copy above comes first. "
+                "Remove one of them to use the other.",
+                skipped,
+            )
         self.keywords = _keywords_field(config.keywords, f"{plugin.label} keywords")
         example = config.keywords[0] if config.keywords else "kw"
         self.add_row(

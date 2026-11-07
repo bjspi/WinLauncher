@@ -131,6 +131,7 @@ class PluginHost:
         self.data_dir = data_dir / "plugin-data"
         self.problems = tuple(found.problems)  # Plugins that failed to load.
         self._sources = dict(found.sources)
+        self._shadowed = {key: tuple(copies) for key, copies in found.shadowed.items()}
         self._entries = {
             plugin.id: _Entry(plugin, literal=literal_patterns(plugin.literal_terms))
             for plugin in found.plugins
@@ -164,6 +165,10 @@ class PluginHost:
     def source(self, plugin_id: str) -> PluginSource:
         """Where the plugin was loaded from, for the settings page."""
         return self._sources.get(plugin_id, PluginSource(plugin_id))
+
+    def shadowed(self, plugin_id: str) -> tuple[PluginSource, ...]:
+        """Other copies of the plugin that were skipped because this one came first."""
+        return self._shadowed.get(plugin_id, ())
 
     # Configuration ----------------------------------------------------------
 

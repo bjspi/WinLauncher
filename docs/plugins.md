@@ -136,7 +136,8 @@ crm = "my_package.crm:CrmPlugin"
 
 The first plugin claiming an id wins, so a plugin in the plugins folder takes
 precedence over an activated one of the same id; the others are listed as problems
-on the Plugins page, together with folders that failed to load. Everything is
+on the Plugins page, together with folders that failed to load, and the loaded
+plugin's card names each skipped copy with its place and version. Everything is
 loaded once at start, so installing, activating or removing a plugin takes effect
 after a restart.
 
