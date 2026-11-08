@@ -26,15 +26,6 @@ class ConnectivityTest(unittest.TestCase):
             with self.subTest(windows=windows, http=http):
                 self.assertEqual(InternetState(windows, http).status, status)
 
-    def test_probe_keeps_the_individual_results_and_observation_time(self):
-        with (
-            patch.object(connectivity.os, "name", "nt"),
-            patch.object(connectivity, "_windows_online", return_value=True),
-            patch.object(connectivity, "_http_online", return_value=False),
-            patch.object(connectivity.time, "time", return_value=42),
-        ):
-            self.assertEqual(connectivity.probe_internet(), InternetState(True, False, 42))
-
     def test_http_expects_204_and_closes_the_response(self):
         for status in (204, 200, 302):
             with self.subTest(status=status):

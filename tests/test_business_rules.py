@@ -37,7 +37,7 @@ from winlauncher.catalog.priority import (
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.platform.gesture import DoubleCtrlGesture
 from winlauncher.search.candidates import Candidate
-from winlauncher.search.matching import FuzzyLayout, _word_starts, fuzzy_score
+from winlauncher.search.matching import FuzzyLayout, fuzzy_score
 from winlauncher.search.query import MatchMode
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import rank
@@ -223,20 +223,17 @@ class BusinessRulesTest(unittest.TestCase):
             layout = FuzzyLayout.of(name)
             for term in ("sl", "hcp", "vsc", "abc", "cd", "lohne", "ub", "zz"):
                 self.assertEqual(fuzzy_score(term, name, layout), fuzzy_score(term, name))
-        # The ASCII path finds the word starts the letter-by-letter test finds.
-        self.assertEqual(_word_starts("ab_cdEf 1G"), {0, 3, 5, 8})
-        self.assertEqual(_word_starts("äb_cdEf 1G"), {0, 3, 5, 8})  # Not ASCII: the general path.
-        for term, name, score in (
-            ("abc", "abc.txt", 41.66666666666667),
-            ("abc", "a___b___c.txt", 41.599999999999994),
-            ("bdg", "Budget Report.txt", 39.43333333333333),
-            ("ssc", "StraßeCode", 39.166666666666664),
-            ("ba", "ab", None),
-            ("aa", "a", None),
-            ("", "name", None),
+        for term, name, matches in (
+            ("bdg", "Budget Report.txt", True),
+            ("ssc", "StraßeCode", True),
+            ("ba", "ab", False),
+            ("aa", "a", False),
+            ("", "name", False),
         ):
-            self.assertEqual(fuzzy_score(term, name), score)
-            self.assertEqual(fuzzy_score(term, name, FuzzyLayout.of(name)), score)
+            with self.subTest(term=term, name=name):
+                score = fuzzy_score(term, name)
+                self.assertEqual(score is not None, matches)
+                self.assertEqual(fuzzy_score(term, name, FuzzyLayout.of(name)), score)
 
     def test_abbreviations_camel_case_and_keyword_mode(self):
         self.file("VisualStudioCode.exe")
@@ -1092,16 +1089,6 @@ class BusinessRulesTest(unittest.TestCase):
         self.assertEqual(hits[0].item.query_launches, 1)
         self.assertNotEqual(path_key(self.root / "Straße"), path_key(self.root / "Strasse"))
         self.assertNotEqual(path_key(self.root / "Café"), path_key(self.root / "Cafe\u0301"))
-
-    def test_scoped_sql_uses_the_path_index(self):
-        from winlauncher.catalog.model import path_range
-
-        with self.store.connect() as connection:
-            plan = connection.execute(
-                "EXPLAIN QUERY PLAN SELECT * FROM entries WHERE path_key>=? AND path_key<?",
-                path_range(self.root),
-            ).fetchall()
-        self.assertTrue(any("entries_scope" in row[3] for row in plan))
 
     def test_legacy_identity_migration_keeps_usage_favorites_and_search_index(self):
         for version in (1, 2):

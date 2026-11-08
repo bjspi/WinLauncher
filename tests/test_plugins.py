@@ -631,14 +631,21 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
                 PluginItem(**{"key": "1", "name": "Anna", **fields})
             self.assertIn(expected, str(caught.exception))
 
-    def test_chips_need_text_and_a_known_tone(self):
+    def test_chips_choices_tips_and_answers_refuse_what_could_not_be_shown(self):
         self.assertIs(Chip("Done", "success").tone, ChipTone.SUCCESS)
-        for text, tone, expected in (
-            (" ", ChipTone.NEUTRAL, "needs text"),
-            ("Done", "green", "tone must be one of"),
+        for make, expected in (
+            (lambda: Chip(" ", ChipTone.NEUTRAL), "needs text"),
+            (lambda: Chip("Done", "green"), "tone must be one of"),
+            (lambda: Choice("", "A"), "needs a key"),
+            (lambda: Choice("a", " "), "needs a label"),
+            (lambda: Choice("a", "A", None), "detail must be text"),
+            (lambda: PluginTip(" ", "Units"), "needs an example"),
+            (lambda: PluginTip("5 km", "Units", None), "must be text"),
+            (lambda: Answer(" "), "needs a result"),
+            (lambda: Answer("1", None), "detail must be text"),
         ):
             with self.subTest(expected=expected), self.assertRaises(ValueError) as caught:
-                Chip(text, tone)
+                make()
             self.assertIn(expected, str(caught.exception))
 
     def test_unusable_settings_buttons_are_ignored(self):
@@ -705,6 +712,9 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
                 self.assertEqual([item.key for item in host.state("fake").items], remaining)
                 cached = json.loads(host.data_dir.joinpath("fake", CACHE_FILE).read_text())
                 self.assertEqual([item["key"] for item in cached["items"]], remaining)
+        with tempfile.TemporaryDirectory() as directory:  # Without actions or exclude: none.
+            host = PluginHost(Discovery([FakePlugin()]), Path(directory))
+            self.assertEqual(host.item_menu(hit), ItemMenu())
 
     def test_the_first_enabled_plugin_that_answers_wins(self):
         class Converts(FakePlugin):
@@ -755,34 +765,6 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             broken = (PluginConfig("fake", enabled=True, options={"count": 9}),)
             with self.assertLogs("winlauncher.plugins.host", "ERROR"):
                 self.assertEqual(host.tips(broken), [])
-
-    def test_tips_need_an_example_and_a_meaning(self):
-        with self.assertRaisesRegex(ValueError, "needs an example"):
-            PluginTip(" ", "Units")
-        with self.assertRaisesRegex(ValueError, "must be text"):
-            PluginTip("5 km", "Units", None)
-
-    def test_answers_need_a_result(self):
-        with self.assertRaisesRegex(ValueError, "needs a result"):
-            Answer(" ")
-        with self.assertRaisesRegex(ValueError, "detail must be text"):
-            Answer("1", None)
-
-    def test_plugins_without_exclude_offer_none(self):
-        hit = PluginHit("fake", "Fake", ANNA, 1.0, "fixture")
-        with tempfile.TemporaryDirectory() as directory:
-            host = PluginHost(Discovery([FakePlugin()]), Path(directory))
-            self.assertEqual(host.item_menu(hit), ItemMenu())
-
-    def test_choices_need_a_key_and_a_label(self):
-        for fields, expected in (
-            ({"key": "", "label": "A"}, "needs a key"),
-            ({"key": "a", "label": " "}, "needs a label"),
-            ({"key": "a", "label": "A", "detail": None}, "detail must be text"),
-        ):
-            with self.subTest(expected=expected), self.assertRaises(ValueError) as caught:
-                Choice(**fields)
-            self.assertIn(expected, str(caught.exception))
 
     def test_sys_exit_while_loading_a_plugin_only_skips_that_plugin(self):
         at_import = "import sys; sys.exit(3)"
@@ -877,6 +859,7 @@ class PluginSettingsTest(unittest.TestCase):
             Settings(roots=(), plugins=(config, config))
         # A disabled plugin's keyword does not claim the word.
         Settings(roots=(), plugins=(PluginConfig("a", enabled=False, keywords=("g",)),))
+        self.assertTrue(PluginConfig("x").enabled)  # A plugin without settings is on.
 
 
 class PluginUiTest(unittest.TestCase):

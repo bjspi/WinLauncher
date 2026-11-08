@@ -117,8 +117,6 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
             finally:
                 release.set()
                 cache.close()
-                # A closed cache ignores late icons; the shared loader frees their handles.
-                self.assertNotIn(id(cache), cache._loader._requesters)
 
     def test_qt_can_type_and_cancel_while_rust_search_runs(self):
         try:

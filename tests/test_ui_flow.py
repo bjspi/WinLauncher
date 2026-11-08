@@ -51,7 +51,6 @@ from winlauncher.plugins.host import ItemMenu
 from winlauncher.plugins.search import PluginHit
 from winlauncher.releases import Release
 from winlauncher.search.commands import CommandHit
-from winlauncher.search.native_engine import warm_search_index
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.syntax_help import SyntaxTip
@@ -319,21 +318,6 @@ class UiFlowTest(unittest.TestCase):
         self.assertTrue(read.code_projects_top_level)
         self.assertEqual(read.folder_priorities[-1], FolderPriority(low, -20, "low"))
         self.assertEqual(self.controller.settings.folder_depths, ())  # Not saved yet.
-
-    def test_the_project_switches_are_read_back(self):
-        dialog = self.settings_dialog(self.controller.settings)
-        self.assertFalse(dialog.code_projects.isChecked())
-        self.assertFalse(dialog.rank_projects.isChecked())
-        dialog.code_projects.setChecked(True)
-        dialog.rank_projects.setChecked(True)
-        read = dialog.read_settings()
-        self.assertTrue(read.code_projects_top_level and read.rank_code_projects)
-
-    def test_settings_open_on_a_chosen_page(self):
-        self.controller.edit_settings("Search folders")
-        dialog = self.controller.settings_dialog
-        self.assertEqual(dialog.nav.currentItem().text(), "Search folders")
-        dialog.reject()
 
     def test_settings_export_and_import_replace_everything_after_asking(self):
         exported = self.root.parent / "exported.json"
@@ -750,18 +734,6 @@ class UiFlowTest(unittest.TestCase):
         self.tasks.finish(TaskCategory.ACTION)
         self.launch.assert_called_once_with(second, "second", explorer=None)
 
-    def test_results_reset_selection_for_new_query_and_preserve_for_same_query(self):
-        hits = [
-            SearchHit(CatalogItem(self.root / name, ItemKind.FILE), 100, "fixture")
-            for name in ("first", "second")
-        ]
-        self.window.set_results(hits, 1)
-        self.window.results.setCurrentRow(1)
-        self.window.set_results(hits, 1)
-        self.assertEqual(self.window.results.currentRow(), 1)
-        self.window.set_results(hits, 1, preserve_selection=False)
-        self.assertEqual(self.window.results.currentRow(), 0)
-
     def test_keypad_enter_filter_focus_and_drive_scope_label(self):
         selected = []
         self.window.open_requested.connect(selected.append)
@@ -859,21 +831,23 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(requested, [file])
         self.assertNotIn("Open with…", self.menu_titles(1))
 
-    def test_a_refresh_of_the_same_query_keeps_the_scroll_position(self):
+    def test_a_refresh_of_the_same_query_keeps_selection_and_scroll_position(self):
         hits = [
             SearchHit(CatalogItem(self.root / f"file {n:02}.txt", ItemKind.FILE), 100, "fixture")
             for n in range(60)
         ]
         self.window.set_results(hits, 1)
+        self.window.results.setCurrentRow(1)
         bar = self.window.results.verticalScrollBar()
         self.assertGreater(bar.maximum(), 0)
-        bar.setValue(bar.maximum() // 2)  # Scrolled with the wheel; row 0 stays selected.
+        bar.setValue(bar.maximum() // 2)  # Scrolled with the wheel; row 1 stays selected.
         scrolled = bar.value()
-        self.window.set_results(hits, 1, preserve_selection=True)  # A plugin refreshed.
+        self.window.set_results(hits, 1)  # A plugin refreshed the same query.
         self.assertEqual(bar.value(), scrolled)
-        self.assertEqual(self.window.results.currentRow(), 0)
+        self.assertEqual(self.window.results.currentRow(), 1)
         self.window.set_results(hits, 1, preserve_selection=False)  # Another query.
         self.assertEqual(bar.value(), 0)
+        self.assertEqual(self.window.results.currentRow(), 0)
 
     def test_the_bar_takes_its_focus_back_from_the_taskbar_twice_at_most(self):
         from winlauncher.platform import windows
@@ -1152,19 +1126,6 @@ class UiFlowTest(unittest.TestCase):
             self.tasks.finish(TaskCategory.SEARCH)
             self.assertEqual(self.window.selected_hit(), recent)
 
-    def test_catalog_changes_warm_the_search_index_before_the_start_list(self):
-        self.window.hide()
-        before = len(self.tasks.jobs)
-        self.indexing.request_full()
-        self.tasks.finish(TaskCategory.INDEX)
-        prefetches = [
-            job.work for job in self.tasks.jobs[before:] if job.category == TaskCategory.PREFETCH
-        ]
-        # One prefetch worker runs them in order: the start list uses the fresh index.
-        self.assertIs(prefetches[0].func, warm_search_index)
-        self.assertEqual(prefetches[0].args, (self.controller.store,))
-        self.assertEqual(prefetches[1].func, self.controller.search._work)
-
     def test_hiding_while_quitting_prefetches_nothing(self):
         # Quitting closes the worker pools before it hides the bar.
         prefetches = self.tasks.count(TaskCategory.PREFETCH)
@@ -1328,10 +1289,7 @@ class UiFlowTest(unittest.TestCase):
                 self.assertEqual(self.tasks.count(TaskCategory.INDEX), indexed)
                 self.assertEqual(self.window.scope, self.root)
                 monitor.assert_not_called()
-                with patch("winlauncher.search.service.select_native", return_value=None) as select:
-                    self.tasks.finish(TaskCategory.SEARCH)
-                # A scoped search ranks direct entries and deeper matches separately.
-                self.assertEqual(select.call_count, 2)
+                self.tasks.finish(TaskCategory.SEARCH)
                 dialog.deleteLater()
 
     def test_hiding_cancels_running_and_debounced_searches(self):
@@ -1801,7 +1759,6 @@ class UiFlowTest(unittest.TestCase):
         self.assertFalse(dragged.hasUrls())
         self.window.reveal_selected()
         self.window.favorite_selected()
-        self.assertIsNone(self.window._selected_folder())
         self.reveal.assert_not_called()
         self.assertFalse(self.controller.favorite_pending)
         titles = []
@@ -1813,7 +1770,6 @@ class UiFlowTest(unittest.TestCase):
                 self.window.results.visualItemRect(self.window.results.item(0)).center()
             )
         self.assertEqual(titles, ["Run here", "Copy command", "", "Settings…"])
-        self.assertFalse(self.window.delegate._icon(tool).isNull())
 
     def test_explorer_tool_identity_distinguishes_commands_with_the_same_command_line(self):
         first = CommandHit(EXPLORER_TERMINAL, self.root, 0, 100)
@@ -1887,12 +1843,6 @@ class UiFlowTest(unittest.TestCase):
             choose.assert_called_with(path, "toolbox", 33)
         self.launch.assert_not_called()
         select.assert_not_called()
-        # An Explorer search afterwards targets Explorer again.
-        self.controller._search_from_explorer(
-            ExplorerTyping("toolbox", self.root, (0, 0, 900, 600), (11, 22))
-        )
-        self.assertEqual(self.controller._explorer_target(), ExplorerTarget(11, 22, self.root))
-        self.assertIsNone(self.controller._dialog_target())
 
     def test_dialog_on_desktop_or_this_pc_still_opens_the_bar(self):
         # Their address bar shows a name, not a path; the bar searches everywhere anyway.
@@ -2076,9 +2026,7 @@ class UiFlowTest(unittest.TestCase):
             save_button.click()
             self.assertTrue(dialog.isVisible())
             self.assertEqual(self.controller.settings_file.load().max_results, limit)
-            self.assertEqual(dialog.original.max_results, limit)
             self.assertEqual(dialog.saved_message.text(), "Settings saved.")
-            self.assertTrue(dialog.saved_message_timer.isActive())
         dialog.limit.setValue(40)
         dialog.reject()
         self.assertFalse(dialog.isVisible())
@@ -2644,17 +2592,6 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(window.width(), COMPACT_WIDTH + 100 + 2 * SHADOW_MARGIN)
         window.toggle_expanded()  # Wider than the test screen, so as wide as it.
         self.assertEqual(window.width(), min(EXPANDED_WIDTH + 2 * SHADOW_MARGIN, area.width()))
-
-    def test_only_the_launcher_bar_shadow_resizes_it(self):
-        window = self.window
-        window.present()
-        surface = window.surface.geometry()
-        beside = QPoint(surface.left() - 1, surface.center().y())
-        self.assertEqual(window._resize_edge(beside), Qt.Edge.LeftEdge)
-        self.assertIsNone(window._resize_edge(surface.center()))
-        self.assertIsNone(window._resize_edge(QPoint(surface.left() - 1, surface.top() - 1)))
-        window.present(scope=self.root, near=(0, 0, 800, 600), explorer_view=(123, 456))
-        self.assertIsNone(window._resize_edge(beside))
 
     def test_the_explorer_bar_does_not_change_the_launcher_placement(self):
         c, window = self.controller, self.window

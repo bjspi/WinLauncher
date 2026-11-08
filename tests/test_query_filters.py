@@ -22,6 +22,10 @@ class QueryFiltersTest(unittest.TestCase):
             ("ext:doc*", ("doc*",)),
             ("ext:(doc?,[jp]pg,p[!d]f)", ("doc?", "[jp]pg", "p[!d]f")),
             ("ext:(.doc*, pdf) ext:txt", ("doc*", "pdf", "txt")),
+            # Semicolons separate like commas.
+            ("ext:pdf;docx", ("pdf", "docx")),
+            ("ext:(pdf; docx)", ("pdf", "docx")),
+            ("ext:pdf;;docx;", ("pdf", "docx")),
         ):
             with self.subTest(text=text):
                 query = parse_query("report " + text)

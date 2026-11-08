@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QWidget
 
-from winlauncher.plugins.config import DEFAULT_SOURCES, PluginConfig, source_key
+from winlauncher.plugins.config import DEFAULT_SOURCES, source_key
 from winlauncher.plugins.encoding import decode_text, read_python_source
 from winlauncher.plugins.folders import ManifestError, SourceError, read_manifest, read_source
 from winlauncher.plugins.packages import PackageError, install_command, install_packages
@@ -531,11 +531,6 @@ class EntryListTest(unittest.TestCase):
         entries.show()
         QApplication.processEvents()
         self.assertEqual(entries.verticalScrollBar().maximum(), 0)
-
-
-class DefaultOnTest(unittest.TestCase):
-    def test_a_plugin_without_settings_is_on(self):
-        self.assertTrue(PluginConfig("x").enabled)
 
 
 if __name__ == "__main__":

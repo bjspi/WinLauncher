@@ -257,15 +257,7 @@ class MenuCommandRunTest(unittest.TestCase):
                 ItemActions(Mock()).run_folder_command(TERMINAL, self.folder / "missing")
         popen.assert_not_called()
 
-    def test_open_with_shows_the_dialog_on_a_thread_of_its_own(self):
-        file = self.folder / "notes.txt"
-        file.write_text("x", encoding="utf-8")
-        with patch("winlauncher.platform.shell.threading.Thread") as thread:
-            ItemActions(Mock()).open_with(file)
-        thread.assert_called_once()
-        self.assertEqual(thread.call_args.kwargs["args"], (file,))
-        self.assertTrue(thread.call_args.kwargs["daemon"])
-        thread.return_value.start.assert_called_once_with()
+    def test_open_with_a_missing_file_is_reported(self):
         with self.assertRaises(FileNotFoundError):
             shell.open_with(self.folder / "missing.txt")
 

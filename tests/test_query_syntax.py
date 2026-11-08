@@ -320,13 +320,6 @@ class ExactPhraseTest(unittest.TestCase):
                 parse_query(text)
 
 
-class ListSeparatorTest(unittest.TestCase):
-    def test_semicolons_separate_extensions_like_commas(self):
-        for text in ("ext:pdf;docx", "ext:pdf,docx", "ext:(pdf; docx)", "ext:pdf;;docx;"):
-            with self.subTest(text=text):
-                self.assertEqual(parse_query(text).extensions, ("pdf", "docx"))
-
-
 class QuerySpansTest(unittest.TestCase):
     def spans(self, text: str) -> list[tuple[str, SpanRole, bool]]:
         return [(text[s.start : s.end], s.role, s.valid) for s in query_spans(text)]
