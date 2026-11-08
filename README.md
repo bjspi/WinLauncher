@@ -251,6 +251,7 @@ built-in keys and Ctrl+Alt is AltGr on many keyboards.
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy the path |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> | Toggle favorite |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> / pin button | Keep the bar open after opening results; <kbd>Esc</kbd> still closes it |
+| <kbd>Alt</kbd>+<kbd>P</kbd> / <kbd>F3</kbd> | Preview the selected file beside the results, once **File preview** is on in Settings |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | Select the query |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Shift</kbd>+<kbd>F10</kbd> / right-click | Open, open with, reveal, your own commands, copy, favorite, exclude; for plugin results their own entries |
@@ -261,6 +262,13 @@ filters, refresh, an expanded view, settings, About and restart. Drag the bar
 anywhere and it opens there next time, on whichever screen; drag its left or right
 edge to make it wider or narrower. **Center search bar** in that menu, the tray menu
 or Settings brings it back to the middle.
+
+With **File preview** turned on in Settings → General, <kbd>Alt</kbd>+<kbd>P</kbd> (or <kbd>F3</kbd>) opens a pane
+beside the results that follows the selection: images (upright by their EXIF
+orientation), the first page of a PDF, rendered Markdown, colored code, the start
+of other text files, and what a folder holds. The bar remembers
+whether you left it open. Files stored only online in OneDrive are not downloaded
+for it.
 
 Right-click a result → **Exclude this or a parent folder…** to drop just that entry
 or a noisy folder tree; the picker shows how many catalog entries each choice

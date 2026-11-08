@@ -512,6 +512,29 @@ it centers the open bar. Widths and position are remembered across starts in
 `<data>/launcher-bar.json`, apart from Settings' Save; an unreadable file only
 loses them. The Explorer bar keeps its fixed width and dock position.
 
+**File preview** (`file_preview`, default false) under Settings → General lets Alt+P
+(or F3) open a pane beside the launcher bar's results; the same key closes it. The bar widens
+by the pane (380 pixels) without changing its remembered width, and the pane is at
+least 320 pixels high. Whether the pane was left open is remembered in
+`<data>/launcher-bar.json`, and the launcher bar opens the same way, also after a
+restart; the Explorer bar has no pane. The pane follows the selection and loads a file once the
+selection has rested for 120 ms, on its own worker; a preview arriving for an
+earlier selection is dropped. Below the content it shows the name, size and
+modification date from the catalog. Content by kind: every image format Qt reads
+(PNG, JPEG, GIF, WebP, BMP, ICO, SVG, TIFF …) decoded at the pane's size and turned
+upright by its EXIF orientation, unless the file exceeds 64 MB or 100 megapixels;
+the first page of a PDF on white paper; for other files the first 64 KB as text
+(UTF-8, else Windows-1252, with a character cut at the end left out) unless they
+contain a NUL byte. Of that text, Markdown (`.md`, `.markdown`) is rendered without
+the images it links to, and code in a language Pygments knows by the file name
+shows its first 300 lines colored for the light or dark theme; everything else
+stays plain; for folders a list with the results' icons, folders first
+and each group by name, at most 200 of the first 2,000 entries read, and their
+count of folders and files beside the date (or "More than 2,000 entries").
+Plugin results, Explorer tools, binary files,
+cloud placeholders (never downloaded for a preview) and drives that do not answer
+show a note instead.
+
 A pin button between the settings button and the application icon (or Ctrl+P)
 keeps the launcher bar open: opening a result by Enter, click or Ctrl+1…9,
 Show in containing folder, the shell menu and custom commands then leave it

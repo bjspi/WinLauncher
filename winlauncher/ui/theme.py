@@ -272,6 +272,8 @@ QListWidget#results { background: transparent; border: 0; outline: none; padding
 QLabel#message { color: $muted; padding: 14px 22px; }
 QLabel#message[explorer="true"] { font-size: 8pt; padding: 8px 10px; }
 QLabel#detail { color: $muted; font-size: 9pt; padding: 6px 22px 0 22px; }
+QLabel#previewFacts { color: $muted; font-size: 9pt; }
+QLabel#previewPicture { background: transparent; border: 1px solid $field_border; border-radius: 6px; color: $muted; padding: 12px; }
 QLabel#status { color: $status; font-size: 8pt; padding: 0; }
 QLabel#hint { color: $hint; font-size: 8pt; padding: 0; }
 QLabel#activity { color: $warning; font-size: 8pt; padding: 4px 22px 0 22px; }
@@ -281,6 +283,7 @@ QLineEdit { background: $field; border: 1px solid $field_border; border-radius: 
 QLineEdit:focus { border-color: $accent; }
 QPlainTextEdit, QListWidget { background: $field; border: 1px solid $field_border; border-radius: 6px; padding: 4px; selection-background-color: $chosen; selection-color: $text; }
 QPlainTextEdit:focus, QListWidget:focus { border-color: $accent; }
+QTextBrowser#previewDocument { background: $field; border: 1px solid $field_border; border-radius: 6px; padding: 4px; }
 QPushButton { background: $field; border: 1px solid $button_border; border-radius: 8px; padding: 6px 16px; min-width: 64px; }
 QPushButton:hover { background: $button_hover; }
 QPushButton:pressed { background: $button_pressed; }

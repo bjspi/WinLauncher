@@ -85,8 +85,8 @@ SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
 EXPORT_FILE_NAME = "WinLauncher settings.json"
 SETTINGS_FILE_FILTER = "WinLauncher settings (*.json)"
 FOLDER_PRIORITY_FORMAT = "25 | D:\\Projects | high"
-DIALOG_SIZE = QSize(920, 660)  # The smallest size; taller where the screen allows.
-TALLEST_UNSCROLLED_PAGE = 1  # Search folders: the dialog grows to show it whole.
+# The opening size, lower on a small screen; longer pages scroll.
+DIALOG_SIZE = QSize(920, 780)
 SCREEN_MARGIN = 40  # Kept free above and below the dialog.
 SIDEBAR_WIDTH = 228
 NAV_ICON_SIZE = 18
@@ -647,19 +647,15 @@ class SettingsDialog(QDialog):
         footer = self._footer()
         content.addWidget(footer)
         layout.addLayout(content, 1)
-        self._fit_height(TALLEST_UNSCROLLED_PAGE, footer)
+        self._fit_screen()
 
     # Frame ----------------------------------------------------------------------
 
-    def _fit_height(self, row: int, footer: QWidget) -> None:
-        """Tall enough to show page `row` without scrolling, where the screen has room."""
-        self.ensurePolished()
-        page = self.pages.widget(row).widget()
-        needed = page.sizeHint().height() + footer.sizeHint().height()
-        height = max(DIALOG_SIZE.height(), needed)
+    def _fit_screen(self) -> None:
+        """Open at `DIALOG_SIZE`, but never taller than the screen leaves room for."""
         if (screen := self.screen()) is not None:
-            height = min(height, screen.availableGeometry().height() - SCREEN_MARGIN)
-        self.resize(self.width(), max(height, DIALOG_SIZE.height()))
+            room = screen.availableGeometry().height() - SCREEN_MARGIN
+            self.resize(self.width(), min(DIALOG_SIZE.height(), room))
 
     def _sidebar(self) -> QFrame:
         sidebar = QFrame()
@@ -749,6 +745,14 @@ class SettingsDialog(QDialog):
         )
         bar.add_row(
             "Maximum results", "How many results a search lists.", _with_unit(self.limit, "")
+        )
+        self.file_preview = ToggleSwitch("Preview the selected file with Alt+P")
+        self.file_preview.setChecked(settings.file_preview)
+        bar.add_row(
+            "File preview",
+            "Alt+P (or F3) shows images, PDF pages, text and folder contents beside the results. "
+            "The bar opens with it as you left it.",
+            self.file_preview,
         )
         if self.placement is not None:
             self.centered = ToggleSwitch("Open the search bar centered")
@@ -1195,6 +1199,7 @@ class SettingsDialog(QDialog):
             quick_switch=self.quick_switch.isChecked(),
             double_ctrl_ms=self.ctrl_interval.value(),
             auto_hide=self.auto_hide.isChecked(),
+            file_preview=self.file_preview.isChecked(),
             auto_hide_seconds=self.auto_hide_delay.value(),
             rescan_seconds=self.scan_interval.value(),
             max_results=self.limit.value(),

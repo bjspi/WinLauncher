@@ -68,6 +68,7 @@ flowchart TD
 | `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |
 | `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
+| `ui/preview.py` | Alt+P's file preview: bounded loading of images, PDF pages, Markdown, code colored by Pygments, text and folders off the GUI thread, and its pane |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
 | `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
 | `ui/answers.py` | Asks the plugins that answer typed text, on their own worker, for the calculator's row |
@@ -521,7 +522,16 @@ Qt signal; only the GUI thread creates pixmaps. Painting uses a generic icon unt
 the cached shell icon arrives, so a slow shell extension cannot block input or
 shutdown. An item's own icon is read only when its drive answers and the file is
 no cloud placeholder (`storage.is_online_only`); otherwise the icon for its
-extension is used, so showing an online-only OneDrive program never downloads it. Hiding the launcher cancels pending and active searches. Windows focus
+extension is used, so showing an online-only OneDrive program never downloads it.
+The file preview follows the same rules: `PreviewPane` asks for the selected item
+once the selection rests, the controller runs `load_preview` on the single
+`PREVIEW` worker, and the pane drops anything that arrives for an earlier item.
+Workers return `QImage`s and strings only; the pane makes the pixmap and lays out
+the text. Pygments is imported on the worker at the first colored file, and the
+colors follow the theme the `PreviewRequest` names. The process loads QtPdf before
+the Qt application starts: the loader's DLL search would otherwise keep Qt's PDF
+image plugin from finding `Qt6Pdf.dll`. The pane is created on
+first use, so a launcher without the setting builds no preview widgets. Hiding the launcher cancels pending and active searches. Windows focus
 requests are verified; a denied request gets one attempt with the foreground input
 queue temporarily attached, always detached in `finally`. A later focus change is
 logged without repeatedly pulling focus away from another application.

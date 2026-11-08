@@ -3,7 +3,8 @@
 The bar opens centered until the user drags it somewhere else. From then on it
 opens at the same relative spot of whichever screen the cursor is on, until
 "Center search bar" is chosen again. Widths are remembered per layout, since
-the expanded view is deliberately wider than the compact one.
+the expanded view is deliberately wider than the compact one. Whether the file
+preview was left open is remembered too, so the bar opens the same way.
 
 Like the unfolded plugin cards, this is how the bar looks, not a setting: it is
 written at once, apart from the Settings dialog's Save and Cancel. A file that
@@ -76,6 +77,7 @@ class BarPlacement(QObject):
         self.compact_width = COMPACT_WIDTH
         self.expanded_width = EXPANDED_WIDTH
         self.position: RelativePosition | None = None  # None: centered.
+        self.preview_open = False
         self._read()
 
     @property
@@ -95,6 +97,10 @@ class BarPlacement(QObject):
             self.expanded_width = width
         else:
             self.compact_width = width
+        self._write()
+
+    def remember_preview(self, shown: bool) -> None:
+        self.preview_open = shown
         self._write()
 
     def remember_position(self, bar: QRect, area: QRect) -> None:
@@ -121,6 +127,7 @@ class BarPlacement(QObject):
             "compact_width": self.compact_width,
             "expanded_width": self.expanded_width,
             "position": position,
+            "preview_open": self.preview_open,
         }
         try:
             self.path.write_text(json.dumps(stored, indent=2), encoding="utf-8")
@@ -140,6 +147,7 @@ class BarPlacement(QObject):
         self.compact_width = _width(stored.get("compact_width"), COMPACT_WIDTH)
         self.expanded_width = _width(stored.get("expanded_width"), EXPANDED_WIDTH)
         self.position = _position(stored.get("position"))
+        self.preview_open = stored.get("preview_open") is True
 
 
 def _width(stored: object, default: int) -> int:

@@ -91,6 +91,7 @@ def _parse_arguments() -> argparse.Namespace:
 
 
 def _create_application() -> QApplication:
+    _load_pdf_support()
     app = QApplication(sys.argv[:1])
     app.setApplicationName("WinLauncher")
     app.setApplicationVersion(__version__)
@@ -100,6 +101,17 @@ def _create_application() -> QApplication:
     app.setWindowIcon(app_icon())
     _use_windows_tls()
     return app
+
+
+def _load_pdf_support() -> None:
+    """Let Qt's PDF image plugin load, so the file preview can show PDF pages.
+
+    WinLauncher's own process looks for DLLs only in its default directories (see
+    `loader/`), where the plugin cannot find its `Qt6Pdf.dll`. Loaded beforehand,
+    that DLL is already there. Qt remembers a plugin that failed, so this must
+    happen before Qt first looks at image plugins.
+    """
+    import PySide6.QtPdf  # noqa: F401
 
 
 def _use_windows_tls() -> None:

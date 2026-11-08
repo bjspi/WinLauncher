@@ -105,15 +105,15 @@ def drive_state(path: Path) -> DriveState:
 
 def require_drive(path: Path) -> None:
     """Raise `DriveUnavailable` with a user-facing message unless `path`'s drive answers."""
-    state = drive_state(path)
+    if (state := drive_state(path)) is not DriveState.PRESENT:
+        raise DriveUnavailable(unavailable_message(path, state))
+
+
+def unavailable_message(path: Path, state: DriveState) -> str:
+    """Why `path` cannot be reached, for a drive that is not `PRESENT`."""
     if state is DriveState.UNRESPONSIVE:
-        raise DriveUnavailable(unresponsive_message(path))
-    if state is DriveState.MISSING:
-        raise DriveUnavailable(f"{path.anchor} is not connected.")
-
-
-def unresponsive_message(path: Path) -> str:
-    return f"{path.anchor} does not respond. Check the network or drive connection."
+        return f"{path.anchor} does not respond. Check the network or drive connection."
+    return f"{path.anchor} is not connected."
 
 
 def is_online_only(info: os.stat_result) -> bool:

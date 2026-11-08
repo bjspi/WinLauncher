@@ -35,6 +35,7 @@ class TaskCategory(StrEnum):
     # so git never changes a source's clone twice at once.
     PLUGIN_SOURCE = "plugin-source"
     NETWORK = "network"  # Connectivity checks must not wait behind stuck plugins.
+    PREVIEW = "preview"  # The selected file beside the results; a slow file delays nothing else.
 
 
 _POOL_SIZES = {
@@ -48,6 +49,7 @@ _POOL_SIZES = {
     TaskCategory.ANSWER: 1,
     TaskCategory.PLUGIN_SOURCE: 1,
     TaskCategory.NETWORK: 1,
+    TaskCategory.PREVIEW: 1,
 }
 _Job = tuple[Future, Callable[[], Any]]
 

@@ -9,6 +9,7 @@ search engine wheel statically links the crates listed below and ships their lic
 | --- | --- | --- |
 | PySide6, Shiboken6, Qt | Desktop widgets and Qt runtime | Installed PySide6 6.11.1 metadata declares `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`; [Qt for Python licensing](https://doc.qt.io/qtforpython-6/licenses.html) |
 | pywin32 | Windows COM, registry and directory APIs | Python Software Foundation license; [upstream license](https://github.com/mhammond/pywin32/blob/main/License.txt) |
+| Pygments | Colored code in the file preview | BSD-2-Clause; [upstream license](https://github.com/pygments/pygments/blob/master/LICENSE) |
 | Python | Interpreter, sqlite3 and other standard-library modules | [Python license and notices](https://docs.python.org/3/license.html) |
 | SQLite | Local catalog engine through Python's sqlite3 | [Public domain](https://www.sqlite.org/copyright.html) |
 

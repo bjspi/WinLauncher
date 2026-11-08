@@ -181,6 +181,8 @@ class Settings:
     # Hide the launcher when it lost focus with nothing typed.
     auto_hide: bool = True
     auto_hide_seconds: int = DEFAULT_AUTO_HIDE_SECONDS
+    # Alt+P (or F3) shows the selected file beside the results; off until the user wants it.
+    file_preview: bool = False
     # Folder watching applies changes live; the full rescan only repairs missed events.
     rescan_seconds: int = 1800
     max_results: int = 60

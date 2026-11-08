@@ -265,8 +265,8 @@ def _expand_variables(text: str, shortcuts: Mapping[str, Path]) -> str:
 
 
 def _require_responsive_root(path: Path) -> None:
-    if storage.drive_state(path) is storage.DriveState.UNRESPONSIVE:
-        raise ValueError(storage.unresponsive_message(path))
+    if (state := storage.drive_state(path)) is storage.DriveState.UNRESPONSIVE:
+        raise ValueError(storage.unavailable_message(path, state))
 
 
 def _read_error(path: Path, error: OSError) -> ValueError:

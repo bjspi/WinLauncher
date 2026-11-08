@@ -66,6 +66,7 @@ from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exc
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginIcons, PluginScheduler
+from winlauncher.ui.preview import PreviewRequest, load_preview
 from winlauncher.ui.result_rows import LauncherHit
 from winlauncher.ui.search_session import SearchSession
 from winlauncher.ui.settings import SettingsDialog
@@ -236,6 +237,7 @@ class LauncherController(QObject):
         window.explorer_selection.connect(self.follow_in_explorer)
         window.dialog_text_returned.connect(self._return_text_to_dialog)
         window.shell_menu_requested.connect(self.show_shell_menu)
+        window.preview_requested.connect(self.load_preview)
         window.exclude_requested.connect(self.exclude_folder)
         window.command_requested.connect(self.run_menu_command)
         window.settings_requested.connect(self.edit_settings)
@@ -619,6 +621,15 @@ class LauncherController(QObject):
             self._action_failed,
         )
 
+    def load_preview(self, request: PreviewRequest) -> None:
+        """Read the selected file for the preview pane on its own worker."""
+        self.tasks.submit(
+            TaskCategory.PREVIEW,
+            partial(load_preview, request),
+            self.window.show_preview,
+            lambda message: logger.warning("Preview failed: %s", message),
+        )
+
     def _open_shell_menu(self, path: Path, extended: bool) -> None:
         if self._closed or not self.window.isVisible():
             return  # The bar went away while the drive was asked.
@@ -890,6 +901,7 @@ class LauncherController(QObject):
         theme().use(Appearance(settings.appearance))
         self.window.set_auto_hide(settings.auto_hide, settings.auto_hide_seconds)
         self.window.set_menu_commands(settings.menu_commands)
+        self.window.set_preview_enabled(settings.file_preview)
 
     def _restart_indexing(self) -> None:
         self._stop_monitor()

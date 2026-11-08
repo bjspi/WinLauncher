@@ -82,6 +82,7 @@ from winlauncher.ui.highlight import matched_positions
 from winlauncher.ui.icons import ResultIcons
 from winlauncher.ui.menus import Menu
 from winlauncher.ui.plugins import PluginIcons
+from winlauncher.ui.preview import PANE_MIN_HEIGHT, PANE_WIDTH, Preview, PreviewPane
 from winlauncher.ui.query_syntax import QuerySyntax
 from winlauncher.ui.result_rows import LauncherHit, ResultRow, result_row, shortened_breadcrumbs
 from winlauncher.ui.theme import app_icon, colors, theme
@@ -584,6 +585,7 @@ class LauncherWindow(QWidget):
     dialog_text_returned = Signal(str)
     # SearchHit and whether to add the extended (Shift) entries: Windows' own menu.
     shell_menu_requested = Signal(object, bool)
+    preview_requested = Signal(object)  # PreviewRequest for the selected file.
     exclude_requested = Signal(object, bool)  # Result path and whether it is a folder.
     # SearchHit and the MenuCommand to run for it.
     command_requested = Signal(object, object)
@@ -610,6 +612,10 @@ class LauncherWindow(QWidget):
         self.scope: Path | None = None
         self.kind: ItemKind | None = None
         self.expanded = False
+        # Alt+P or F3 opens the preview only when the setting allows it; see `toggle_preview`.
+        self.preview_enabled = False
+        self.preview_open = False  # Shown now; `placement.preview_open` is what the user left.
+        self.preview: PreviewPane | None = None  # Created when first opened.
         self.catalog_count = 0
         self.explorer_mode = False  # Compact bar next to the Explorer window.
         self.explorer_view: tuple[int, int] | None = None
@@ -674,7 +680,10 @@ class LauncherWindow(QWidget):
         self.empty.linkActivated.connect(self.search_contents)
         self.content_search: str | None = None  # Offered while no name matches.
         layout.addWidget(self.empty)
-        layout.addWidget(self._build_results())
+        self.results_row = QHBoxLayout()
+        self.results_row.setSpacing(0)
+        self.results_row.addWidget(self._build_results(), 1, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(self.results_row)
         self.detail = self._label("detail")
         self.status = self._label("status")
         self.status.setWordWrap(False)
@@ -796,6 +805,7 @@ class LauncherWindow(QWidget):
         self.results.currentItemChanged.connect(self.update_detail)
         self.results.currentItemChanged.connect(self._update_hint)
         self.results.currentItemChanged.connect(self._selection_moved)
+        self.results.currentItemChanged.connect(self._update_preview)
         self.results.installEventFilter(self)
         return self.results
 
@@ -848,6 +858,8 @@ class LauncherWindow(QWidget):
             ("Ctrl+Shift+C", self.copy_target),
             ("Ctrl+D", self.favorite_selected),
             ("Ctrl+P", self.pin_button.toggle),
+            ("Alt+P", self.toggle_preview),
+            ("F3", self.toggle_preview),  # Where F keys need no Fn key.
             ("Ctrl+,", self.settings_requested),
             ("Shift+F10", self.keyboard_context_menu),
         ):
@@ -919,7 +931,8 @@ class LauncherWindow(QWidget):
             return
         resized = self.width() != start.width()
         if resized:
-            self.placement.remember_width(self.expanded, self.width() - 2 * SHADOW_MARGIN)
+            bar = self.width() - self._preview_width() - 2 * SHADOW_MARGIN
+            self.placement.remember_width(self.expanded, bar)
         if resized and self.placement.centered:
             self._place_on(self.screen())
         else:
@@ -1242,6 +1255,8 @@ class LauncherWindow(QWidget):
 
     def _show_results_area(self, has_results: bool) -> None:
         self.results.setVisible(has_results)
+        if self.preview is not None:
+            self.preview.setVisible(has_results and self.preview_open)
         self._update_hint()  # Reads the list's visibility.
         self.detail.setVisible(has_results and self.expanded and not self.explorer_mode)
         self._fit_height()
@@ -1256,6 +1271,8 @@ class LauncherWindow(QWidget):
             for index in range(rows)
         )
         self.results.setFixedHeight(content + 2 * self.results.frameWidth())
+        if self.preview is not None:
+            self.preview.setFixedHeight(max(self.results.height(), PANE_MIN_HEIGHT))
         below_bar = (
             self.calculation_row,
             self.empty,
@@ -1487,10 +1504,15 @@ class LauncherWindow(QWidget):
     def _bar_width(self) -> int:
         if self.explorer_mode:
             return EXPLORER_WIDTH + 2 * SHADOW_MARGIN
-        return self.placement.width(self.expanded) + 2 * SHADOW_MARGIN
+        return self.placement.width(self.expanded) + self._preview_width() + 2 * SHADOW_MARGIN
+
+    def _preview_width(self) -> int:
+        """The open preview widens the bar; its remembered width stays without it."""
+        return PANE_WIDTH if self.preview_open else 0
 
     def _set_explorer_mode(self, enabled: bool, scope: Path | None) -> None:
         self.explorer_mode = enabled
+        self._apply_preview()  # The callers place the bar at its new width.
         self.delegate.rows = EXPLORER_ROWS if enabled else LAUNCHER_ROWS
         self.result_scope = scope if enabled else None
         self.results.doItemsLayout()
@@ -1552,12 +1574,60 @@ class LauncherWindow(QWidget):
     def toggle_expanded(self, *_checked) -> None:
         self.expanded = not self.expanded
         self.expand_action.setChecked(self.expanded)
+        self._resize_around_center()
+        self.update_detail()
+        self._show_results_area(self.results.count() > 0)
+
+    def _resize_around_center(self) -> None:
+        """Take the bar's width for the current view, keeping its horizontal center."""
         area = self.screen().availableGeometry()
         center = self.geometry().center().x()
         self.resize(min(self._bar_width(), area.width()), self.height())
         self.move(max(area.left(), center - self.width() // 2), self.y())
-        self.update_detail()
+
+    # File preview ---------------------------------------------------------------
+
+    def set_preview_enabled(self, enabled: bool) -> None:
+        self.preview_enabled = enabled
+        if self._apply_preview() and self.isVisible():
+            self._resize_around_center()
+
+    def toggle_preview(self) -> None:
+        """Alt+P or F3: show the selected file beside the results, or close the preview.
+
+        The bar remembers it, also across starts, and opens the same way next time.
+        The launcher bar only; the Explorer bar stays a narrow strip.
+        """
+        if not self.preview_enabled or self.explorer_mode:
+            return
+        self.placement.remember_preview(not self.preview_open)
+        self._apply_preview()
+        self._resize_around_center()
+
+    def _apply_preview(self) -> bool:
+        """Show the preview as the user left it, where it is allowed; True if that changed."""
+        shown = self.preview_enabled and self.placement.preview_open and not self.explorer_mode
+        if shown == self.preview_open:
+            return False
+        self.preview_open = shown
+        if self.preview is None:
+            self.preview = PreviewPane()
+            self.preview.requested.connect(self.preview_requested)
+            self.results_row.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignTop)
+        self._update_preview()
         self._show_results_area(self.results.count() > 0)
+        return True
+
+    def show_preview(self, preview: Preview) -> None:
+        if self.preview is not None:
+            self.preview.show_preview(preview)
+
+    def _update_preview(self, *_items) -> None:
+        if self.preview is None:
+            return
+        row = self.selected_row() if self.preview_open else None
+        hit = row.file_hit if row is not None else None
+        self.preview.show_item(hit.item if hit is not None else None)
 
     def update_detail(self, *_changed) -> None:
         row = self.selected_row()

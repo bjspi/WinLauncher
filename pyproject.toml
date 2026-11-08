@@ -14,6 +14,7 @@ dependencies = [
     # Raise the limit only after the test suite passes on the new release.
     "PySide6>=6.7,<6.12",
     "pywin32>=306; sys_platform == 'win32'",
+    "Pygments>=2.14",  # Colored code in the file preview; 2.14 added the github-dark style.
 ]
 
 [project.optional-dependencies]
