@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unittest
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -53,6 +54,7 @@ from winlauncher.plugins.search import (
     rank_items,
     searchable_items,
 )
+from winlauncher.search.query import SortOrder
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.syntax_help import SyntaxTip
@@ -162,6 +164,90 @@ class PluginRankingTest(unittest.TestCase):
         ]
         merged = merge_hits(files, plugins, 3)
         self.assertEqual([hit.score for hit in merged], [150, 100, 60])
+
+
+def at(text: str) -> float:
+    return datetime.fromisoformat(text).timestamp()
+
+
+class PluginDatesTest(unittest.TestCase):
+    """Items that tell when they changed answer date filters and sort among files."""
+
+    OLD = replace(ANNA, key="old", name="Anna 2025", modified=at("2025-03-01T10:00"))
+    NEW = replace(ANNA, key="new", name="Anna 2026", modified=at("2026-07-15T10:00"))
+    UNDATED = replace(ANNA, key="undated", name="Anna undated")
+
+    def ranked(self, text: str, limit: int = 10) -> list[str]:
+        items = searchable_items([self.UNDATED, self.OLD, self.NEW])
+        return [hit.item.key for hit in rank_items("fake", "Fake", items, query(text), limit=limit)]
+
+    def test_an_item_tells_when_it_changed_as_a_timestamp_or_a_datetime(self):
+        changed = datetime(2026, 7, 15, 10, 0)
+        self.assertEqual(PluginItem("a", "A", modified=changed).modified, changed.timestamp())
+        self.assertEqual(PluginItem("a", "A", modified=5).modified, 5.0)
+        self.assertIsNone(PluginItem("a", "A").modified)
+        for wrong in (True, "2026-07-15", float("nan"), float("inf")):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                PluginItem("a", "A", modified=wrong)
+
+    def test_date_filters_keep_the_items_of_their_period(self):
+        self.assertEqual(self.ranked("anna after:2026-01-01"), ["new"])
+        self.assertEqual(self.ranked("anna before:2026-01-01"), ["old"])
+        self.assertEqual(self.ranked("anna date:2026-07-15"), ["new"])
+        self.assertEqual(self.ranked("anna date:2024"), [])
+        # Without words, the period alone lists them in the plugin's order.
+        self.assertEqual(self.ranked("date:2025..2026"), ["old", "new"])
+        self.assertEqual(len(self.ranked("anna")), 3)  # No filter: undated items too.
+
+    def test_dates_and_sort_orders_let_plugins_answer_but_other_filters_do_not(self):
+        for text in ("anna date:week", "date:week", "after:2026-01", "anna sort:modified"):
+            self.assertTrue(plugins_answer(query(text)), text)
+        for text in ("sort:modified", "date:week ext:pdf", "anna size:>1kb", "date:week type:file"):
+            self.assertFalse(plugins_answer(query(text)), text)
+
+    def test_sorting_by_date_or_name_picks_and_orders_the_items(self):
+        self.assertEqual(self.ranked("anna sort:modified"), ["new", "old", "undated"])
+        self.assertEqual(self.ranked("anna sort:modified", limit=1), ["new"])
+        self.assertEqual(self.ranked("sort:modified date:2025..2026"), ["new", "old"])
+        self.assertEqual(self.ranked("anna sort:name"), ["old", "new", "undated"])
+
+    def test_plugin_hits_join_file_hits_by_date_or_name_when_sorted_so(self):
+        def file(name: str, modified: str) -> SearchHit:
+            item = CatalogItem(Path(f"C:/{name}"), ItemKind.FILE, 0, at(modified))
+            return SearchHit(item, 1, "")
+
+        files = [file("b.txt", "2026-08-01T00:00"), file("d.txt", "2026-01-01T00:00")]
+        plugins = [
+            PluginHit("fake", "Fake", self.NEW, 99, ""),
+            PluginHit("fake", "Fake", self.UNDATED, 99, ""),
+        ]
+        newest = merge_hits(files, plugins, 10, SortOrder.MODIFIED)
+        self.assertEqual(
+            [hit.item.name for hit in newest], ["b.txt", "Anna 2026", "d.txt", "Anna undated"]
+        )
+        named = merge_hits(files, plugins, 10, SortOrder.NAME)
+        self.assertEqual(
+            [hit.item.name for hit in named], ["Anna 2026", "Anna undated", "b.txt", "d.txt"]
+        )
+
+    def test_a_dated_row_shows_when_it_changed_while_a_date_filter_is_typed(self):
+        hit = PluginHit("fake", "Fake", self.NEW, 1, "")
+        row = result_row(hit, query("anna date:2026"), None)
+        self.assertEqual(row.metadata, "Modified 2026-07-15 10:00")
+        self.assertIn("Modified 2026-07-15 10:00", row.accessible_text)
+        self.assertEqual(result_row(hit, query("anna"), None).metadata, "")
+        undated = PluginHit("fake", "Fake", self.UNDATED, 1, "")
+        self.assertEqual(result_row(undated, query("anna date:2026"), None).metadata, "")
+
+    def test_the_date_survives_the_item_cache(self):
+        with tempfile.TemporaryDirectory(prefix="winlauncher-plugins-") as folder:
+            plugin = FakePlugin()
+            plugin.items = [self.NEW, self.UNDATED]
+            PluginHost(Discovery([plugin]), Path(folder)).refresh("fake", PluginConfig("fake"))
+            restarted = PluginHost(Discovery([FakePlugin()]), Path(folder))
+            self.assertTrue(restarted.load_cached())
+            self.assertEqual(restarted.state("fake").items, (self.NEW, self.UNDATED))
+            self.assertEqual(restarted.state("fake").items[0].modified, self.NEW.modified)
 
 
 class CandidatePrePassTest(unittest.TestCase):
@@ -930,6 +1016,30 @@ class PluginUiTest(unittest.TestCase):
         self.assertEqual(self.tasks.count(self._category("ACTION")), 0)
         self.tasks.finish(self._category("PLUGIN_OPEN"))
         self.assertEqual(self.plugin.opened, [ANNA])
+
+    def test_dates_and_sort_orders_search_plugin_items_too(self):
+        dated = replace(BERND, name="Anna Weber", modified=datetime(2026, 7, 15).timestamp())
+        self.plugin.items = [ANNA, dated]
+        self.controller.plugins.refresh("fake", PluginConfig("fake", enabled=True))
+        names = [row.name for row in self.search("anna sort:modified")]
+        self.assertIn("Fake: Anna Schmidt", names)
+        rows = self.search("anna date:2026-07")
+        self.assertEqual([row.name for row in rows], ["Fake: Anna Weber"])
+        self.assertEqual(rows[0].metadata, "Modified 2026-07-15 00:00")
+
+    def test_a_plugin_preview_runs_on_a_pool_of_its_own(self):
+        from PySide6.QtCore import QSize
+
+        from winlauncher.ui.preview import NO_ITEM_PREVIEW_NOTE, PluginPreviewRequest
+
+        shown = []
+        request = PluginPreviewRequest(PluginHit("fake", "Fake", ANNA, 1, ""), QSize(9, 9), False)
+        with patch.object(self.window, "show_preview", side_effect=shown.append):
+            self.controller.load_preview(request)
+            # A plugin waiting on the network never holds up the next file's preview.
+            self.assertEqual(self.tasks.count(self._category("PREVIEW")), 0)
+            self.tasks.finish(self._category("PLUGIN_PREVIEW"))
+        self.assertEqual([preview.note for preview in shown], [NO_ITEM_PREVIEW_NOTE])
 
     def test_excluding_a_plugin_item_removes_it_and_continues_the_search(self):
         plugin = self.plugin

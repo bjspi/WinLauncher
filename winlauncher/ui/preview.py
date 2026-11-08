@@ -1,4 +1,4 @@
-"""File previews beside the results: images, PDF pages, text and folder contents.
+"""Previews beside the results: images, PDF pages, text, folder contents, plugin items.
 
 The preview is opt-in (`Settings.file_preview`); Alt+P or F3 opens and closes
 it, and the bar remembers which. `load_preview` runs on the `PREVIEW` worker and
@@ -7,17 +7,23 @@ placeholder, which reading would download, and never from a drive that does not
 answer. Qt reads images and, through its PDF plugin, a PDF's first page with the
 same `QImageReader`. Other files show their first bytes when they hold text, and
 otherwise a note; folders list their entries with the results' icons.
-`PreviewPane` paints only what arrives for the item it shows
-now, so a slow file never replaces a newer selection.
+A plugin item shows what its plugin's `preview` returns (`load_plugin_preview`),
+asked on a worker of its own, so a plugin waiting on the network never holds up
+file previews. `PreviewPane` paints only what arrives for the result it shows
+now, so a slow file or plugin never replaces a newer selection.
 """
 
 from __future__ import annotations
 
 import codecs
 import functools
-from dataclasses import dataclass
+import stat
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from itertools import islice
 from pathlib import Path
+from typing import TypeAlias
 
 from PySide6.QtCore import QLocale, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QImage, QImageReader, QPainter, QPixmap, QTextDocument
@@ -35,7 +41,9 @@ from PySide6.QtWidgets import (
 from winlauncher.catalog import long_paths, storage
 from winlauncher.catalog.indexer import classify_kind
 from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.plugins.api import PluginError, PluginPreview, is_local_path
 from winlauncher.plugins.encoding import decode_text
+from winlauncher.plugins.search import PluginHit
 from winlauncher.ui.icons import ResultIcons
 from winlauncher.ui.result_rows import format_modified
 from winlauncher.ui.theme import DARK, colors
@@ -49,6 +57,9 @@ SETTLE_MS = 120
 MAX_IMAGE_BYTES = 64 * 1024 * 1024
 MAX_IMAGE_PIXELS = 100_000_000  # Decoding more would take seconds and much memory.
 TEXT_BYTES = 64 * 1024
+# A plugin's text is laid out on the GUI thread; more than a file preview reads
+# would only cost time there.
+PLUGIN_TEXT_CHARS = TEXT_BYTES
 FOLDER_ENTRIES = 200  # Listed, folders first.
 FOLDER_SCAN_LIMIT = 2000  # Read for sorting and counting; a huge folder stops here.
 PDF_FORMAT = "pdf"  # Qt's image format name for its PDF plugin.
@@ -64,6 +75,13 @@ ONLINE_ONLY_NOTE = "Stored online only. WinLauncher does not download it for a p
 TOO_LARGE_NOTE = "Too large for a preview."
 EMPTY_FOLDER_NOTE = "Empty folder"
 NO_PREVIEW_NOTE = "No preview for this kind of result."
+NO_ITEM_PREVIEW_NOTE = "No preview for this item."
+NOT_LOCAL_NOTE = "The plugin's preview names no local file."
+FACTS_SEPARATOR = "  ·  "
+# What the pane shows: a file or folder from the catalog, or a plugin's item.
+PreviewSubject: TypeAlias = CatalogItem | PluginHit
+# A plugin's preview of one item, asked with everything bound but the call itself.
+PluginPreviewSource: TypeAlias = Callable[[], PluginPreview | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,15 +100,25 @@ class PreviewRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class PluginPreviewRequest:
+    """What to ask a plugin for; `cancel` is set once the selection moves on."""
+
+    hit: PluginHit
+    size: QSize
+    dark: bool
+    cancel: threading.Event = field(default_factory=threading.Event, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
 class Preview:
-    """What the pane shows for `path`: an image, text, folder entries, or a note on why not.
+    """What the pane shows for `subject`: an image, text, folder entries, or a note on why not.
 
     Text is plain, Markdown to render, or code already colored as HTML. Without any
     of them, the preview is still loading. `summary` adds to the facts, such as how
     many folders and files a folder holds.
     """
 
-    path: Path
+    subject: PreviewSubject | None
     image: QImage | None = None
     text: str | None = None
     markdown: str | None = None
@@ -107,21 +135,86 @@ class Preview:
 
 def load_preview(request: PreviewRequest) -> Preview:
     """Read the requested item; runs on the `PREVIEW` worker."""
-    item, size = request.item, request.size
+    return _file_preview(request.item, request.item, request.size, request.dark)
+
+
+def load_plugin_preview(request: PluginPreviewRequest, source: PluginPreviewSource) -> Preview:
+    """Ask the plugin for its item's preview and read what it names; on a plugin worker.
+
+    `source` is the plugin's `preview` for `request`, failures turned into a
+    PluginError (`PluginHost.preview`), whose message becomes the note.
+    """
+    hit = request.hit
+    try:
+        shown = source()
+    except PluginError as error:
+        return Preview(hit, note=str(error))
+    if shown is None:
+        return Preview(hit, note=NO_ITEM_PREVIEW_NOTE)
+    content = _plugin_content(request, shown)
+    return replace(content, summary=_joined(content.summary, shown.facts))
+
+
+def _plugin_content(request: PluginPreviewRequest, shown: PluginPreview) -> Preview:
+    """The one content a plugin's preview holds: its own text, or a file it names."""
+    hit = request.hit
+    if shown.markdown:
+        return Preview(hit, markdown=shown.markdown[:PLUGIN_TEXT_CHARS])
+    if shown.text:
+        return Preview(hit, text=shown.text[:PLUGIN_TEXT_CHARS])
+    if shown.file:
+        return _plugin_file(request, shown.file, with_facts=True)
+    return _plugin_file(request, shown.image, with_facts=False)
+
+
+def _plugin_file(request: PluginPreviewRequest, target: str, *, with_facts: bool) -> Preview:
+    """A file or folder a plugin names, previewed like a search result.
+
+    The catalog may not know it, so its kind, size and date come from the disk,
+    after the drive answered. A picture shows without them (`with_facts`).
+    """
+    hit = request.hit
+    if not is_local_path(target):
+        return Preview(hit, note=NOT_LOCAL_NOTE)
+    path = Path(target)
+    if (state := storage.drive_state(path)) is not storage.DriveState.PRESENT:
+        return Preview(hit, note=storage.unavailable_message(path, state))
+    try:
+        info = long_paths.stat(path)
+    except OSError as error:
+        return _unreadable(hit, error)
+    kind = classify_kind(path, stat.S_ISDIR(info.st_mode))
+    item = CatalogItem(path, kind, size=info.st_size, modified=info.st_mtime)
+    shown = _file_preview(hit, item, request.size, request.dark)
+    if not with_facts:
+        return shown
+    return replace(shown, summary=_joined(file_facts(item), shown.summary))
+
+
+def _file_preview(subject: PreviewSubject, item: CatalogItem, size: QSize, dark: bool) -> Preview:
+    """Read `item`'s file or folder, bounded, for the pane showing `subject`."""
     path = item.path
     if (state := storage.drive_state(path)) is not storage.DriveState.PRESENT:
-        return Preview(path, note=storage.unavailable_message(path, state))
+        return Preview(subject, note=storage.unavailable_message(path, state))
     try:
         if item.kind == ItemKind.FOLDER:
-            return _folder_preview(path)
+            return _folder_preview(subject, path)
         info = long_paths.stat(path)
         if storage.is_online_only(info):
-            return Preview(path, note=ONLINE_ONLY_NOTE)
+            return Preview(subject, note=ONLINE_ONLY_NOTE)
         if path.suffix[1:].lower() in _image_formats():
-            return _image_preview(path, size, info.st_size)
-        return _text_preview(path, request.dark)
+            return _image_preview(subject, path, size, info.st_size)
+        return _text_preview(subject, path, dark)
     except OSError as error:
-        return Preview(path, note=f"Cannot read it: {error.strerror or error}")
+        return _unreadable(subject, error)
+
+
+def _unreadable(subject: PreviewSubject, error: OSError) -> Preview:
+    return Preview(subject, note=f"Cannot read it: {error.strerror or error}")
+
+
+def _joined(*facts: str) -> str:
+    return FACTS_SEPARATOR.join(part for part in facts if part)
 
 
 @functools.cache
@@ -130,25 +223,25 @@ def _image_formats() -> frozenset[str]:
     return frozenset(bytes(name).decode().lower() for name in QImageReader.supportedImageFormats())
 
 
-def _image_preview(path: Path, size: QSize, file_size: int) -> Preview:
+def _image_preview(subject: PreviewSubject, path: Path, size: QSize, file_size: int) -> Preview:
     if file_size > MAX_IMAGE_BYTES:
-        return Preview(path, note=TOO_LARGE_NOTE)
+        return Preview(subject, note=TOO_LARGE_NOTE)
     reader = QImageReader(long_paths.os_path(path))
     reader.setAutoTransform(True)  # Photos turned by their camera stand upright.
     full = reader.size()
     if full.isValid():
         if full.width() * full.height() > MAX_IMAGE_PIXELS:
-            return Preview(path, note=TOO_LARGE_NOTE)
+            return Preview(subject, note=TOO_LARGE_NOTE)
         fits = full.width() <= size.width() and full.height() <= size.height()
         if not size.isEmpty() and not fits:
             # Decoding at the shown size is fast and needs little memory.
             reader.setScaledSize(full.scaled(size, Qt.AspectRatioMode.KeepAspectRatio))
     image = reader.read()
     if image.isNull():
-        return Preview(path, note=f"Cannot show this image: {reader.errorString()}")
+        return Preview(subject, note=f"Cannot show this image: {reader.errorString()}")
     if bytes(reader.format()).decode() == PDF_FORMAT:
         image = _on_paper(image)
-    return Preview(path, image=image)
+    return Preview(subject, image=image)
 
 
 def _on_paper(page: QImage) -> QImage:
@@ -161,18 +254,18 @@ def _on_paper(page: QImage) -> QImage:
     return paper
 
 
-def _text_preview(path: Path, dark: bool) -> Preview:
+def _text_preview(subject: PreviewSubject, path: Path, dark: bool) -> Preview:
     """The file's first bytes as Markdown, colored code or plain text; binary files get none."""
     with open(long_paths.os_path(path), "rb") as file:
         start = file.read(TEXT_BYTES)
     if BINARY_MARK in start:
-        return Preview(path, note=NO_PREVIEW_NOTE)
+        return Preview(subject, note=NO_PREVIEW_NOTE)
     text = _decode_start(start)
     if path.suffix.lower() in MARKDOWN_SUFFIXES:
-        return Preview(path, markdown=text)
+        return Preview(subject, markdown=text)
     if (html := _colored_code(path, text, dark)) is not None:
-        return Preview(path, html=html)
-    return Preview(path, text=text)
+        return Preview(subject, html=html)
+    return Preview(subject, text=text)
 
 
 def _colored_code(path: Path, text: str, dark: bool) -> str | None:
@@ -204,7 +297,7 @@ def _decode_start(data: bytes) -> str:
         return decode_text(data)
 
 
-def _folder_preview(path: Path) -> Preview:
+def _folder_preview(subject: PreviewSubject, path: Path) -> Preview:
     """The folder's entries, folders first, each group by name, with their count."""
     with long_paths.scandir(path) as listing:
         entries = [
@@ -212,16 +305,16 @@ def _folder_preview(path: Path) -> Preview:
             for entry in islice(listing, FOLDER_SCAN_LIMIT + 1)
         ]
     if not entries:
-        return Preview(path, note=EMPTY_FOLDER_NOTE)
+        return Preview(subject, note=EMPTY_FOLDER_NOTE)
     complete = len(entries) <= FOLDER_SCAN_LIMIT
     entries = sorted(entries[:FOLDER_SCAN_LIMIT], key=_folder_order)
     folders = sum(entry.is_folder for entry in entries)
     summary = (
-        _counted(folders, "folder") + "  ·  " + _counted(len(entries) - folders, "file")
+        _joined(_counted(folders, "folder"), _counted(len(entries) - folders, "file"))
         if complete
         else f"More than {FOLDER_SCAN_LIMIT:,} entries"
     )
-    return Preview(path, entries=tuple(entries[:FOLDER_ENTRIES]), summary=summary)
+    return Preview(subject, entries=tuple(entries[:FOLDER_ENTRIES]), summary=summary)
 
 
 def _folder_order(entry: FolderEntry) -> tuple[bool, str]:
@@ -233,18 +326,44 @@ def _counted(count: int, noun: str) -> str:
 
 
 def item_facts(item: CatalogItem) -> str:
-    """Size and date from the catalog, so they appear before anything is read."""
+    """Name, size and date from the catalog, so they appear before anything is read."""
+    return f"{item.path.name}\n{file_facts(item)}"
+
+
+def file_facts(item: CatalogItem) -> str:
+    """Size and date of a file; a folder has no size of its own."""
     modified = f"Modified {format_modified(item.modified)}"
     if item.kind == ItemKind.FOLDER:
-        return f"{item.path.name}\n{modified}"
-    return f"{item.path.name}\n{QLocale().formattedDataSize(item.size)}  ·  {modified}"
+        return modified
+    return _joined(QLocale().formattedDataSize(item.size), modified)
+
+
+def plugin_facts(hit: PluginHit) -> str:
+    """The item's title and, when its plugin tells, when it changed."""
+    if hit.item.modified is None:
+        return hit.title
+    return f"{hit.title}\nModified {format_modified(hit.item.modified)}"
+
+
+def _facts(subject: PreviewSubject) -> str:
+    if isinstance(subject, PluginHit):
+        return plugin_facts(subject)
+    return item_facts(subject)
+
+
+def _same_subject(first: PreviewSubject | None, second: PreviewSubject | None) -> bool:
+    """Whether both name the same result; a plugin hit's score changes as the user types."""
+    if isinstance(first, PluginHit) and isinstance(second, PluginHit):
+        return first.plugin_id == second.plugin_id and first.item == second.item
+    return first == second
 
 
 class PreviewPane(QFrame):
     """Shows the selected result; asks for its preview once the selection rests.
 
-    `requested` carries a `PreviewRequest`; the owner loads it off the GUI thread
-    and hands the result to `show_preview`.
+    `requested` carries a `PreviewRequest` for a file or folder, or a
+    `PluginPreviewRequest` for a plugin item; the owner loads it off the GUI thread
+    and hands the result to `show_preview`. Moving on cancels a plugin's request.
     """
 
     requested = Signal(object)
@@ -253,7 +372,7 @@ class PreviewPane(QFrame):
         super().__init__(parent)
         self.setObjectName("preview")
         self.setFixedWidth(PANE_WIDTH)
-        self.setAccessibleName("File preview")
+        self.setAccessibleName("Preview")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(PANE_GAP, 4, 16, 0)
         layout.setSpacing(8)
@@ -290,34 +409,49 @@ class PreviewPane(QFrame):
         layout.addWidget(self.document, 1)
         layout.addWidget(self.entries, 1)
         layout.addWidget(self.facts)
-        self._item: CatalogItem | None = None
+        self._subject: PreviewSubject | None = None
+        self._cancel: threading.Event | None = None  # The plugin request under way.
         self._settle = QTimer(self)
         self._settle.setSingleShot(True)
         self._settle.setInterval(SETTLE_MS)
         self._settle.timeout.connect(self._request)
-        self._show(Preview(Path()), facts="")
+        self._show(Preview(None), facts="")
 
-    def show_item(self, item: CatalogItem | None) -> None:
-        """Show `item`, or that a result such as a plugin item has no preview."""
-        if item == self._item:
+    def show_item(self, subject: PreviewSubject | None) -> None:
+        """Show `subject`, or that a result such as a website has no preview."""
+        if _same_subject(subject, self._subject):
             return
-        self._item = item
+        self._subject = subject
         self._settle.stop()
-        if item is None:
-            self._show(Preview(Path(), note=NO_PREVIEW_NOTE), facts="")
+        self.cancel()
+        if subject is None:
+            self._show(Preview(None, note=NO_PREVIEW_NOTE), facts="")
             return
-        self._show(Preview(item.path), facts=item_facts(item))
+        self._show(Preview(subject), facts=_facts(subject))
         self._settle.start()
 
     def show_preview(self, preview: Preview) -> None:
-        if self._item is None or preview.path != self._item.path:
+        if self._subject is None or not _same_subject(preview.subject, self._subject):
             return  # The selection moved on while it loaded.
-        self._show(preview, facts=item_facts(self._item))
+        self._show(preview, facts=_facts(self._subject))
+
+    def cancel(self) -> None:
+        """Tell a plugin still preparing the shown item's preview that it may stop."""
+        if self._cancel is not None:
+            self._cancel.set()
+            self._cancel = None
 
     def _request(self) -> None:
-        if self._item is not None:
-            dark = colors() is DARK
-            self.requested.emit(PreviewRequest(self._item, self._picture_size(), dark))
+        subject = self._subject
+        if subject is None:
+            return
+        dark = colors() is DARK
+        if isinstance(subject, PluginHit):
+            request = PluginPreviewRequest(subject, self._picture_size(), dark)
+            self._cancel = request.cancel
+            self.requested.emit(request)
+            return
+        self.requested.emit(PreviewRequest(subject, self._picture_size(), dark))
 
     def _picture_size(self) -> QSize:
         ratio = self.devicePixelRatioF()
@@ -339,7 +473,7 @@ class PreviewPane(QFrame):
         self.document.setVisible(preview.document)
         self._list(preview.entries or ())
         self.entries.setVisible(preview.entries is not None)
-        self.facts.setText("  ·  ".join(part for part in (facts, preview.summary) if part))
+        self.facts.setText(_joined(facts, preview.summary))
 
     def _render(self, preview: Preview) -> None:
         if preview.markdown is not None:

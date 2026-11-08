@@ -2,7 +2,8 @@
 
 Items match with the catalog's own text matching (`search.matching`), so a chat
 named Anna ranks like a file named Anna. Scores share the catalog's scale: plugin
-hits are merged into the file results by score.
+hits are merged into the file results by score, or by date or name when the query
+sorts so. Items that tell when they last changed answer date filters, too.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from itertools import islice
 
 from winlauncher.catalog.model import normalize
 from winlauncher.plugins.api import PluginItem
@@ -22,7 +24,7 @@ from winlauncher.search.matching import (
     is_wildcard,
     match_term,
 )
-from winlauncher.search.query import MatchMode, SearchQuery
+from winlauncher.search.query import MatchMode, SearchQuery, SortOrder
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import REASON_SEPARATOR, PriorityBand, SearchHit
 
@@ -44,6 +46,7 @@ _HAS_DIGIT = re.compile(r"\d")
 # can immediately reacquire the interpreter and starve Qt's Python callbacks.
 CHECKPOINT_INTERVAL_S = 0.005
 CHECKPOINT_PAUSE_S = 0.001
+LISTED_REASON = "Recently used"  # Why an item is listed without any words to match.
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,18 +111,26 @@ def _parsed(text: str) -> SearchQuery:
 def plugins_answer(query: SearchQuery) -> bool:
     """Whether an ordinary search also lists plugin items.
 
-    Only plain words do: filters for types, extensions, folders, sizes, dates or
-    contents ask for files.
+    Words do, and dates: `date:week` alone lists what changed this week, files and
+    plugin items alike. Filters for types, extensions, folders, sizes or contents
+    ask for files.
     """
-    return bool(query.terms) and query == SearchQuery(
+    return (bool(query.terms) or _dated(query)) and query == SearchQuery(
         terms=query.terms,
         exact_terms=query.exact_terms,
         excluded_terms=query.excluded_terms,
         match_mode=query.match_mode,
-        score_mode=query.score_mode,
+        sort=query.sort,
         include_low_priority=query.include_low_priority,
+        modified_after=query.modified_after,
+        modified_before=query.modified_before,
+        score_mode=query.score_mode,
         spellings=query.spellings,
     )
+
+
+def _dated(query: SearchQuery) -> bool:
+    return query.modified_after is not None or query.modified_before is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,28 +194,30 @@ def rank_items(
     literal: Sequence[re.Pattern[str]] = (),
     cancel: threading.Event | None = None,
 ) -> list[PluginHit]:
-    """The best `limit` items for `query`; no terms keeps the plugin's order.
+    """The first `limit` items for `query` in its sort order, from its period only.
 
-    `literal` are the plugin's patterns for terms that name one of its items, such
-    as a ticket key, and must therefore be matched in one piece. A set `cancel`
-    stops the ranking at its next checkpoint and leaves no hits.
+    Without terms, sorting by score keeps the plugin's own order. `literal` are the
+    plugin's patterns for terms that name one of its items, such as a ticket key,
+    and must therefore be matched in one piece. A set `cancel` stops the ranking at
+    its next checkpoint and leaves no hits.
     """
     if cancel is not None and cancel.is_set():
         return []
+    entries = _in_period(items, query)
+    order = hit_order(query.sort)
     if not query.terms:
-        return [
+        listed = (
             PluginHit(
-                plugin_id,
-                label,
-                entry.item,
-                position_bonus(entry.position) + boost,
-                "Recently used",
+                plugin_id, label, entry.item, position_bonus(entry.position) + boost, LISTED_REASON
             )
-            for entry in items[:limit]
-        ]
+            for entry in entries
+        )
+        if query.sort == SortOrder.SCORE:
+            return list(islice(listed, limit))
+        return heapq.nsmallest(limit, listed, key=order)
     loose = _loose_terms(query, literal)
     hits = []
-    for entry in _candidates(items, query, loose, cancel):
+    for entry in _candidates(entries, query, loose, cancel):
         text = _text_relevance(entry, query, loose)
         if text is None:
             continue
@@ -213,7 +226,27 @@ def rank_items(
         hits.append(PluginHit(plugin_id, label, entry.item, score, reason))
     if cancel is not None and cancel.is_set():
         return []
-    return heapq.nlargest(limit, hits, key=lambda hit: hit.score)
+    return heapq.nsmallest(limit, hits, key=order)
+
+
+def _in_period(items: Iterable[SearchableItem], query: SearchQuery) -> Iterator[SearchableItem]:
+    """The items a date filter keeps, with the catalog's bounds: from `after`, before `before`.
+
+    An item that does not tell when it changed lies in no period.
+    """
+    if not _dated(query):
+        yield from items
+        return
+    after, before = query.modified_after, query.modified_before
+    for entry in items:
+        modified = entry.item.modified
+        if modified is None:
+            continue
+        if after is not None and modified < after:
+            continue
+        if before is not None and modified >= before:
+            continue
+        yield entry
 
 
 def position_bonus(position: int) -> float:
@@ -239,7 +272,7 @@ def _loose_terms(query: SearchQuery, literal: Sequence[re.Pattern[str]]) -> froz
 
 
 def _candidates(
-    items: Sequence[SearchableItem],
+    items: Iterable[SearchableItem],
     query: SearchQuery,
     loose: frozenset[str],
     cancel: threading.Event | None = None,
@@ -314,12 +347,45 @@ def _text_relevance(
 
 
 def merge_hits(
-    files: Sequence[SearchHit], plugins: Iterable[PluginHit], limit: int
+    files: Sequence[SearchHit],
+    plugins: Iterable[PluginHit],
+    limit: int,
+    sort: SortOrder = SortOrder.SCORE,
 ) -> list[SearchHit | PluginHit]:
-    """File hits keep their order; plugin hits join them by band and score."""
-    ordered = sorted(plugins, key=_sort_key)
-    return list(heapq.merge(files, ordered, key=_sort_key))[:limit]
+    """File hits keep their order; plugin hits join them where `sort` puts them."""
+    order = hit_order(sort)
+    ordered = sorted(plugins, key=order)
+    return list(heapq.merge(files, ordered, key=order))[:limit]
 
 
-def _sort_key(hit: SearchHit | PluginHit) -> tuple[int, float]:
+Hit = SearchHit | PluginHit
+HitOrder = Callable[[Hit], tuple]
+
+
+def hit_order(sort: SortOrder) -> HitOrder:
+    """The sort key of file and plugin hits alike; smaller keys come first.
+
+    It agrees with the catalog's own order (`search.service.ResultOrder`): by band
+    and score, or low results last and then newest first or by name. An item that
+    does not tell when it changed counts as oldest.
+    """
+    return _HIT_ORDERS[sort]
+
+
+def _by_score(hit: Hit) -> tuple[int, float]:
     return hit.band, -hit.score
+
+
+def _by_modified(hit: Hit) -> tuple[bool, float]:
+    return hit.band == PriorityBand.FALLBACK, -(hit.item.modified or 0.0)
+
+
+def _by_name(hit: Hit) -> tuple[bool, str]:
+    return hit.band == PriorityBand.FALLBACK, hit.item.name.casefold()
+
+
+_HIT_ORDERS: dict[SortOrder, HitOrder] = {
+    SortOrder.SCORE: _by_score,
+    SortOrder.MODIFIED: _by_modified,
+    SortOrder.NAME: _by_name,
+}

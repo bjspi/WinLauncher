@@ -10,7 +10,7 @@ import logging
 import os
 import queue
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -66,7 +66,13 @@ from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, exc
 from winlauncher.ui.indexing import IndexJob, IndexJobKind, IndexScheduler
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginIcons, PluginScheduler
-from winlauncher.ui.preview import PreviewRequest, load_preview
+from winlauncher.ui.preview import (
+    PluginPreviewRequest,
+    Preview,
+    PreviewRequest,
+    load_plugin_preview,
+    load_preview,
+)
 from winlauncher.ui.result_rows import LauncherHit
 from winlauncher.ui.search_session import SearchSession
 from winlauncher.ui.settings import SettingsDialog
@@ -621,11 +627,25 @@ class LauncherController(QObject):
             self._action_failed,
         )
 
-    def load_preview(self, request: PreviewRequest) -> None:
-        """Read the selected file for the preview pane on its own worker."""
+    def load_preview(self, request: PreviewRequest | PluginPreviewRequest) -> None:
+        """Read the selected file, or ask its plugin, for the preview pane.
+
+        Plugin items have workers of their own, so a plugin waiting on the network
+        never holds up the preview of the next file.
+        """
+        if not isinstance(request, PluginPreviewRequest):
+            self._submit_preview(TaskCategory.PREVIEW, partial(load_preview, request))
+            return
+        hit = request.hit
+        config = self.plugins.config(hit.plugin_id, self.settings.plugins)
+        source = partial(self.plugins.preview, hit, config, request.cancel)
+        work = partial(load_plugin_preview, request, source)
+        self._submit_preview(TaskCategory.PLUGIN_PREVIEW, work)
+
+    def _submit_preview(self, category: TaskCategory, work: Callable[[], Preview]) -> None:
         self.tasks.submit(
-            TaskCategory.PREVIEW,
-            partial(load_preview, request),
+            category,
+            work,
             self.window.show_preview,
             lambda message: logger.warning("Preview failed: %s", message),
         )

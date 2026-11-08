@@ -34,6 +34,7 @@ from winlauncher.plugins.api import (
     PluginContext,
     PluginError,
     PluginItem,
+    PluginPreview,
     PluginTip,
     SetupRequired,
     no_choices,
@@ -472,6 +473,28 @@ class PluginHost:
         """Let the plugin open its item; runs on the action worker."""
         plugin = self._entries[hit.plugin_id].plugin
         plugin.open(hit.item, self.context(hit.plugin_id, config))
+
+    def preview(
+        self, hit: PluginHit, config: PluginConfig, cancel: threading.Event
+    ) -> PluginPreview | None:
+        """What the plugin shows for its item in the preview pane; runs on a preview worker.
+
+        No lock, as for answers: a refresh of the same plugin may run meanwhile, and
+        a slow preview must not hold it up. Every failure becomes a PluginError, whose
+        message the pane shows instead.
+        """
+        plugin = self._entries[hit.plugin_id].plugin
+        try:
+            found = plugin.preview(hit.item, self.context(hit.plugin_id, config, cancel))
+        except PluginError:
+            raise
+        except PLUGIN_FAILURES as exc:
+            logger.exception("Plugin %s preview failed", hit.plugin_id)
+            raise PluginError(f"The plugin failed to show a preview: {exc}") from exc
+        if found is None or isinstance(found, PluginPreview):
+            return found
+        logger.warning("Plugin %s previewed with %s, not PluginPreview", hit.plugin_id, type(found))
+        raise PluginError("The plugin's preview is no PluginPreview.")
 
     def tips(self, configs: Sequence[PluginConfig]) -> list[SyntaxTip]:
         """The `?` help rows of the enabled plugins, each meaning named after its plugin.

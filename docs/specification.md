@@ -531,9 +531,23 @@ shows its first 300 lines colored for the light or dark theme; everything else
 stays plain; for folders a list with the results' icons, folders first
 and each group by name, at most 200 of the first 2,000 entries read, and their
 count of folders and files beside the date (or "More than 2,000 entries").
-Plugin results, Explorer tools, binary files,
+Websites, Explorer tools, binary files,
 cloud placeholders (never downloaded for a preview) and drives that do not answer
 show a note instead.
+
+A plugin item shows what its plugin's `preview` returns: Markdown (rendered
+without linked images) or plain text, each cut to its first 65,536 characters; a
+local file or folder, previewed like a search result with its size and date read
+from the disk; or a picture file without them. The item's title, its modification
+date when the plugin gives one, and the plugin's own facts line appear below. By
+default an item whose target is an absolute local path previews that file or
+folder; other items show "No preview for this item." The plugin is asked once the
+selection rests, on a pool of two workers of its own, so a plugin waiting on the
+network never delays a file's preview; moving on sets the request's cancel event,
+and what arrives for an earlier selection is dropped. The same item ranked anew
+while typing keeps its preview. A `PluginError` shows its message in the pane;
+another exception or a result that is no `PluginPreview` is logged and shows that
+the plugin failed.
 
 A pin button between the settings button and the application icon (or Ctrl+P)
 keeps the launcher bar open: opening a result by Enter, click or Ctrl+1…9,
@@ -806,14 +820,25 @@ plugin's order. All keywords of a plugin work alike. A route's keyword does the
 same with only the items whose `routes` name that route. The same text still searches the catalog, so a short keyword never
 takes its word away: `tg` lists the chats and finds a file named `tg`. The prefix
 `@` asks for the plugin alone and leaves the catalog out, as in `@tg anna`; an `@`
-before anything else is ordinary search text. Plain word searches without filters,
-sorting or scope add the items of every enabled plugin with **In every search**
-on; website keywords and file filters do not. An item scores the catalog's text match of each term
+before anything else is ordinary search text. Ordinary searches add the items of
+every enabled plugin with **In every search** on when they consist of words, date
+filters (`after:`, `before:`, `date:`) and `sort:`, `match:`, `score:` or `low:`,
+and have words or a date filter; type, extension, folder, name, size and content
+filters and a scope ask for files only, and so do website keywords. An item scores the catalog's text match of each term
 against its name, or against a keyword 10 points lower. It adds
 `12 / (1 + position / 10)` for its position in the plugin's list and the plugin's
 boost. Every term must match, and an excluded term in the name or keywords drops
 the item. Plugin hits join the file hits by score and the result limit applies to
 both.
+
+An item may say when it last changed (`modified`, a POSIX timestamp or a
+`datetime`, kept as a timestamp in the item cache). Date filters keep the items of
+their period with the catalog's bounds and leave out items without a date; a date
+filter without words lists the period's items in the plugin's order. `sort:modified`
+puts plugin hits among the files newest first, undated ones last, and `sort:name`
+by name, both after ordinary and before low results like the files. A keyword
+search such as `tg date:week` applies the same to that plugin. While a date filter
+is typed, dated plugin rows show their modification time like file rows.
 
 Plugin items are ranked in Python on the search worker, and Python runs one thread
 at a time, so a big plugin makes typing lag even though it searches in the

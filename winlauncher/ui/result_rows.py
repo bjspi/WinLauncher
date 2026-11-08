@@ -76,7 +76,7 @@ def result_row(
     if isinstance(hit, WebsiteTarget):
         return _website_row(hit)
     if isinstance(hit, PluginHit):
-        return _plugin_row(hit)
+        return _plugin_row(hit, query)
     if isinstance(hit, CommandHit):
         return _command_row(hit)
     if isinstance(hit, SyntaxTip):
@@ -129,12 +129,18 @@ def _website_row(website: WebsiteTarget) -> ResultRow:
     )
 
 
-def _plugin_row(hit: PluginHit) -> ResultRow:
-    """A plugin item; its breadcrumbs, when given, replace the subtitle."""
+def _plugin_row(hit: PluginHit, query: SearchQuery | None) -> ResultRow:
+    """A plugin item; its breadcrumbs, when given, replace the subtitle.
+
+    Like a file, it shows when it changed while the query filters by date.
+    """
     item = hit.item
     location = BREADCRUMB_SEPARATOR.join(item.breadcrumbs) or item.subtitle
     chips = item.chips[:MAX_CHIPS]
     labels = "".join(f", {chip.text}" for chip in chips)
+    dated = _filters_by_date(query) and item.modified is not None
+    metadata = f"Modified {format_modified(item.modified)}" if dated else ""
+    details = f"\n{metadata}" if metadata else ""
     tooltip = "\n".join(part for part in (item.target, f"Opens in {hit.label}", hit.reason) if part)
     return ResultRow(
         hit=hit,
@@ -145,7 +151,8 @@ def _plugin_row(hit: PluginHit) -> ResultRow:
         target_noun="Link",
         detail=tooltip,
         tooltip=tooltip,
-        accessible_text=f"{hit.title}, {hit.label}{labels}\n{location}".rstrip(),
+        accessible_text=f"{hit.title}, {hit.label}{labels}{details}\n{location}".rstrip(),
+        metadata=metadata,
         opens_in=hit.label,
         chips=chips,
     )
@@ -239,9 +246,15 @@ def _metadata(item: CatalogItem, query: SearchQuery | None) -> str:
     parts = []
     if query.min_size is not None or query.max_size is not None:
         parts.append(QLocale().formattedDataSize(item.size))
-    if query.modified_after is not None or query.modified_before is not None:
+    if _filters_by_date(query):
         parts.append(f"Modified {format_modified(item.modified)}")
     return " · ".join(parts)
+
+
+def _filters_by_date(query: SearchQuery | None) -> bool:
+    return query is not None and (
+        query.modified_after is not None or query.modified_before is not None
+    )
 
 
 def format_modified(timestamp: float) -> str:

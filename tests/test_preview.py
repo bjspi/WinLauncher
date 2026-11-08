@@ -1,4 +1,4 @@
-"""Alt+P shows the selected file beside the results, read off the GUI thread and bounded."""
+"""Alt+P shows the selected file or plugin item beside the results, off the GUI thread."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import sys
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -26,11 +28,23 @@ from PySide6.QtWidgets import QApplication
 
 from winlauncher.catalog import storage
 from winlauncher.catalog.model import CatalogItem, ItemKind
+from winlauncher.plugins.api import Plugin, PluginContext, PluginError, PluginItem, PluginPreview
+from winlauncher.plugins.config import PluginConfig
+from winlauncher.plugins.host import PluginHost
+from winlauncher.plugins.registry import Discovery
+from winlauncher.plugins.search import PluginHit
 from winlauncher.search.ranking import SearchHit
 from winlauncher.ui import preview
 from winlauncher.ui.bar_placement import BarPlacement
 from winlauncher.ui.icons import ResultIcons
-from winlauncher.ui.preview import PANE_WIDTH, SETTLE_MS, PreviewRequest, load_preview
+from winlauncher.ui.preview import (
+    PANE_WIDTH,
+    SETTLE_MS,
+    PluginPreviewRequest,
+    PreviewRequest,
+    load_plugin_preview,
+    load_preview,
+)
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.window import LauncherWindow
 
@@ -168,6 +182,101 @@ class LoadPreviewTest(unittest.TestCase):
             self.assertEqual(read(item).note, preview.TOO_LARGE_NOTE)
 
 
+class Notes(Plugin):
+    """Previews by its items' keys: Markdown, a file, a failure, something unusable."""
+
+    id = "notes"
+    label = "Note"
+
+    def __init__(self) -> None:
+        self.contexts: list[PluginContext] = []
+
+    def refresh(self, context):
+        return []
+
+    def preview(self, item, context):
+        self.contexts.append(context)
+        if item.key == "markdown":
+            return PluginPreview(markdown="# Shopping\n\n- Milk", facts="2 entries")
+        if item.key == "fails":
+            raise RuntimeError("bug")
+        if item.key == "refuses":
+            raise PluginError("Sign in to see this note.")
+        if item.key == "unusable":
+            return "# Shopping"
+        return super().preview(item, context)
+
+
+class PluginPreviewTest(unittest.TestCase):
+    """A plugin item shows what its plugin's `preview` returns, asked on a worker."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory(prefix="winlauncher-plugin-preview-")
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.plugin = Notes()
+        self.host = PluginHost(Discovery([self.plugin]), self.root)
+        self.config = PluginConfig("notes")
+
+    def read(self, item: PluginItem) -> preview.Preview:
+        request = PluginPreviewRequest(PluginHit("notes", "Note", item, 1, ""), PANE, False)
+        source = partial(self.host.preview, request.hit, self.config, request.cancel)
+        return load_plugin_preview(request, source)
+
+    def test_the_plugin_supplies_markdown_and_facts_with_its_context(self) -> None:
+        shown = self.read(PluginItem("markdown", "Shopping"))
+        self.assertEqual(shown.markdown, "# Shopping\n\n- Milk")
+        self.assertEqual(shown.summary, "2 entries")
+        self.assertEqual(self.plugin.contexts[0].data_dir, self.root / "plugin-data" / "notes")
+        long = PluginPreview(text="x" * (preview.PLUGIN_TEXT_CHARS + 10))
+        with patch.object(Notes, "preview", return_value=long):
+            self.assertEqual(len(self.read(PluginItem("long", "Long")).text), len(long.text) - 10)
+
+    def test_a_local_target_previews_its_file_by_default_and_a_link_has_none(self) -> None:
+        note = self.root / "shopping.md"
+        note.write_text("# Shopping", encoding="utf-8")
+        shown = self.read(PluginItem("file", "Shopping", target=str(note)))
+        self.assertEqual(shown.markdown, "# Shopping")
+        self.assertIn("Modified ", shown.summary)  # Size and date from the disk.
+        (self.root / "folder").mkdir()
+        folder = self.read(PluginItem("folder", "Folder", target=str(self.root / "folder")))
+        self.assertEqual(folder.note, preview.EMPTY_FOLDER_NOTE)
+        link = self.read(PluginItem("link", "Chat", target="tg://resolve?domain=anna"))
+        self.assertEqual(link.note, preview.NO_ITEM_PREVIEW_NOTE)
+        gone = self.read(PluginItem("gone", "Gone", target=str(self.root / "gone.txt")))
+        self.assertIn("Cannot read it", gone.note)
+
+    def test_a_picture_shows_without_file_facts(self) -> None:
+        picture = self.root / "avatar.png"
+        image = QImage(4, 4, QImage.Format.Format_RGB32)
+        image.fill(QColor("red"))
+        self.assertTrue(image.save(str(picture)))
+        with patch.object(Notes, "preview", return_value=PluginPreview(image=str(picture))):
+            shown = self.read(PluginItem("avatar", "Anna"))
+        self.assertIsNotNone(shown.image)
+        self.assertEqual(shown.summary, "")
+        with patch.object(Notes, "preview", return_value=PluginPreview(image="https://x/a.png")):
+            self.assertEqual(self.read(PluginItem("web", "Anna")).note, preview.NOT_LOCAL_NOTE)
+
+    def test_failures_become_a_note_in_the_pane(self) -> None:
+        self.assertEqual(
+            self.read(PluginItem("refuses", "Secret")).note, "Sign in to see this note."
+        )
+        with self.assertLogs("winlauncher.plugins.host", "ERROR"):
+            self.assertIn("bug", self.read(PluginItem("fails", "Broken")).note)
+        with self.assertLogs("winlauncher.plugins.host", "WARNING"):
+            self.assertIn("no PluginPreview", self.read(PluginItem("unusable", "Odd")).note)
+
+    def test_a_preview_holds_exactly_one_content(self) -> None:
+        for wrong in ({}, {"markdown": "a", "text": "b"}, {"facts": "only facts"}, {"text": 5}):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                PluginPreview(**wrong)
+
+
 class PreviewPaneFlowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -219,6 +328,30 @@ class PreviewPaneFlowTest(unittest.TestCase):
         self.window.present(text="note")
         self.assertFalse(self.window.preview_open)
         self.assertEqual(self.window.width(), width)
+
+    def test_a_plugin_item_is_asked_for_and_moving_on_cancels_it(self) -> None:
+        anna = PluginHit("notes", "Note", PluginItem("a", "Anna"), 9, "x")
+        self.window.set_results([anna, *self.hits], 3, preserve_selection=False)
+        self.window.set_preview_enabled(True)
+        requests = QSignalSpy(self.window.preview_requested)
+        self.window.toggle_preview()  # Alt+P
+        QTest.qWait(SETTLE_MS * 3)
+        self.assertEqual(requests.count(), 1)
+        request = requests.at(0)[0]
+        self.assertIsInstance(request, PluginPreviewRequest)
+        self.assertEqual(request.hit, anna)
+        pane = self.window.preview
+        self.assertEqual(pane.facts.text(), "Note: Anna")
+        # The same item, ranked anew as the user types, is not asked for again.
+        retyped = replace(anna, score=20, reason="y")
+        pane.show_item(retyped)
+        pane.show_preview(preview.Preview(retyped, markdown="# Anna"))
+        self.assertTrue(pane.document.isVisibleTo(pane))
+        self.assertFalse(request.cancel.is_set())
+        QTest.keyClick(self.window.query, Qt.Key.Key_Down)
+        self.assertTrue(request.cancel.is_set())  # The plugin may stop.
+        pane.show_preview(preview.Preview(anna, text="late"))
+        self.assertFalse(pane.text.isVisibleTo(pane))  # Arrived too late: dropped.
 
     def test_the_open_preview_is_remembered_across_starts(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

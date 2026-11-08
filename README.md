@@ -266,7 +266,8 @@ or Settings brings it back to the middle.
 With **File preview** turned on in Settings → General, <kbd>Alt</kbd>+<kbd>P</kbd> (or <kbd>F3</kbd>) opens a pane
 beside the results that follows the selection: images (upright by their EXIF
 orientation), the first page of a PDF, rendered Markdown, colored code, the start
-of other text files, and what a folder holds. The bar remembers
+of other text files, and what a folder holds. Plugin results show what their
+plugin offers, such as a ticket's description. The bar remembers
 whether you left it open. Files stored only online in OneDrive are not downloaded
 for it.
 

@@ -82,7 +82,13 @@ from winlauncher.ui.highlight import matched_positions
 from winlauncher.ui.icons import ResultIcons
 from winlauncher.ui.menus import Menu
 from winlauncher.ui.plugins import PluginIcons
-from winlauncher.ui.preview import PANE_MIN_HEIGHT, PANE_WIDTH, Preview, PreviewPane
+from winlauncher.ui.preview import (
+    PANE_MIN_HEIGHT,
+    PANE_WIDTH,
+    Preview,
+    PreviewPane,
+    PreviewSubject,
+)
 from winlauncher.ui.query_syntax import QuerySyntax
 from winlauncher.ui.result_rows import LauncherHit, ResultRow, result_row, shortened_breadcrumbs
 from winlauncher.ui.theme import app_icon, colors, theme
@@ -459,6 +465,15 @@ def _menu_commands(commands: tuple[MenuCommand, ...], kind: ItemKind) -> list[Me
     return []
 
 
+def _preview_subject(row: ResultRow | None) -> PreviewSubject | None:
+    """What the preview pane shows for `row`: its file or folder, or its plugin item."""
+    if row is None:
+        return None
+    if isinstance(row.hit, PluginHit):
+        return row.hit
+    return row.file_hit.item if row.file_hit is not None else None
+
+
 def _shortcut_modifier(modifiers: Qt.KeyboardModifier, *, ctrl: bool = False) -> str | None:
     """The command shortcut `modifiers` stand for, such as "Alt"; None for others.
 
@@ -585,7 +600,8 @@ class LauncherWindow(QWidget):
     dialog_text_returned = Signal(str)
     # SearchHit and whether to add the extended (Shift) entries: Windows' own menu.
     shell_menu_requested = Signal(object, bool)
-    preview_requested = Signal(object)  # PreviewRequest for the selected file.
+    # PreviewRequest for the selected file, PluginPreviewRequest for a plugin item.
+    preview_requested = Signal(object)
     exclude_requested = Signal(object, bool)  # Result path and whether it is a folder.
     # SearchHit and the MenuCommand to run for it.
     command_requested = Signal(object, object)
@@ -1585,7 +1601,7 @@ class LauncherWindow(QWidget):
         self.resize(min(self._bar_width(), area.width()), self.height())
         self.move(max(area.left(), center - self.width() // 2), self.y())
 
-    # File preview ---------------------------------------------------------------
+    # Preview --------------------------------------------------------------------
 
     def set_preview_enabled(self, enabled: bool) -> None:
         self.preview_enabled = enabled
@@ -1593,7 +1609,7 @@ class LauncherWindow(QWidget):
             self._resize_around_center()
 
     def toggle_preview(self) -> None:
-        """Alt+P or F3: show the selected file beside the results, or close the preview.
+        """Alt+P or F3: show the selected result beside the results, or close the preview.
 
         The bar remembers it, also across starts, and opens the same way next time.
         The launcher bar only; the Explorer bar stays a narrow strip.
@@ -1632,8 +1648,7 @@ class LauncherWindow(QWidget):
         if self.preview is None:
             return
         row = self.selected_row() if self.preview_open else None
-        hit = row.file_hit if row is not None else None
-        self.preview.show_item(hit.item if hit is not None else None)
+        self.preview.show_item(_preview_subject(row))
 
     def update_detail(self, *_changed) -> None:
         row = self.selected_row()

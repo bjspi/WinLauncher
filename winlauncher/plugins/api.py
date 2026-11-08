@@ -20,13 +20,15 @@ A minimal plugin, saved as `<data directory>/plugins/notes.py`:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import ClassVar, Protocol
 
 from winlauncher.connectivity import InternetState
@@ -97,6 +99,10 @@ class PluginItem:
     # Short labels in the row before the location, such as a ticket's status. Shown,
     # never matched: put words users type into `keywords`.
     chips: tuple[Chip, ...] = ()
+    # When the item last changed, such as a chat's last message, as a POSIX timestamp or
+    # a datetime. Date filters (`date:week`, `after:`) and `sort:modified` use it; while
+    # one is typed, items without it stay out of the results.
+    modified: float | datetime | None = None
 
     def __post_init__(self) -> None:
         """Reject an item the launcher could not show, so a refresh fails, not a search."""
@@ -123,6 +129,45 @@ class PluginItem:
         object.__setattr__(self, "routes", routes)
         object.__setattr__(self, "breadcrumbs", breadcrumbs)
         object.__setattr__(self, "chips", chips)
+        object.__setattr__(self, "modified", _timestamp(self.modified))
+
+
+def _timestamp(modified: object) -> float | None:
+    """`modified` as seconds since the epoch, the catalog's own measure of time."""
+    if modified is None:
+        return None
+    if isinstance(modified, datetime):
+        modified = modified.timestamp()
+    if isinstance(modified, bool) or not isinstance(modified, int | float):
+        raise ValueError("A plugin item's modified must be a timestamp or a datetime.")
+    if not math.isfinite(modified):
+        raise ValueError("A plugin item's modified must be a finite timestamp.")
+    return float(modified)
+
+
+@dataclass(frozen=True, slots=True)
+class PluginPreview:
+    """What the preview pane shows for one item: exactly one of its contents.
+
+    `markdown` is rendered without the images it links to, `text` shown as it is.
+    `file` names a local file or folder, previewed like a search result with its size
+    and date; `image` names a picture file, such as one the plugin saved into its
+    data folder, shown without them. `facts` is a muted line below, such as
+    "3 unread  ·  12 members".
+    """
+
+    markdown: str = ""
+    text: str = ""
+    file: str = ""
+    image: str = ""
+    facts: str = ""
+
+    def __post_init__(self) -> None:
+        contents = (self.markdown, self.text, self.file, self.image)
+        if not all(isinstance(value, str) for value in (*contents, self.facts)):
+            raise ValueError("A preview's contents and facts must be text.")
+        if sum(bool(value) for value in contents) != 1:
+            raise ValueError("A preview needs exactly one of markdown, text, file or image.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +365,18 @@ class Plugin:
         """Open `item`; by default its target, like a double-click in Explorer would."""
         open_target(item.target)
 
+    def preview(self, item: PluginItem, context: PluginContext) -> PluginPreview | None:
+        """What the preview pane (Alt+P) shows for `item`; None shows that there is none.
+
+        Asked once the selection rests on the item, on a preview worker of its own
+        and while a refresh may be running, so it must be thread-safe. It may read
+        files or ask the network, but should answer within a second and stop when
+        `context.cancel` is set: the selection then moved on. Raise PluginError
+        with a message to show it in the pane instead. By default a target that
+        is a local path previews that file or folder.
+        """
+        return PluginPreview(file=item.target) if is_local_path(item.target) else None
+
     def commands(self) -> tuple[PluginCommand, ...]:
         """Buttons for the settings card, such as Sign in and Sign out."""
         return ()
@@ -365,6 +422,15 @@ class Plugin:
     def can_exclude(cls) -> bool:
         """Whether the plugin defines `exclude`, so its items offer Exclude…."""
         return cls.exclude is not Plugin.exclude
+
+
+def is_local_path(target: str) -> bool:
+    """Whether `target` is an absolute Windows path, on a drive or a UNC share.
+
+    URIs such as `tg://…`, `mailto:…` or `https://…` are not, nor are relative paths.
+    """
+    path = PureWindowsPath(target)
+    return bool(target) and bool(path.drive) and bool(path.root)
 
 
 def open_target(target: str) -> None:

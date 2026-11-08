@@ -33,9 +33,17 @@ Telegram: Team Annahme        Group  ·  3 unread
   `literal_terms = (r"HCP-?\w*",)`, for identifiers that have no digit of their
   own. Words in the same query still match loosely, so `12345 login` and
   `uC halted` both work.
-- **Only plain words.** A search with a filter such as `type:`, `ext:`, `in:` or a
-  date asks for files, so plugins stay out of it. **In every search** off keeps a
-  plugin out of ordinary searches altogether.
+- **Words and dates.** A search with a filter such as `type:`, `ext:`, `in:`,
+  `size:` or `rg:` asks for files, so plugins stay out of it. Date filters and
+  `sort:` work for plugin items, too, when the plugin says when each item last
+  changed: `anna date:week` finds this week's chats with Anna, `date:today` alone
+  lists everything that changed today, files and items alike, and
+  `sort:modified` puts the newest first. Items without a date stay out while a
+  date filter is typed. **In every search** off keeps a plugin out of ordinary
+  searches altogether.
+- **Preview.** With the preview open (Alt+P, see Settings → General), the pane
+  shows what the plugin offers for the selected item, such as a ticket's
+  description, or the file behind an item that is a local path.
 - **How many items.** Searching happens in Python over the plugin's list. A few
   thousand items stay inside a keystroke (measured: 5,000 tickets answer a typical
   query in 13–45 ms, a number in 2 ms); tens of thousands do not, so a plugin
@@ -258,7 +266,7 @@ class Notes(Plugin):
 ```
 
 - `PluginItem(key, name, target, subtitle, keywords, icon, title, routes, data, breadcrumbs,
-  chips)`:
+  chips, modified)`:
   - `key` identifies the item across refreshes.
   - `name` is matched and shown after the label; `title` replaces the whole
     "Label: name" text.
@@ -270,11 +278,15 @@ class Notes(Plugin):
   - `routes` names the plugin's routes that list the item (see below).
   - `data` holds JSON values for `open`; it is never matched.
   - `chips` are short colored labels, such as a ticket's status (see below).
+  - `modified` says when the item last changed, as a `datetime` or a POSIX
+    timestamp, such as a chat's last message (see below).
 - `refresh(context)` returns the items. Raise `PluginError` with a message for the
   user, or `SetupRequired` when the user must set something up first.
 - `open(item, context)` opens the item; by default `os.startfile(item.target)`, so a
   URI such as `tg://…`, `msteams:/…`, `mailto:` or `https://…`, or a file path,
   opens in its registered program.
+- `preview(item, context)` returns a `PluginPreview` for the preview pane, or `None`
+  (see below). By default an item whose target is a local path previews that file.
 - `commands()` returns `PluginCommand(label, run)` buttons for the settings card,
   such as *Sign in…*. `run(context)` returns a message to show and may open
   dialogs, each returning `None` when cancelled:
@@ -371,6 +383,71 @@ two and to what helps choosing a row: the launcher draws at most three
 The location gives way before chips do. Screen readers hear the chips' texts.
 Chips are only shown, never matched: to let users type `blocked`, also put the
 word into `keywords`.
+
+### When items changed: dates
+
+Give items a `modified` time, and date filters and `sort:modified` include them:
+
+```python
+from datetime import datetime, timezone
+
+PluginItem(
+    key=chat["id"],
+    name=chat["title"],
+    target=f"tg://resolve?domain={chat['username']}",
+    modified=datetime.fromtimestamp(chat["last_message_date"], timezone.utc),
+)
+```
+
+A `datetime` without a time zone is read as local time, like the dates users
+type. Use the time that matters for choosing an item — the last message, the
+last update of a ticket — rather than when the plugin fetched it. While a date
+filter is typed, the row shows that time like a file's.
+
+### Previews
+
+With the preview pane open, the selected item shows what `preview` returns. It is
+asked once the selection rests, on a worker of its own, possibly while a refresh
+runs; keep it thread-safe and quick (well within a second), and stop when
+`context.cancel` is set, because the user moved on. Unlike `answer`, it may read
+files or ask the network; caching what it fetched in `context.data_dir` keeps
+going back and forth quick.
+
+```python
+from winlauncher.plugins.api import PluginError, PluginPreview
+
+
+class Tickets(Plugin):
+    ...
+
+    def preview(self, item, context):
+        issue = self.client(context).issue(item.key)  # Raises PluginError when signed out.
+        return PluginPreview(
+            markdown=f"## {issue.summary}\n\n{issue.description}",
+            facts=f"{issue.status}  ·  {issue.assignee}",
+        )
+```
+
+A `PluginPreview` holds exactly one content:
+
+| Field | Shows |
+| --- | --- |
+| `markdown` | Rendered text; images it links to are left out |
+| `text` | Plain text in a fixed-width font |
+| `file` | A local file or folder, previewed like a search result with its size and date |
+| `image` | A picture file, such as one saved in `context.data_dir`, without size and date |
+
+`facts` adds a muted line below, after the item's title and `modified` date.
+Text beyond 65,536 characters is cut. Return `None` when there is nothing to
+show; raise `PluginError` with a message to show it in the pane instead. Other
+exceptions are logged, and the pane says the plugin failed.
+
+The default `preview` returns `PluginPreview(file=item.target)` when the target
+is an absolute local path, such as `C:\Notes\shopping.md` or a share, and `None`
+for links. `modified`, `preview` and `PluginPreview` exist since WinLauncher 0.20:
+a plugin that also runs on older versions sets `modified` only when
+`"modified" in PluginItem.__dataclass_fields__`, and imports `PluginPreview`
+inside `preview`.
 
 ### Multiline text options
 

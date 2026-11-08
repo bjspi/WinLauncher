@@ -68,7 +68,7 @@ flowchart TD
 | `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |
 | `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
-| `ui/preview.py` | Alt+P's file preview: bounded loading of images, PDF pages, Markdown, code colored by Pygments, text and folders off the GUI thread, and its pane |
+| `ui/preview.py` | Alt+P's preview: bounded loading of images, PDF pages, Markdown, code colored by Pygments, text and folders off the GUI thread, plugin items' own previews, and its pane |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
 | `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
 | `ui/answers.py` | Asks the plugins that answer typed text, on their own worker, for the calculator's row |
@@ -385,8 +385,10 @@ through `Questions`, a queued signal plus a `threading.Event` the worker waits o
 way: the window asks the host for the item's `ItemMenu` when the menu opens, and the
 scheduler runs the chosen entry on the plugin pool. `SearchSession`
 asks the host: a plugin keyword makes a `PluginQuery` that only that plugin
-answers; plain word searches merge plugin hits into the file hits by band and
-score (`merge_hits`), with the file engine's order preserved. `PluginIcons` loads
+answers; ordinary searches of words and dates (`plugins_answer`) merge plugin
+hits into the file hits by the query's sort order (`hit_order`, matching
+`ResultOrder`: band and score, or newest first, or by name) in `merge_hits`, with
+the file engine's order preserved. `PluginIcons` loads
 item images on the GUI thread (small local files), cropping avatars to circles
 and painting initials when there is none.
 
@@ -526,6 +528,11 @@ extension is used, so showing an online-only OneDrive program never downloads it
 The file preview follows the same rules: `PreviewPane` asks for the selected item
 once the selection rests, the controller runs `load_preview` on the single
 `PREVIEW` worker, and the pane drops anything that arrives for an earlier item.
+A plugin item becomes a `PluginPreviewRequest` instead: `load_plugin_preview`
+runs on the `PLUGIN_PREVIEW` pool (two workers), calls `PluginHost.preview`
+without the plugin's lock, as answers do, and reads a file or picture the plugin
+names with the same bounded loaders. The pane sets the request's cancel event when
+the selection moves on and compares plugin hits by plugin and item, not score.
 Workers return `QImage`s and strings only; the pane makes the pixmap and lays out
 the text. Pygments is imported on the worker at the first colored file, and the
 colors follow the theme the `PreviewRequest` names. The process loads QtPdf before

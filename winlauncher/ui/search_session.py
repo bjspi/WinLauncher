@@ -292,7 +292,7 @@ class SearchSession(QObject):
             # Only a plain search adds every plugin; a keyword already named one.
             if isinstance(query, SearchQuery):
                 plugins = self._search_plugins(files, settings, cancel)
-                found = merge_hits(found, plugins.hits, limit)
+                found = merge_hits(found, plugins.hits, limit, files.sort)
             hits.extend(found)
         if command_folder is not None and isinstance(query, SearchQuery) and not cancel.is_set():
             commands = search_commands(

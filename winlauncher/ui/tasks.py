@@ -36,6 +36,8 @@ class TaskCategory(StrEnum):
     PLUGIN_SOURCE = "plugin-source"
     NETWORK = "network"  # Connectivity checks must not wait behind stuck plugins.
     PREVIEW = "preview"  # The selected file beside the results; a slow file delays nothing else.
+    # A plugin item's preview may wait on the network: never in the way of a file's.
+    PLUGIN_PREVIEW = "plugin-preview"
 
 
 _POOL_SIZES = {
@@ -50,6 +52,7 @@ _POOL_SIZES = {
     TaskCategory.PLUGIN_SOURCE: 1,
     TaskCategory.NETWORK: 1,
     TaskCategory.PREVIEW: 1,
+    TaskCategory.PLUGIN_PREVIEW: 2,
 }
 _Job = tuple[Future, Callable[[], Any]]
 
