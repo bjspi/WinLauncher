@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
+    QIcon,
     QImage,
     QImageIOHandler,
     QImageWriter,
@@ -28,6 +29,7 @@ from winlauncher.catalog.model import CatalogItem, ItemKind
 from winlauncher.search.ranking import SearchHit
 from winlauncher.ui import preview
 from winlauncher.ui.bar_placement import BarPlacement
+from winlauncher.ui.icons import ResultIcons
 from winlauncher.ui.preview import PANE_WIDTH, SETTLE_MS, PreviewRequest, load_preview
 from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.window import LauncherWindow
@@ -172,9 +174,14 @@ class PreviewPaneFlowTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self) -> None:
+        # No shell icon lookups: queued ones would outlive the window into later tests.
+        no_icons = patch.object(ResultIcons, "icon_for", return_value=QIcon())
+        no_icons.start()
+        self.addCleanup(no_icons.stop)
         self.window = LauncherWindow(WebsiteIcons())
         self.window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
         self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self.window.close_icons)
         self.hits = [
             SearchHit(CatalogItem(Path(rf"C:\Work\note{index}.txt"), ItemKind.FILE), 9, "x")
             for index in range(2)

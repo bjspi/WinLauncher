@@ -1122,7 +1122,7 @@ class LauncherController(QObject):
         self._stop_monitor()
         self.updater.stop()
         self.tasks.close()
-        self.window.delegate.icons.close()
+        self.window.close_icons()
         self.window.close_focus_watch()
         self.website_icons.close()
         self.tray.hide()

@@ -1618,6 +1618,12 @@ class LauncherWindow(QWidget):
         self._show_results_area(self.results.count() > 0)
         return True
 
+    def close_icons(self) -> None:
+        """At shutdown: icons still on their way are dropped, for results and preview."""
+        self.delegate.icons.close()
+        if self.preview is not None:
+            self.preview.icons.close()
+
     def show_preview(self, preview: Preview) -> None:
         if self.preview is not None:
             self.preview.show_preview(preview)
