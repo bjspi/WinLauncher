@@ -38,6 +38,7 @@ flowchart TD
 | `catalog/sources.py` | Which trees the catalog owns and which source owns a path |
 | `catalog/indexer.py` | Scan policy, traversal, staging, reporting and publication decisions |
 | `catalog/store.py` | SQLite schema and migration, staged snapshots, usage and favorites |
+| `catalog/storage.py` | Whether a path's data can be reached now: bounded drive and share probes, cloud placeholders |
 | `search/query.py` | The immutable parsed `SearchQuery` |
 | `search/query_parser.py` | Tokenizing, recognized filters, value parsing and validation |
 | `search/filters.py` | Structured eligibility: type, extension, scope, exclusions, dates |
@@ -236,9 +237,20 @@ for parsing and syntax highlighting alike, whether the input is one navigation
 path. Exact targets are read without enumerating their parent; browsing and
 prefix completion enumerate only one directory, with the existing exclusion,
 priority/ranking rules and result limits. No catalog or Rust candidate read is
-needed. Navigation runs on its own `NAVIGATION` worker pool, and a root probe
-waits only a bounded time for a drive or share root on a daemon thread, so a
-dead network share delays neither catalog searches nor a worker for long.
+needed. Navigation runs on its own `NAVIGATION` worker pool, and
+`storage.drive_state` waits only a bounded time for a drive or share root on a
+daemon thread, so a dead network share delays neither catalog searches nor a
+worker for long.
+
+The same probe guards every other place a dead server could stall. There is at
+most one check per root, and every caller waits only until that check's
+deadline, so after one timeout the next questions are answered at once. Result
+actions and shell launches fail with "does not respond" instead of holding the
+single `ACTION` worker. The missing-file check after a search skips drives that do
+not answer, because Windows reports a dead server's files as not found. Windows'
+own context menu has to open on the GUI thread, so an `ACTION` job asks the drive
+first and the menu opens when it answers. The Exclude dialog takes a result's kind
+from the catalog instead of the disk.
 `SearchHit.label` carries the `%NAME%` title of variable targets to
 `ui/result_rows.py`; identity and actions use the real target.
 
@@ -507,7 +519,9 @@ the previous run never exited cleanly, and goes into `winlauncher.log`.
 Shell icon queries run on one daemon worker and return `QImage`s through a queued
 Qt signal; only the GUI thread creates pixmaps. Painting uses a generic icon until
 the cached shell icon arrives, so a slow shell extension cannot block input or
-shutdown. Hiding the launcher cancels pending and active searches. Windows focus
+shutdown. An item's own icon is read only when its drive answers and the file is
+no cloud placeholder (`storage.is_online_only`); otherwise the icon for its
+extension is used, so showing an online-only OneDrive program never downloads it. Hiding the launcher cancels pending and active searches. Windows focus
 requests are verified; a denied request gets one attempt with the foreground input
 queue temporarily attached, always detached in `finally`. A later focus change is
 logged without repeatedly pulling focus away from another application.

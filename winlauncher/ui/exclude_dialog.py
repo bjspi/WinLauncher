@@ -52,6 +52,7 @@ COUNT_HEIGHT = 20
 class FolderChoice:
     folder: Path  # A folder, or the result itself.
     entries: int  # Catalog entries it covers, shown to guide the choice.
+    is_folder: bool = True  # False only for a file result, which covers just itself.
 
 
 def exclusion_candidates(
@@ -183,9 +184,8 @@ class ExcludeFolderDialog(InfoDialog):
         self.folders.setMouseTracking(True)  # Hovered rows light up.
         self.folders.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.folders.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        for position, choice in enumerate(choices):
-            # Every choice after the first is a parent folder of the result.
-            folder = position > 0 or choice.folder.is_dir()
+        for choice in choices:
+            folder = choice.is_folder
             row = _Row(
                 name=choice.folder.name or str(choice.folder),
                 location=str(choice.folder.parent) if choice.folder.name else "",

@@ -584,7 +584,7 @@ class LauncherWindow(QWidget):
     dialog_text_returned = Signal(str)
     # SearchHit and whether to add the extended (Shift) entries: Windows' own menu.
     shell_menu_requested = Signal(object, bool)
-    exclude_requested = Signal(object)
+    exclude_requested = Signal(object, bool)  # Result path and whether it is a folder.
     # SearchHit and the MenuCommand to run for it.
     command_requested = Signal(object, object)
     settings_requested = Signal()
@@ -1792,7 +1792,7 @@ class LauncherWindow(QWidget):
         menu.addAction(favorite_label, lambda: self.favorite_requested.emit(hit))
         menu.addAction(
             "Exclude this or a parent folder…",
-            lambda: self.exclude_requested.emit(hit.item.path),
+            lambda: self.exclude_requested.emit(hit.item.path, hit.item.kind == ItemKind.FOLDER),
         )
         menu.addSeparator()
         menu.addAction(

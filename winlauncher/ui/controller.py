@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from winlauncher import __version__
 from winlauncher.actions import ExplorerTarget, ItemActions
+from winlauncher.catalog import storage
 from winlauncher.catalog.indexer import CatalogIndexer
 from winlauncher.catalog.model import ScanReport, is_within
 from winlauncher.catalog.sources import catalog_sources
@@ -603,13 +604,28 @@ class LauncherController(QObject):
         return self.window.explorer_view[0] if self.window.serves_file_dialog else None
 
     def show_shell_menu(self, hit: SearchHit, extended: bool) -> None:
-        """Windows' own context menu for a result; the bar closes if a command ran."""
+        """Windows' own context menu for a result; the bar closes if a command ran.
+
+        The menu must open on the GUI thread, where a dead server would freeze the
+        bar for seconds, so a worker first makes sure the item's drive answers.
+        """
         if os.name != "nt":
             return
+        path = hit.item.path
+        self.tasks.submit(
+            TaskCategory.ACTION,
+            partial(storage.require_drive, path),
+            lambda _result: self._open_shell_menu(path, extended),
+            self._action_failed,
+        )
+
+    def _open_shell_menu(self, path: Path, extended: bool) -> None:
+        if self._closed or not self.window.isVisible():
+            return  # The bar went away while the drive was asked.
         from winlauncher.platform.shell_menu import show_shell_menu
 
         try:
-            ran = show_shell_menu(hit.item.path, extended=extended)
+            ran = show_shell_menu(path, extended=extended)
         except OSError as exc:
             self._action_failed(str(exc))
             return
@@ -704,16 +720,22 @@ class LauncherController(QObject):
     def _action_failed(self, message: str) -> None:
         messages.message(self.window, "That did not work", message, messages.WARNING)
 
-    def exclude_folder(self, path: Path) -> None:
+    def exclude_folder(self, path: Path, is_folder: bool) -> None:
         """Let the user exclude a result itself, or its folder or one of their parents.
 
-        The launcher's search continues afterwards, whether a rule was saved or not:
-        excluding is a quick aside, not the end of the search. The Explorer bar
-        belongs to its Explorer window and stays closed, as after other dialogs.
+        `is_folder` comes from the catalog, so the dialog never asks the disk, which
+        may be a dead server. The launcher's search continues afterwards, whether a
+        rule was saved or not: excluding is a quick aside, not the end of the search.
+        The Explorer bar belongs to its Explorer window and stays closed, as after
+        other dialogs.
         """
         generated = tuple(f for f in (store_app_folder(), windows_tools_folder()) if f)
         candidates = exclusion_candidates(path, self._configured_roots(), generated)
-        choices = [FolderChoice(path, self.store.count_within(path)) for path in candidates]
+        choices = [
+            # Every candidate after the result itself is one of its parent folders.
+            FolderChoice(folder, self.store.count_within(folder), folder != path or is_folder)
+            for folder in candidates
+        ]
         dialog = ExcludeFolderDialog(choices, self.window, store=self.store, tasks=self.tasks)
         resume = not self.window.explorer_mode
         self.search_paused = resume

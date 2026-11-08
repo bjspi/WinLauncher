@@ -1,10 +1,16 @@
-"""Actions use case: launch items and maintain personal ranking signals."""
+"""Actions use case: launch items and maintain personal ranking signals.
+
+Actions run on a worker. Each first makes sure the item's drive answers, so a
+dead server fails the action within moments instead of holding the worker and
+every action queued behind it.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
+from winlauncher.catalog import storage
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.commands import MenuCommand
 from winlauncher.platform import shell
@@ -32,6 +38,7 @@ class ItemActions:
         self.store = store
 
     def open(self, path: Path, query_key: str, *, explorer: ExplorerTarget | None = None) -> None:
+        storage.require_drive(path)
         if explorer is not None and path.is_dir():
             from winlauncher.platform.explorer import navigate_to
 
@@ -48,6 +55,7 @@ class ItemActions:
         """
         from winlauncher.platform.file_dialog import FileDialog, choose_file, open_folder
 
+        storage.require_drive(path)
         target = FileDialog(dialog)
         if path.is_dir():
             open_folder(target, path)
@@ -59,6 +67,7 @@ class ItemActions:
         """Ctrl+G: show `folder` in the file dialog, keeping the typed file name."""
         from winlauncher.platform.file_dialog import FileDialog, open_folder
 
+        storage.require_drive(folder)
         if folder.is_dir():  # Explorer's folder may have been removed since it was read.
             open_folder(FileDialog(dialog), folder)
 
@@ -85,6 +94,7 @@ class ItemActions:
 
     def run_command(self, command: MenuCommand, path: Path) -> None:
         """Run a context-menu command in `path`, or in its folder for a file."""
+        storage.require_drive(path)
         folder = path if path.is_dir() else path.parent
         shell.run_command(command.command_line(path, folder), folder)
 

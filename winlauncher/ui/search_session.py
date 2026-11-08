@@ -18,7 +18,7 @@ from typing import TypeAlias
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from winlauncher.catalog import long_paths
+from winlauncher.catalog import long_paths, storage
 from winlauncher.platform.gesture import ViewKind
 from winlauncher.plugins.host import PluginHost, PluginSearch
 from winlauncher.plugins.search import PluginQuery, merge_hits, plugin_query
@@ -454,15 +454,29 @@ def _with_commands(
 
 
 def _missing_files(hits: list[LauncherHit]) -> frozenset[Path]:
-    """Found files that no longer exist; unreadable ones count as present."""
+    """Found files that no longer exist; unreadable ones count as present.
+
+    Only files on a drive that answers are checked: a dead server reports all its
+    files as not found, and asking it directly would hold the search for seconds.
+    """
+    answering: dict[str, bool] = {}  # Drive or share root -> it answers.
     missing = set()
     for hit in hits:
         if not isinstance(hit, SearchHit):
             continue
-        try:
-            long_paths.lstat(hit.item.path)
-        except (FileNotFoundError, NotADirectoryError):
-            missing.add(hit.item.path)
-        except OSError:
-            pass  # Offline or denied: it may well still be there.
+        path = hit.item.path
+        if path.anchor not in answering:
+            answering[path.anchor] = storage.drive_state(path) is storage.DriveState.PRESENT
+        if answering[path.anchor] and _is_gone(path):
+            missing.add(path)
     return frozenset(missing)
+
+
+def _is_gone(path: Path) -> bool:
+    try:
+        long_paths.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False  # Denied or unreadable: it may well still be there.
+    return False

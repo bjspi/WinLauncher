@@ -10,10 +10,10 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from winlauncher.catalog import storage
 from winlauncher.catalog.model import ItemKind
 from winlauncher.catalog.priority import NamePriority
 from winlauncher.catalog.store import CatalogStore
-from winlauncher.search import navigation
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.service import SearchService
 from winlauncher.settings import DEFAULT_EXCLUDED_PATTERNS, RESULT_LIMIT_RANGE, Settings
@@ -320,7 +320,7 @@ class PathNavigationTest(unittest.TestCase):
 
         share = r"\\unreachable-server\share"
         with (
-            patch.object(navigation, "_ROOTS", navigation._RootProbe(0.05, hanging_share)),
+            patch.object(storage, "_DRIVES", storage.DriveProbe(0.05, hanging_share)),
             patch.dict(os.environ, NAV_SHARE=share),
         ):
             for text in (share + "\\", share + "\\Reports\\q3"):

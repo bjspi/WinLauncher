@@ -13,6 +13,7 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from winlauncher.catalog import storage
 from winlauncher.catalog.model import path_key
 from winlauncher.platform.store_apps import store_app_folder
 from winlauncher.platform.windows_tools import windows_tools_folder
@@ -257,5 +258,7 @@ def _reparse_data(path: Path) -> bytes:
 
 
 def _require_existing(path: Path) -> None:
+    """Raise unless `path` exists, without waiting long for a dead server."""
+    storage.require_drive(path)
     if not path.exists():
         raise FileNotFoundError(f"This item no longer exists: {path}")

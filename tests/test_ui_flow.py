@@ -495,6 +495,17 @@ class UiFlowTest(unittest.TestCase):
             self.window.context_menu(point)
             shell_menu.assert_called_with(hit, False)
 
+    def test_windows_context_menu_opens_only_after_a_worker_asked_the_drive(self):
+        hit = self.show_file_result()
+        with (
+            patch("winlauncher.platform.shell_menu.show_shell_menu", return_value=False) as menu,
+            patch.object(self.window, "isVisible", return_value=True),
+        ):
+            self.controller.show_shell_menu(hit, False)
+            menu.assert_not_called()  # A dead server must not freeze the GUI thread.
+            self.tasks.finish(TaskCategory.ACTION)
+        menu.assert_called_once_with(hit.item.path, extended=False)
+
     def test_own_menu_commands_show_for_their_kind_and_run(self):
         folder = self.root / "project"
         folder.mkdir()
@@ -2104,9 +2115,9 @@ class UiFlowTest(unittest.TestCase):
             picker.return_value.exec.return_value = True
             picker.return_value.chosen_folder.return_value = folder
             picker.return_value.pattern = None
-            c.exclude_folder(folder)
+            c.exclude_folder(folder, is_folder=True)
             picker.return_value.pattern = "**\\noise\\deep"
-            c.exclude_folder(folder)
+            c.exclude_folder(folder, is_folder=True)
         dialog.save()  # Saving the window afterwards keeps both rules.
         self.assertIn(str(folder), c.settings.excluded_paths)
         self.assertIn("**\\noise\\deep", c.settings.excluded_patterns)
@@ -2358,7 +2369,7 @@ class UiFlowTest(unittest.TestCase):
             self.controller._offer_update(Release(1, 2, 3))
         self.window.present()
         with patch.object(ExcludeFolderDialog, "exec", run):
-            self.controller.exclude_folder(self.root)
+            self.controller.exclude_folder(self.root, is_folder=True)
 
     def test_exclusion_pattern_editor_is_modal_only_to_its_picker(self):
         picker = ExcludeFolderDialog([FolderChoice(self.root, 1)], self.window)
@@ -2421,7 +2432,7 @@ class UiFlowTest(unittest.TestCase):
             dialog.return_value.exec.return_value = True
             dialog.return_value.chosen_folder.return_value = folder.parent
             dialog.return_value.pattern = None
-            c.exclude_folder(folder)
+            c.exclude_folder(folder, is_folder=True)
         choices = dialog.call_args.args[0]
         self.assertEqual([choice.folder for choice in choices][-1], self.root)
         self.assertIn(str(folder.parent), c.settings.excluded_paths)
@@ -2431,7 +2442,7 @@ class UiFlowTest(unittest.TestCase):
             dialog.return_value.exec.return_value = True
             dialog.return_value.chosen_folder.return_value = folder
             dialog.return_value.pattern = "**\\node_stuff\\deep"
-            c.exclude_folder(folder)
+            c.exclude_folder(folder, is_folder=True)
         self.assertEqual(c.settings.excluded_paths, excluded_paths)
         self.assertEqual(c.settings.excluded_patterns[-1], "**\\node_stuff\\deep")
         self.assertFalse(c.settings.exclusions().allows(folder / "file.txt"))
@@ -2441,8 +2452,9 @@ class UiFlowTest(unittest.TestCase):
             dialog.return_value.exec.return_value = True
             dialog.return_value.chosen_folder.return_value = entry
             dialog.return_value.pattern = None
-            c.exclude_folder(entry)
+            c.exclude_folder(entry, is_folder=False)
         self.assertEqual(dialog.call_args.args[0][0].folder, entry)
+        self.assertFalse(dialog.call_args.args[0][0].is_folder)
         exclusions = c.settings.exclusions()
         self.assertFalse(exclusions.allows(entry, application=True))
         self.assertTrue(exclusions.allows(entry.with_name("Bluetooth.lnk2"), application=True))
@@ -2485,7 +2497,7 @@ class UiFlowTest(unittest.TestCase):
             return dialog.result()
 
         with patch.object(ExcludeFolderDialog, "exec", cancel):
-            c.exclude_folder(self.root / "noise")
+            c.exclude_folder(self.root / "noise", is_folder=True)
         self.tasks.finish(TaskCategory.SEARCH)
         self._assert_search_continues()
         self.assertIs(c.settings, settings)
@@ -2500,7 +2512,7 @@ class UiFlowTest(unittest.TestCase):
             return dialog.result()
 
         with patch.object(ExcludeFolderDialog, "exec", choose), patch.object(c, "_start_monitor"):
-            c.exclude_folder(self.root / "noise")
+            c.exclude_folder(self.root / "noise", is_folder=True)
         self.tasks.finish(TaskCategory.SEARCH)
         self._assert_search_continues()
         self.assertEqual(c.settings.excluded_paths[-1], str(self.root / "noise"))
@@ -2526,7 +2538,7 @@ class UiFlowTest(unittest.TestCase):
             patch.object(c.settings_file, "save", side_effect=OSError("Disk full")),
             patch.object(MessageDialog, "exec", autospec=True, side_effect=dismiss_error) as error,
         ):
-            c.exclude_folder(self.root / "noise")
+            c.exclude_folder(self.root / "noise", is_folder=True)
         error.assert_called_once()
         self.tasks.finish(TaskCategory.SEARCH)
         self._assert_search_continues()
@@ -2542,7 +2554,7 @@ class UiFlowTest(unittest.TestCase):
             return dialog.result()
 
         with patch.object(ExcludeFolderDialog, "exec", cancel):
-            self.controller.exclude_folder(self.root)
+            self.controller.exclude_folder(self.root, is_folder=True)
         self.assertFalse(self.window.isVisible())
 
     def _drag_bar(self, to: QPoint | None = None, width: int | None = None) -> None:

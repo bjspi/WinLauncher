@@ -76,6 +76,17 @@ A wholly unavailable root retains its snapshot. A missing item may therefore rem
 successful refresh; attempting to open it reports an error and does not learn a
 launch.
 
+Network shares and mapped drives may stop answering: a dead server, a sleeping
+NAS or a share behind a disconnected VPN blocks Windows' first call for about 20
+seconds. WinLauncher waits at most 2 seconds for a drive or share root, and while
+that root's check is still hanging, it does not wait again. Opening, revealing,
+Open with, menu commands and Windows' own context menu then report "`\\server\share\`
+does not respond", or "is not connected" for a missing drive. Search results
+from such a drive are not marked as deleted. The bar never freezes for them.
+Cloud placeholders (OneDrive and other "files on demand") are never read for
+their icon or content search; such files show the icon of their extension.
+Opening one downloads it as Explorer would.
+
 Scans publish atomically. Cancellation must leave the previous catalog unchanged.
 A changed subtree refresh must preserve unrelated entries. On startup, a refresh
 is requested; file metadata notifications trigger exact-file refreshes, structural

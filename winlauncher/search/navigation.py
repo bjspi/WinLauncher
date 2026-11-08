@@ -8,8 +8,8 @@ priority, type and limit rules of catalog results. The catalog only contributes
 favorite flags; nothing is added to it.
 
 Network shares and disconnected drives can block a filesystem call for many
-seconds. `_RootProbe` asks each drive or share root on a daemon thread and waits
-at most `ROOT_PROBE_TIMEOUT_S`, so a dead server cannot hold a search worker.
+seconds. Every drive or share root is asked through `storage.drive_state` first,
+so a dead server cannot hold a search worker.
 """
 
 from __future__ import annotations
@@ -19,12 +19,11 @@ import os
 import re
 import stat
 import threading
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field, replace
-from enum import StrEnum
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from winlauncher.catalog import long_paths
+from winlauncher.catalog import long_paths, storage
 from winlauncher.catalog.exclusions import ExclusionPolicy
 from winlauncher.catalog.model import FOLDER_SEPARATORS, CatalogItem, ItemKind, normalize, path_key
 from winlauncher.catalog.priority import PriorityPolicy
@@ -34,7 +33,6 @@ from winlauncher.search.query import SearchQuery
 from winlauncher.search.ranking import REASON_SEPARATOR, PriorityBand, Ranker, Ranking, SearchHit
 from winlauncher.settings import Settings
 
-ROOT_PROBE_TIMEOUT_S = 2.0
 _VARIABLE_MARK = "%"
 _VARIABLE = re.compile(r"%([^%]+)%")
 _DIRECT_PATH_REASON = "Direct path"
@@ -52,64 +50,6 @@ class _NavigationMatch:
     item: CatalogItem
     reason: str
     label: str | None = None
-
-
-class RootState(StrEnum):
-    """What a drive or share root answered within the probe timeout."""
-
-    PRESENT = "present"
-    MISSING = "missing"
-    UNRESPONSIVE = "unresponsive"
-
-
-@dataclass(slots=True)
-class _Probe:
-    """One running root check; every waiter for the same root shares it."""
-
-    done: threading.Event = field(default_factory=threading.Event)
-    exists: bool = False
-
-
-class _RootProbe:
-    """Checks drive and share roots on daemon threads with a bounded wait.
-
-    At most one check per root runs at a time, so typing a path to a dead server
-    leaves one hanging thread, not one per keystroke. Results are not cached: a
-    share that comes back answers at the next keystroke.
-    """
-
-    def __init__(self, timeout_s: float, exists: Callable[[str], bool] = os.path.isdir) -> None:
-        self._timeout_s = timeout_s
-        self._exists = exists
-        self._lock = threading.Lock()
-        self._running: dict[str, _Probe] = {}
-
-    def state(self, path: Path) -> RootState:
-        probe = self._probe(path.anchor)
-        if not probe.done.wait(self._timeout_s):
-            return RootState.UNRESPONSIVE
-        return RootState.PRESENT if probe.exists else RootState.MISSING
-
-    def _probe(self, root: str) -> _Probe:
-        key = path_key(root)
-        with self._lock:
-            if (probe := self._running.get(key)) is None:
-                probe = self._running[key] = _Probe()
-                threading.Thread(
-                    target=self._check, args=(root, key, probe), name="root_probe", daemon=True
-                ).start()
-        return probe
-
-    def _check(self, root: str, key: str, probe: _Probe) -> None:
-        try:
-            probe.exists = self._exists(root)
-        finally:
-            with self._lock:
-                del self._running[key]
-            probe.done.set()
-
-
-_ROOTS = _RootProbe(ROOT_PROBE_TIMEOUT_S)
 
 
 def search_paths(
@@ -299,7 +239,7 @@ def _named_folders(shortcuts: Mapping[str, Path]) -> dict[str, Path]:
 
 
 def _is_reachable_folder(path: Path) -> bool:
-    return _ROOTS.state(path) is RootState.PRESENT and path.is_dir()
+    return storage.drive_state(path) is storage.DriveState.PRESENT and path.is_dir()
 
 
 def _resolve(text: str, shortcuts: Mapping[str, Path]) -> Path:
@@ -325,8 +265,8 @@ def _expand_variables(text: str, shortcuts: Mapping[str, Path]) -> str:
 
 
 def _require_responsive_root(path: Path) -> None:
-    if _ROOTS.state(path) is RootState.UNRESPONSIVE:
-        raise ValueError(f"{path.anchor} does not respond. Check the network or drive connection.")
+    if storage.drive_state(path) is storage.DriveState.UNRESPONSIVE:
+        raise ValueError(storage.unresponsive_message(path))
 
 
 def _read_error(path: Path, error: OSError) -> ValueError:

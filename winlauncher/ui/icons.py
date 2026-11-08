@@ -5,14 +5,17 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import stat
 import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import QFileIconProvider
 
+from winlauncher.catalog import long_paths, storage
 from winlauncher.catalog.model import CatalogItem, ItemKind, path_key
 from winlauncher.platform.shell import special_folders
 
@@ -149,6 +152,7 @@ def _shell_icon(path: str, own_icon: bool) -> int:
     import pythoncom
     from win32comext.shell import shell, shellcon
 
+    own_icon = own_icon and _reads_locally(path)
     pythoncom.CoInitialize()
     try:
         flags = shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON
@@ -161,6 +165,22 @@ def _shell_icon(path: str, own_icon: bool) -> int:
         return info[0]
     finally:
         pythoncom.CoUninitialize()
+
+
+def _reads_locally(path: str) -> bool:
+    """Whether reading the item's own icon is quick and downloads nothing.
+
+    A dead server would hold the icon thread for seconds; reading a cloud
+    placeholder, such as an online-only program in OneDrive, would download it.
+    Folders are only listed, so their placeholders are fine.
+    """
+    if storage.drive_state(Path(path)) is not storage.DriveState.PRESENT:
+        return False
+    try:
+        info = long_paths.stat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) or not storage.is_online_only(info)
 
 
 def _shortcut_icon(path: str) -> int:

@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import replace
 from pathlib import Path
 
-from winlauncher.catalog import long_paths
+from winlauncher.catalog import long_paths, storage
 from winlauncher.catalog.model import (
     PROJECT_ATTRIBUTE,
     REGISTRY_SOURCE,
@@ -42,7 +42,6 @@ from winlauncher.settings import Settings
 APP_SUFFIXES = frozenset({".exe", ".lnk", ".url", ".appref-ms"})
 IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003  # Junctions.
 IO_REPARSE_TAG_SYMLINK = 0xA000000C
-FILE_ATTRIBUTE_OFFLINE = 0x1000  # Cloud placeholders; reading them may download content.
 SCAN_BATCH_SIZE = 500
 
 ProgressCallback = Callable[[int], None]
@@ -53,7 +52,9 @@ def _is_link_or_offline(info: os.stat_result, directory: bool) -> bool:
         return True
     if getattr(info, "st_reparse_tag", 0) in (IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK):
         return True
-    return directory and bool(getattr(info, "st_file_attributes", 0) & FILE_ATTRIBUTE_OFFLINE)
+    return directory and bool(
+        getattr(info, "st_file_attributes", 0) & storage.FILE_ATTRIBUTE_OFFLINE
+    )
 
 
 def classify_kind(path: Path, directory: bool) -> ItemKind:
