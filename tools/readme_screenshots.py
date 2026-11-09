@@ -2,16 +2,22 @@
 
 python tools/readme_screenshots.py [output folder, default docs/images] [light|dark]
 
-The README shows the light theme, whatever Windows uses. The windows are rendered
-without ever appearing on screen, so clicks and typing elsewhere cannot reach them.
+The README shows the light theme, whatever Windows uses. Qt's offscreen platform
+renders the windows without a screen: nothing appears, input elsewhere cannot
+reach them, and every image has the same scale whatever monitor Windows uses.
 """
 
+import json
+import os
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QWidget
 
 from winlauncher.__main__ import _create_application
@@ -31,7 +37,32 @@ from winlauncher.ui.window import LauncherWindow
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parents[1] / "docs/images"
 OUT.mkdir(parents=True, exist_ok=True)
 APPEARANCE = Appearance(sys.argv[2]) if len(sys.argv) > 2 else Appearance.LIGHT
+SCALE = 1.5  # Sharp in the README, which shows the images smaller.
+# Before Qt starts: a fixed virtual screen, so the monitor never changes the images.
+SCREEN = {
+    "name": "readme",
+    "x": 0,
+    "y": 0,
+    "width": 1920,
+    "height": 1080,
+    "logicalDpi": 96 * SCALE,  # Qt scales by logicalDpi / logicalBaseDpi.
+    "logicalBaseDpi": 96,
+}
+# Qt splits platform options at colons, so the file is named without its drive.
+_screen_folder = Path(tempfile.mkdtemp(prefix="winlauncher-screenshots-"))
+(_screen_folder / "screen.json").write_text(json.dumps({"screens": [SCREEN]}), encoding="utf-8")
+os.environ["QT_QPA_PLATFORM"] = "offscreen:configfile=screen.json"
+os.environ["QT_QPA_FONTDIR"] = str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts")
+for variable in ("QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS", "QT_ENABLE_HIGHDPI_SCALING"):
+    os.environ.pop(variable, None)
+_working_folder = Path.cwd()
+os.chdir(_screen_folder)
 app = _create_application()
+os.chdir(_working_folder)
+shutil.rmtree(_screen_folder)  # Qt read it while starting.
+# Windows finds symbols such as ↵ and ★ in other fonts; Qt's own font list needs telling.
+for _family in {"Segoe UI", app.font().family()}:
+    QFont.insertSubstitutions(_family, ["Segoe UI Symbol", "Segoe UI Emoji"])
 _set_visible = QWidget.setVisible
 
 
@@ -58,6 +89,19 @@ def hits(entries):
     ]
 
 
+def save(widget: QWidget, name: str) -> None:
+    """Refuse an image whose scale differs, instead of committing a mixed gallery."""
+    image = widget.grab()
+    expected = round(widget.width() * SCALE)
+    # Fractional window sizes round to either neighboring pixel.
+    if image.devicePixelRatio() != SCALE or abs(image.width() - expected) > 1:
+        raise SystemExit(
+            f"{name}: {image.width()} px at scale {image.devicePixelRatio()}, "
+            f"expected {expected} px at {SCALE}"
+        )
+    image.save(str(OUT / name))
+
+
 def settle(widget, rounds=30):
     for _ in range(rounds):
         app.processEvents()
@@ -81,7 +125,7 @@ def save_launcher(name: str) -> None:
     window.present(text="road")
     window.set_results(hits(ROAD_RESULTS), 4, query=parse_query("road"))
     settle(window)
-    window.grab().save(str(OUT / name))
+    save(window, name)
     window.hide()
 
 
@@ -115,7 +159,7 @@ explorer.set_results(
     query=query,
 )
 settle(explorer)
-explorer.grab().save(str(OUT / "explorer-search.png"))
+save(explorer, "explorer-search.png")
 explorer.hide()
 
 icons_folder = Path(__file__).parents[1] / "winlauncher" / "ui" / "assets" / "icons"
@@ -160,7 +204,7 @@ explorer.set_results(
     query=tool_query,
 )
 settle(explorer)
-explorer.grab().save(str(OUT / "explorer-tools.png"))
+save(explorer, "explorer-tools.png")
 explorer.hide()
 
 launcher = LauncherWindow(website_icons)
@@ -178,7 +222,7 @@ launcher.set_results(
     query=parse_query("invoice ext:pdf date:year !draft"),
 )
 settle(launcher)
-launcher.grab().save(str(OUT / "query-syntax.png"))
+save(launcher, "query-syntax.png")
 launcher.hide()
 
 dialog = settings_dialog()
@@ -191,7 +235,7 @@ for page, name, height in (
     dialog.resize(dialog.width(), height)
     dialog.nav.setCurrentItem(dialog.nav.findItems(page, Qt.MatchFlag.MatchExactly)[0])
     settle(dialog)
-    dialog.grab().save(str(OUT / f"{name}.png"))
+    save(dialog, f"{name}.png")
 dialog.hide()
 
 owner = QObject()
@@ -200,14 +244,14 @@ tray.set_catalog_count(48213)
 tray.autostart.setChecked(True)
 tray.menu.popup(QPoint(400, 300))
 settle(tray.menu)
-tray.menu.grab().save(str(OUT / "tray-menu.png"))
+save(tray.menu, "tray-menu.png")
 tray.menu.hide()
 
 about = AboutDialog(Path(r"C:\Users\you\.WinLauncher"))
 about.finish()
 about.show()
 settle(about)
-about.grab().save(str(OUT / "about.png"))
+save(about, "about.png")
 about.hide()
 
 if APPEARANCE == Appearance.LIGHT:  # The gallery also shows the dark theme.
@@ -216,6 +260,6 @@ if APPEARANCE == Appearance.LIGHT:  # The gallery also shows the dark theme.
     dialog = settings_dialog()
     dialog.resize(dialog.width(), SETTINGS_HEIGHT)
     settle(dialog)
-    dialog.grab().save(str(OUT / "settings-dark.png"))
+    save(dialog, "settings-dark.png")
     dialog.hide()
 print(f"Saved screenshots to {OUT}")
