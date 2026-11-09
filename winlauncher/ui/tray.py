@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
@@ -20,6 +22,34 @@ from winlauncher.ui.widgets import line_icon
 
 HEADER_ICON_SIZE = 30
 SEARCH_SHORTCUT = "Ctrl+Alt+Space"
+CHECK = None  # The icon of a checkable entry: its check mark, drawn when checked.
+
+
+class _Entry(NamedTuple):
+    text: str
+    signal: str  # The TrayMenu signal the entry emits.
+    key: str  # Triggers the entry while the menu is open.
+    icon: str | None
+
+
+# None separates groups. The letters follow WhisperTyper's tray menu where the
+# entries match: K for Settings (Konfiguration), U, A, N and Q.
+ENTRIES = (
+    _Entry("Search", "search_requested", "s", "search"),
+    _Entry("Refresh catalog", "refresh_requested", "r", "refresh"),
+    _Entry("Index status…", "status_requested", "i", "activity"),
+    None,
+    _Entry("Settings…", "settings_requested", "k", "gear"),
+    _Entry("Start with Windows", "autostart_toggled", "w", CHECK),
+    _Entry("Center search bar", "centered_toggled", "c", CHECK),
+    _Entry("Clear search history", "clear_history_requested", "h", "trash"),
+    None,
+    _Entry("Check for updates…", "update_requested", "u", "download"),
+    _Entry("About WinLauncher", "about_requested", "a", "info"),
+    None,
+    _Entry("Restart WinLauncher", "restart_requested", "n", "restart"),
+    _Entry("Quit WinLauncher", "quit_requested", "q", "quit"),
+)
 
 
 class TrayMenu(QObject):
@@ -49,21 +79,16 @@ class TrayMenu(QObject):
         self.status.setObjectName("trayStatus")
         self.menu.addAction(self._header())
         self.menu.addSeparator()
-        self._add_action("Search", self.search_requested, "search", SEARCH_SHORTCUT)
-        self._add_action("Refresh catalog", self.refresh_requested, "refresh")
-        self._add_action("Index status…", self.status_requested, "activity")
-        self.menu.addSeparator()
-        self._add_action("Settings…", self.settings_requested, "gear")
-        self.autostart = self._add_check("Start with Windows", self.autostart_toggled)
+        actions: dict[str, QAction] = {}
+        for entry in ENTRIES:
+            if entry is None:
+                self.menu.addSeparator()
+            else:
+                actions[entry.signal] = self._add_entry(entry)
+        self.autostart = actions["autostart_toggled"]
         self.autostart.setEnabled(autostart_available)
-        self.centered = self._add_check("Center search bar", self.centered_toggled)
-        self._add_action("Clear search history", self.clear_history_requested, "trash")
-        self.menu.addSeparator()
-        self.update = self._add_action("Check for updates…", self.update_requested, "download")
-        self._add_action("About WinLauncher", self.about_requested, "info")
-        self.menu.addSeparator()
-        self._add_action("Restart WinLauncher", self.restart_requested, "restart")
-        self._add_action("Quit WinLauncher", self.quit_requested, "quit")
+        self.centered = actions["centered_toggled"]
+        self.update = actions["update_requested"]
         self._use_theme_icons()
         theme().changed.connect(self._use_theme_icons)
         self.menu.aboutToShow.connect(self.opening)
@@ -99,22 +124,18 @@ class TrayMenu(QObject):
         action.setDefaultWidget(header)
         return action
 
-    def _add_action(
-        self, text: str, signal, icon: str | None = None, shortcut: str = ""
-    ) -> QAction:
-        # The text after a tab is shown right-aligned, as a shortcut hint.
-        action = self.menu.addAction(f"{text}\t{shortcut}" if shortcut else text)
-        if icon is not None:
-            self.icon_names[action] = icon
-        action.triggered.connect(signal)  # Qt forwards `checked` only where accepted.
-        return action
-
-    def _add_check(self, text: str, signal) -> QAction:
-        """A checkable entry; its check mark is drawn as an icon, aligned with the others."""
-        action = self._add_action(text, signal)
-        action.setCheckable(True)
-        action.toggled.connect(lambda _checked: self._show_check(action))
-        self.check_actions.append(action)
+    def _add_entry(self, entry: _Entry) -> QAction:
+        action = self.menu.addAction(entry.text)
+        self.menu.set_key(action, entry.key)
+        # Qt forwards `checked` only to signals that accept it.
+        action.triggered.connect(getattr(self, entry.signal))
+        if entry.icon is CHECK:
+            # Its check mark is drawn as an icon, aligned with the others.
+            action.setCheckable(True)
+            action.toggled.connect(lambda _checked: self._show_check(action))
+            self.check_actions.append(action)
+        else:
+            self.icon_names[action] = entry.icon
         return action
 
     def _use_theme_icons(self) -> None:
@@ -134,7 +155,9 @@ class TrayMenu(QObject):
 
     def set_update_version(self, version: str | None) -> None:
         self.update_version = version
-        self.update.setText(f"Update to {version}…" if version else "Check for updates…")
+        self.menu.set_text(
+            self.update, f"Update to {version}…" if version else "Check for updates…"
+        )
         self.update.setIcon(line_icon("download", colors().accent if version else colors().muted))
 
     def show(self) -> None:

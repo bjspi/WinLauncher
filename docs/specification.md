@@ -973,7 +973,10 @@ original intact.
 
 The tray menu offers Search, Refresh catalog, Settings, Start with Windows, Index
 status, Clear search history, Check for updates, About, Restart and Quit. A single
-click opens the launcher. Restart starts a replacement process that waits for the
+click opens the launcher. Each entry shows a letter that triggers it while the menu
+is open, without Ctrl, Alt or the Windows key: S Search, R Refresh catalog, I Index
+status, K Settings, W Start with Windows, C Center search bar, H Clear search
+history, U updates, A About, N Restart and Q Quit. Restart starts a replacement process that waits for the
 running one to release its instance lock, so two keyboard hooks never run at once. Clear search
 history asks for confirmation first and keeps favorites.
 

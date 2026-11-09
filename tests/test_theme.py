@@ -89,6 +89,29 @@ class ThemeTest(unittest.TestCase):
                 self.assertEqual(chip.text(), text)
                 self.assertIn(tooltip, chip.toolTip())
 
+    def test_tray_entries_name_and_answer_their_letter(self):
+        from PySide6.QtCore import QObject
+        from PySide6.QtTest import QTest
+
+        from winlauncher.ui.tray import TrayMenu
+
+        owner = QObject()
+        tray = TrayMenu(owner, autostart_available=False)
+        texts = [action.text() for action in tray.menu.actions() if action.text()]
+        self.assertIn("Settings…	K", texts)
+        self.assertIn("Quit WinLauncher	Q", texts)
+        letters = [text.rpartition("	")[2] for text in texts]
+        self.assertEqual(len(letters), len(set(letters)))  # Every letter triggers one entry.
+        tray.set_update_version("9.9.9")
+        self.assertEqual(tray.update.text(), "Update to 9.9.9…	U")
+        opened = []
+        tray.settings_requested.connect(lambda: opened.append("settings"))
+        tray.autostart_toggled.connect(lambda _checked: opened.append("autostart"))
+        QTest.keyClick(tray.menu, Qt.Key.Key_K)
+        QTest.keyClick(tray.menu, Qt.Key.Key_W)  # Disabled: nothing happens.
+        QTest.keyClick(tray.menu, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(opened, ["settings"])
+
 
 if __name__ == "__main__":
     unittest.main()
