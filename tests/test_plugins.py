@@ -1227,6 +1227,24 @@ class PluginUiTest(unittest.TestCase):
         self.assertIn("Version 1.1.0", texts)
         self.assertTrue(any(str(Path("D:/clone/fake")) in text for text in texts))
 
+    def test_a_plugin_setting_found_by_search_names_its_plugin(self):
+        from winlauncher.ui.settings import SettingsDialog
+
+        dialog = SettingsDialog(
+            self.controller.settings,
+            website_icons=self.controller.website_icons,
+            plugins=self.controller.plugin_refresh,
+        )
+        self.addCleanup(dialog.deleteLater)
+        name = dialog.plugin_pages.cards[0].heading
+        dialog.search.field.setText(name)
+        results = [
+            dialog.search.results.item(row).text() for row in range(dialog.search.results.count())
+        ]
+        self.assertIn(f"{name}\nPlugin settings", results)  # The card's header.
+        # Its rows, found by the plugin's name, name the plugin as their place.
+        self.assertTrue(any(text.endswith(f"\nPlugin settings › {name}") for text in results))
+
     def test_settings_page_edits_the_plugin(self):
         from winlauncher.ui.settings import SettingsDialog
 

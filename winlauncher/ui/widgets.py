@@ -263,6 +263,7 @@ class Card(QFrame):
         self._layout.setSpacing(0)
         self.title = title
         self.rows: list[tuple[str, str, QWidget]] = []
+        self.heading = ""  # The header's title, once `add_header` added one.
 
     def add_row(self, title: str, description: str, control: QWidget) -> QWidget:
         row = QWidget()
@@ -307,6 +308,7 @@ class Card(QFrame):
         layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
         self._append(header)
         self.rows.append((title, description, header))
+        self.heading = title  # Names the card's details, such as in a search result.
         return fold
 
     def show_details(self, visible: bool) -> None:

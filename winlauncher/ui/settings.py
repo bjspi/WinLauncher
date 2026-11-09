@@ -595,6 +595,8 @@ class SettingsDialog(QDialog):
         footer = self._footer()
         content.addWidget(footer)
         layout.addLayout(content, 1)
+        # The pages, not the search field, take the focus: it would light up at once.
+        self.nav.setFocus()
         self._fit_screen()
 
     # Pages ----------------------------------------------------------------------
@@ -709,11 +711,12 @@ class SettingsDialog(QDialog):
             entries.append(SettingEntry(row, spec.title, spec.title, spec.subtitle))
             content = self.pages.widget(row).widget()
             for card in content.findChildren(Card):
-                entries += [
-                    SettingEntry(row, spec.title, title, description, widget)
-                    for title, description, widget in card.rows
-                    if title
-                ]
+                # Plugin cards' rows share titles; the card's header names whose they are.
+                details = f"{spec.title} › {card.heading}" if card.heading else spec.title
+                for index, (title, description, widget) in enumerate(card.rows):
+                    if title:
+                        page = details if index else spec.title  # The header is the first row.
+                        entries.append(SettingEntry(row, page, title, description, widget))
         return entries
 
     def _open_setting(self, entry: SettingEntry) -> None:
