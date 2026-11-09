@@ -92,7 +92,7 @@ and replaces it, and your settings and catalog stay. You can
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.20.0"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.20.1"
 winlauncher --show
 ```
 
