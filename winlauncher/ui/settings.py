@@ -11,6 +11,7 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -84,6 +85,9 @@ from winlauncher.ui.widgets import (
     section_title,
     sized_number,
 )
+
+if TYPE_CHECKING:
+    from winlauncher.ui.plugin_settings import PluginPages
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
 SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
@@ -486,6 +490,15 @@ def _levels_text(levels: int) -> str:
     return "1 level" if levels == 1 else f"{levels} levels"
 
 
+class _PageSpec(NamedTuple):
+    icon: str
+    title: str
+    subtitle: str
+    build: Callable[[], list[QWidget]]
+    # Copies the page's fields into the settings; None for pages without fields.
+    read: Callable[[Settings], Settings] | None = None
+
+
 class SettingsDialog(QDialog):
     def __init__(
         self,
@@ -525,109 +538,31 @@ class SettingsDialog(QDialog):
         self.setObjectName("settings")
         self.setWindowTitle("WinLauncher settings")
         self.resize(DIALOG_SIZE)
-        self.websites = WebsiteList(settings.websites, website_icons)
-        self.menu_commands = CommandList(settings.menu_commands)
-        self.plugin_pages = None
-        if plugins is not None:
-            from winlauncher.ui.plugin_settings import PluginPages  # It builds on this module.
-
-            self.plugin_pages = PluginPages(
-                settings,
-                plugins,
-                self._settings_without_plugins,
-                plugin_folder,
-                self,
-                plugin_sources,
-                self.save_and_restart if restart is not None else None,
-                plugin_cards,
-            )
+        self.startup_enabled = startup_enabled
+        self.website_icons = website_icons
+        # Built with the first plugin page shown; see `plugin_pages`.
+        self._plugin_pages: PluginPages | None = None
+        self._plugin_arguments = (
+            (plugins, plugin_folder, plugin_sources, restart, plugin_cards)
+            if plugins is not None
+            else None
+        )
         self.pages = QStackedWidget()
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
         self.nav.setAccessibleName("Settings pages")
         self.nav.setIconSize(QSize(NAV_ICON_SIZE, NAV_ICON_SIZE))
-        self.nav_icons: list[str] = []
-        for icon, title, subtitle, page in (
-            (
-                "sliders",
-                "General",
-                "Startup and how the search bar behaves.",
-                self._general_page(startup_enabled),
-            ),
-            (
-                "folder",
-                "Search folders",
-                "What WinLauncher indexes. Names and paths stay on this computer.",
-                self._folders_page(settings),
-            ),
-            (
-                "window",
-                "Explorer & dialogs",
-                "Search right where you already are.",
-                self._explorer_page(settings),
-            ),
-            (
-                "ban",
-                "Exclusions",
-                "Keep folders and files out of the catalog.",
-                self._exclusions_page(settings),
-            ),
-            (
-                "globe",
-                "Websites",
-                "Type a keyword to search a website, such as az headphones.",
-                self._websites_page(),
-            ),
-            (
-                "terminal",
-                "Context menu",
-                "Your own entries in a result's right-click menu, such as Open in Terminal.",
-                self._menu_commands_page(),
-            ),
-            *(
-                (
-                    (
-                        "plug",
-                        "Plugins",
-                        "Chats and contacts from other programs as results: install them here.",
-                        self.plugin_pages.install_sections,
-                    ),
-                    (
-                        "gear",
-                        "Plugin settings",
-                        "Each plugin's switch, keywords and options. A keyword puts one plugin "
-                        "on top, @keyword answers from it alone.",
-                        self.plugin_pages.settings_sections,
-                    ),
-                )
-                if self.plugin_pages is not None
-                else ()
-            ),
-            (
-                "chart",
-                "Ranking",
-                "Lift or lower folders in the results.",
-                self._ranking_page(settings),
-            ),
-            (
-                "code",
-                "Advanced rules",
-                "Name, extension and attribute rules as JSON.",
-                self._advanced_page(settings),
-            ),
-            (
-                "keyboard",
-                "Shortcuts",
-                "Everything WinLauncher does from the keyboard.",
-                _shortcuts_page(),
-            ),
-        ):
-            self.nav_icons.append(icon)
-            self.nav.addItem(QListWidgetItem(title))
-            self.pages.addWidget(_page(title, subtitle, page))
+        self._specs = self._page_specs()
+        self.nav_icons = [spec.icon for spec in self._specs]
+        # A page is built when it is first shown: building all of them took most
+        # of a second. Save reads only built pages; the others keep `original`.
+        self._built: set[int] = set()
+        for spec in self._specs:
+            self.nav.addItem(QListWidgetItem(spec.title))
+            self.pages.addWidget(QWidget())
         self._use_theme_icons()
         theme().changed.connect(self._use_theme_icons)
-        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.nav.currentRowChanged.connect(self._show_row)
         self.nav.setCurrentRow(0)
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -653,6 +588,147 @@ class SettingsDialog(QDialog):
         content.addWidget(footer)
         layout.addLayout(content, 1)
         self._fit_screen()
+
+    # Pages ----------------------------------------------------------------------
+
+    def _page_specs(self) -> list[_PageSpec]:
+        plugins = (
+            [
+                _PageSpec(
+                    "plug",
+                    "Plugins",
+                    "Chats and contacts from other programs as results: install them here.",
+                    lambda: self.plugin_pages.install_sections,
+                ),
+                _PageSpec(
+                    "gear",
+                    "Plugin settings",
+                    "Each plugin's switch, keywords and options. A keyword puts one plugin "
+                    "on top, @keyword answers from it alone.",
+                    lambda: self.plugin_pages.settings_sections,
+                ),
+            ]
+            if self._plugin_arguments is not None
+            else []
+        )
+        return [
+            _PageSpec(
+                "sliders",
+                "General",
+                "Startup and how the search bar behaves.",
+                self._general_page,
+                self._read_general,
+            ),
+            _PageSpec(
+                "folder",
+                "Search folders",
+                "What WinLauncher indexes. Names and paths stay on this computer.",
+                self._folders_page,
+                self._read_folders,
+            ),
+            _PageSpec(
+                "window",
+                "Explorer & dialogs",
+                "Search right where you already are.",
+                self._explorer_page,
+                self._read_explorer,
+            ),
+            _PageSpec(
+                "ban",
+                "Exclusions",
+                "Keep folders and files out of the catalog.",
+                self._exclusions_page,
+                self._read_exclusions,
+            ),
+            _PageSpec(
+                "globe",
+                "Websites",
+                "Type a keyword to search a website, such as az headphones.",
+                self._websites_page,
+                lambda settings: replace(settings, websites=self.websites.websites()),
+            ),
+            _PageSpec(
+                "terminal",
+                "Context menu",
+                "Your own entries in a result's right-click menu, such as Open in Terminal.",
+                self._menu_commands_page,
+                lambda settings: replace(settings, menu_commands=self.menu_commands.commands()),
+            ),
+            *plugins,
+            _PageSpec(
+                "chart",
+                "Ranking",
+                "Lift or lower folders in the results.",
+                self._ranking_page,
+                self._read_ranking,
+            ),
+            _PageSpec(
+                "code",
+                "Advanced rules",
+                "Name, extension and attribute rules as JSON.",
+                self._advanced_page,
+                self._read_advanced,
+            ),
+            _PageSpec(
+                "keyboard",
+                "Shortcuts",
+                "Everything WinLauncher does from the keyboard.",
+                _shortcuts_page,
+            ),
+        ]
+
+    def _show_row(self, row: int) -> None:
+        if row >= 0:
+            self._build_page(row)
+            self.pages.setCurrentIndex(row)
+
+    def _build_page(self, row: int) -> None:
+        if row in self._built:
+            return
+        self._built.add(row)
+        spec = self._specs[row]
+        page = _page(spec.title, spec.subtitle, spec.build())
+        placeholder = self.pages.widget(row)
+        self.pages.insertWidget(row, page)
+        self.pages.removeWidget(placeholder)
+        placeholder.deleteLater()
+
+    def build_all_pages(self) -> None:
+        """Build the pages not shown yet, such as for code that reads their fields."""
+        for row in range(len(self._specs)):
+            self._build_page(row)
+
+    def __getattr__(self, name: str):
+        """A field of a page not built yet: build the pages, then look again.
+
+        Only reached when normal lookup fails, so built fields cost nothing.
+        """
+        pending = self.__dict__.get("_specs") is not None and len(
+            self.__dict__.get("_built", ())
+        ) < len(self.__dict__["_specs"])
+        if name.startswith("__") or not pending:
+            raise AttributeError(name)
+        self.build_all_pages()
+        return super().__getattribute__(name)
+
+    @property
+    def plugin_pages(self) -> PluginPages | None:
+        """The plugin pages' widgets, built at first use; None without plugins."""
+        if self._plugin_pages is None and self._plugin_arguments is not None:
+            from winlauncher.ui.plugin_settings import PluginPages  # It builds on this module.
+
+            plugins, folder, sources, restart, cards = self._plugin_arguments
+            self._plugin_pages = PluginPages(
+                self.original,
+                plugins,
+                self._settings_without_plugins,
+                folder,
+                self,
+                sources,
+                self.save_and_restart if restart is not None else None,
+                cards,
+            )
+        return self._plugin_pages
 
     # Frame ----------------------------------------------------------------------
 
@@ -708,10 +784,10 @@ class SettingsDialog(QDialog):
 
     # Pages ----------------------------------------------------------------------
 
-    def _general_page(self, startup_enabled: bool | None) -> list[QWidget]:
+    def _general_page(self) -> list[QWidget]:
         self.autostart = ToggleSwitch("Start WinLauncher when I sign in to Windows")
         self.autostart.setEnabled(self.set_startup is not None)
-        self.autostart.setChecked(bool(startup_enabled))
+        self.autostart.setChecked(bool(self.startup_enabled))
         self.autostart.clicked.connect(self._toggle_startup)
         startup = Card()
         startup.add_row(
@@ -928,7 +1004,8 @@ class SettingsDialog(QDialog):
                 self.nav.setCurrentRow(row)
                 return
 
-    def _folders_page(self, settings: Settings) -> list[QWidget]:
+    def _folders_page(self) -> list[QWidget]:
+        settings = self.original
         self.roots = SearchFolderList(settings.roots, settings.folder_depths, self.catalog)
         self.analyze_button = _button("Analyze…", self.analyze_catalog)
         self.code_projects = ToggleSwitch("List code projects with their top level only")
@@ -1023,7 +1100,8 @@ class SettingsDialog(QDialog):
         )
         return [folders, section_title("Catalog"), catalog]
 
-    def _explorer_page(self, settings: Settings) -> list[QWidget]:
+    def _explorer_page(self) -> list[QWidget]:
+        settings = self.original
         self.explorer = ToggleSwitch("Search when typing in Explorer's file view")
         self.explorer.setChecked(settings.explorer_typing)
         self.explorer_tool_order = QComboBox()
@@ -1068,7 +1146,8 @@ class SettingsDialog(QDialog):
         )
         return [card]
 
-    def _exclusions_page(self, settings: Settings) -> list[QWidget]:
+    def _exclusions_page(self) -> list[QWidget]:
+        settings = self.original
         self.excluded = PathList(settings.excluded_paths, "Excluded directories")
         self.patterns = QPlainTextEdit("\n".join(settings.excluded_patterns))
         self.patterns.setAccessibleName("Excluded file and folder patterns, one per line")
@@ -1099,16 +1178,19 @@ class SettingsDialog(QDialog):
         return [card]
 
     def _websites_page(self) -> list[QWidget]:
+        self.websites = WebsiteList(self.original.websites, self.website_icons)
         card = Card()
         card.add_block("", "", self.websites)
         return [card]
 
     def _menu_commands_page(self) -> list[QWidget]:
+        self.menu_commands = CommandList(self.original.menu_commands)
         card = Card()
         card.add_block("", "", self.menu_commands)
         return [card]
 
-    def _ranking_page(self, settings: Settings) -> list[QWidget]:
+    def _ranking_page(self) -> list[QWidget]:
+        settings = self.original
         self.rank_projects = ToggleSwitch("Rank code projects first")
         self.rank_projects.setChecked(settings.rank_code_projects)
         projects = Card()
@@ -1135,7 +1217,8 @@ class SettingsDialog(QDialog):
         )
         return [projects, card, note]
 
-    def _advanced_page(self, settings: Settings) -> list[QWidget]:
+    def _advanced_page(self) -> list[QWidget]:
+        settings = self.original
         self.rule_json = QPlainTextEdit(format_advanced_rules(settings))
         self.rule_json.setAccessibleName("Advanced priority rules as JSON")
         self.rule_json.setObjectName("code")
@@ -1172,51 +1255,96 @@ class SettingsDialog(QDialog):
 
         It joins the fields, so a later Save here keeps it instead of dropping it.
         """
+        if self._row("Exclusions") not in self._built:
+            # Its fields read `original` when they are built.
+            original = self.original
+            if folder is not None and str(folder) not in original.excluded_paths:
+                original = replace(original, excluded_paths=(*original.excluded_paths, str(folder)))
+            if pattern and pattern not in original.excluded_patterns:
+                original = replace(
+                    original, excluded_patterns=(*original.excluded_patterns, pattern)
+                )
+            self.original = original
+            return
         if folder is not None:
             self.excluded.add_folders([folder])
         if pattern and pattern not in _split_lines(self.patterns.toPlainText()):
             self.patterns.appendPlainText(pattern)
 
+    def _row(self, title: str) -> int:
+        return next(row for row, spec in enumerate(self._specs) if spec.title == title)
+
     def read_settings(self) -> Settings:
         """Raise ValueError with a user-facing message for invalid input."""
         settings = self._settings_without_plugins()
-        if self.plugin_pages is None:
-            return settings
-        return self.plugin_pages.apply_to(settings)
+        if self._plugin_pages is None:
+            return settings  # No plugin page was built, so nothing there changed.
+        return self._plugin_pages.apply_to(settings)
 
     def _settings_without_plugins(self) -> Settings:
-        advanced = parse_advanced_rules(self.rule_json.toPlainText())
+        """The built pages' fields over `original`; pages not built changed nothing."""
+        settings = self.original
+        for row in sorted(self._built):
+            if (read := self._specs[row].read) is not None:
+                settings = read(settings)
+        return settings
+
+    def _read_general(self, settings: Settings) -> Settings:
         return replace(
-            self.original,
-            roots=self.roots.paths(),
-            folder_depths=self.roots.depths(),
-            code_projects_top_level=self.code_projects.isChecked(),
-            rank_code_projects=self.rank_projects.isChecked(),
-            excluded_paths=self.excluded.paths(),
-            excluded_patterns=_split_lines(self.patterns.toPlainText()),
-            marker_files=_split_commas(self.markers.text()),
-            folder_priorities=parse_folder_priorities(self.priorities.toPlainText()),
-            name_priorities=advanced.names,
-            extension_priorities=advanced.extensions,
-            attribute_priorities=advanced.attributes,
-            index_apps=self.apps.isChecked(),
-            index_windows_tools=self.windows_tools.isChecked(),
-            windows_tools_english=self.windows_tools_english.isChecked(),
-            windows_settings_detail=self.windows_settings_detail.currentData(),
-            explorer_typing=self.explorer.isChecked(),
-            explorer_tools_first=self.explorer_tool_order.currentData(),
-            explorer_tools_fuzzy=self.explorer_tools_fuzzy.isChecked(),
-            quick_switch=self.quick_switch.isChecked(),
+            settings,
             double_ctrl_ms=self.ctrl_interval.value(),
             auto_hide=self.auto_hide.isChecked(),
             file_preview=self.file_preview.isChecked(),
             auto_hide_seconds=self.auto_hide_delay.value(),
-            rescan_seconds=self.scan_interval.value(),
             max_results=self.limit.value(),
-            content_search_threads=self.content_threads.value(),
-            websites=self.websites.websites(),
-            menu_commands=self.menu_commands.commands(),
             appearance=self.appearance.currentData(),
+        )
+
+    def _read_folders(self, settings: Settings) -> Settings:
+        return replace(
+            settings,
+            roots=self.roots.paths(),
+            folder_depths=self.roots.depths(),
+            code_projects_top_level=self.code_projects.isChecked(),
+            index_apps=self.apps.isChecked(),
+            index_windows_tools=self.windows_tools.isChecked(),
+            windows_tools_english=self.windows_tools_english.isChecked(),
+            windows_settings_detail=self.windows_settings_detail.currentData(),
+            rescan_seconds=self.scan_interval.value(),
+            content_search_threads=self.content_threads.value(),
+        )
+
+    def _read_explorer(self, settings: Settings) -> Settings:
+        return replace(
+            settings,
+            explorer_typing=self.explorer.isChecked(),
+            explorer_tools_first=self.explorer_tool_order.currentData(),
+            explorer_tools_fuzzy=self.explorer_tools_fuzzy.isChecked(),
+            quick_switch=self.quick_switch.isChecked(),
+        )
+
+    def _read_exclusions(self, settings: Settings) -> Settings:
+        return replace(
+            settings,
+            excluded_paths=self.excluded.paths(),
+            excluded_patterns=_split_lines(self.patterns.toPlainText()),
+            marker_files=_split_commas(self.markers.text()),
+        )
+
+    def _read_ranking(self, settings: Settings) -> Settings:
+        return replace(
+            settings,
+            rank_code_projects=self.rank_projects.isChecked(),
+            folder_priorities=parse_folder_priorities(self.priorities.toPlainText()),
+        )
+
+    def _read_advanced(self, settings: Settings) -> Settings:
+        advanced = parse_advanced_rules(self.rule_json.toPlainText())
+        return replace(
+            settings,
+            name_priorities=advanced.names,
+            extension_priorities=advanced.extensions,
+            attribute_priorities=advanced.attributes,
         )
 
     def save(self) -> bool:

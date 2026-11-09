@@ -2096,6 +2096,32 @@ class UiFlowTest(unittest.TestCase):
         self.assertIn("--show", arguments)  # The launcher was open, so it reopens.
         application.return_value.quit.assert_called_once()
 
+    def test_settings_build_a_page_when_shown_and_read_only_built_pages(self):
+        settings = replace(self.controller.settings, max_results=33, double_ctrl_ms=400)
+        dialog = self.settings_dialog(settings)
+        self.addCleanup(dialog.deleteLater)
+        self.assertEqual(dialog._built, {0})  # Only General, the page shown first.
+        self.assertEqual(dialog.read_settings(), settings)
+        dialog.limit.setValue(44)
+        dialog.show_page("Ranking")
+        self.assertEqual(dialog._built, {0, dialog._row("Ranking")})
+        dialog.rank_projects.setChecked(not settings.rank_code_projects)
+        edited = dialog.read_settings()
+        self.assertEqual(
+            (edited.max_results, edited.rank_code_projects), (44, not settings.rank_code_projects)
+        )
+        self.assertEqual(
+            replace(edited, max_results=33, rank_code_projects=settings.rank_code_projects),
+            settings,
+        )
+        # An exclusion saved elsewhere reaches a page that is not built yet.
+        dialog.add_exclusion(pattern="*.lazy-page")
+        self.assertIn("*.lazy-page", dialog.read_settings().excluded_patterns)
+        dialog.show_page("Exclusions")
+        self.assertIn("*.lazy-page", dialog.patterns.toPlainText())
+        dialog.rule_json  # noqa: B018 - reading an unbuilt page's field builds the rest.
+        self.assertEqual(len(dialog._built), dialog.nav.count())
+
     def test_settings_is_a_window_of_its_own_that_keeps_outside_exclusions(self):
         c = self.controller
         c.startup = Mock()  # Never read the real Startup folder.
