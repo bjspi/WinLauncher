@@ -44,6 +44,11 @@ from winlauncher.catalog.priority import (
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.platform.windows_tools import display_languages
 from winlauncher.plugins.api import Choice
+from winlauncher.search.native_engine import (
+    ENGINE_VARIABLE,
+    native_availability,
+    requested_engine,
+)
 from winlauncher.settings import (
     AUTO_HIDE_RANGE_SECONDS,
     CONTENT_SEARCH_THREADS_RANGE,
@@ -675,8 +680,13 @@ class SettingsDialog(QDialog):
         product.setObjectName("brandName")
         version = QLabel(f"Version {__version__}")
         version.setObjectName("brandVersion")
+        details = QHBoxLayout()
+        details.setSpacing(6)
+        details.addWidget(version)
+        details.addWidget(_engine_chip())
+        details.addStretch(1)
         names.addWidget(product)
-        names.addWidget(version)
+        names.addLayout(details)
         brand.addWidget(logo)
         brand.addLayout(names, 1)
         layout.addLayout(brand)
@@ -1234,3 +1244,23 @@ class SettingsDialog(QDialog):
         """Keep the edits, then restart WinLauncher, such as to load a new plugin."""
         if self.save() and self.restart_app is not None:
             self.restart_app()
+
+
+def _engine_chip() -> QLabel:
+    """Which engine searches: Rust, or Python with the reason in the tooltip."""
+    try:
+        python_requested = requested_engine() == "python"
+    except ValueError:
+        python_requested = False  # The search itself reports the invalid setting.
+    availability = native_availability()
+    rust = availability.module is not None and not python_requested
+    chip = QLabel("Rust" if rust else "Python")
+    chip.setObjectName("rustChip" if rust else "engineChip")
+    chip.setToolTip(
+        "Searches with the fast Rust engine."
+        if rust
+        else "Searches with the slower Python engine. "
+        + (availability.reason or f"{ENGINE_VARIABLE}=python is set.")
+    )
+    chip.setAccessibleName(f"Search engine: {chip.text()}")
+    return chip

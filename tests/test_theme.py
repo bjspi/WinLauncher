@@ -69,6 +69,26 @@ class ThemeTest(unittest.TestCase):
         dialog.appearance.setCurrentIndex(dialog.appearance.findData("dark"))
         self.assertEqual(dialog.read_settings().appearance, "dark")
 
+    def test_settings_name_the_search_engine(self):
+        from winlauncher.search.native_engine import NativeAvailability
+        from winlauncher.ui import settings as settings_module
+
+        missing = NativeAvailability(None, "The Rust search engine is not installed.")
+        cases = (
+            (NativeAvailability(unittest), "auto", "Rust", "fast Rust"),
+            (missing, "auto", "Python", "not installed"),
+            (NativeAvailability(unittest), "python", "Python", "=python is set"),
+        )
+        for availability, engine, text, tooltip in cases:
+            with (
+                self.subTest(text=text, engine=engine),
+                patch.object(settings_module, "native_availability", return_value=availability),
+                patch.dict(os.environ, WINLAUNCHER_SEARCH_ENGINE=engine),
+            ):
+                chip = settings_module._engine_chip()
+                self.assertEqual(chip.text(), text)
+                self.assertIn(tooltip, chip.toolTip())
+
 
 if __name__ == "__main__":
     unittest.main()

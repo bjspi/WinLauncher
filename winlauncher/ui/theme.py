@@ -321,6 +321,8 @@ QDialog#settings { background: $page; }
 QFrame#sidebar { background: $sidebar; border: 0; border-right: 1px solid $sidebar_border; }
 QLabel#brandName { font-size: 12pt; font-weight: 600; color: $title; }
 QLabel#brandVersion { color: $fainter; font-size: 8pt; }
+QLabel#rustChip { color: #c2502b; background: rgba(206, 66, 43, 28); border: 1px solid rgba(206, 66, 43, 80); border-radius: 6px; padding: 0 5px; font-size: 7pt; font-weight: 600; }
+QLabel#engineChip { color: $fainter; border: 1px solid $divider; border-radius: 6px; padding: 0 5px; font-size: 7pt; }
 QLabel#sidebarHint { color: $fainter; font-size: 8pt; padding: 0 8px; }
 QListWidget#nav { background: transparent; border: 0; outline: none; padding: 0; }
 QListWidget#nav::item { padding: 8px 10px; margin: 1px 0; border-radius: 8px; color: $secondary; border: 1px solid transparent; }

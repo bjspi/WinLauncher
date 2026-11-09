@@ -35,6 +35,7 @@ def child(data: Path) -> None:
     with (
         patch.object(entry, "QApplication", return_value=app),
         patch.object(entry, "_migrate_launcher", return_value=False),
+        patch.object(entry, "take_engine_repair", return_value=False),  # No pip in tests.
         patch.object(LauncherWindow, "present", present),
     ):
         if os.environ.get("WINLAUNCHER_TEST_START_BARRIER"):

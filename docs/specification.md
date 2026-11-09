@@ -1007,7 +1007,11 @@ In a checkout, **Check for updates** (or **Update to X.Y.Z…**) announces
 release's commits, changed files and diff (cut off after 200,000 characters),
 read from the fetched tag. **Update** fetches the tag again and runs
 `git merge --ff-only` to it, which refuses diverged or modified checkouts instead
-of merging and leaves a checkout already past the release where it is. A refused
+of merging and leaves a checkout already past the release where it is. If it
+refuses because the remote's history was rewritten (no common commit), but the
+checkout is unchanged, untracked files included, and its files equal a commit of
+the release's new history, the update sets the checkout to the tag with
+`git reset --hard` without asking and says so in its output. Otherwise a refused
 update says it is usually caused by locally changed files, keeps git's output
 behind **Details** and offers **Force update…**: after a confirmation it runs
 `git stash push --include-untracked` and `git reset --hard` to the tag, so local
@@ -1018,7 +1022,15 @@ and offers a restart;
 the next start runs `pip install -e ".[rust]"` before anything loads the old
 engine, whose `.pyd` Windows locks while it runs. A failed reinstall, for example
 offline, stays pending: the next starts try again, three in all, and the message
-shows the command to finish it by hand. For pipx and other installed
+shows the command to finish it by hand. A checkout moved by hand, such as with
+`git pull` or `git reset`, gets the same reinstall at its next start when the
+installed `winlauncher_native` is missing, or its version differs from
+WinLauncher's and an import in a separate process shows that its API does not fit
+(on Windows x64 with Python before 3.15, where the `rust` extra installs it). A
+fitting engine of another version, such as a local build, is kept, and that answer
+is remembered for the pair of versions. Each WinLauncher version tries the
+reinstall at most three times; its progress and failure messages name the Rust
+engine instead of an update. For pipx and other installed
 packages, WinLauncher shows the exact install command to copy instead of replacing
 its own running environment. `install.ps1`, meant for `irm ... | iex`, installs or
 updates to the newest release's wheel through pipx without git: it picks the newest
@@ -1109,6 +1121,8 @@ reason in the search bar and rejects `contains:` with that reason. An unexpected
 Rust error is logged once per kind, and that search is repeated in Python.
 `WINLAUNCHER_SEARCH_ENGINE=python` forces the Python engine; `native` requires the
 Rust engine and reports its errors instead of falling back.
+Settings show the engine as a chip beside the version: an orange **Rust**, or a
+gray **Python** whose tooltip gives the reason.
 
 The Rust engine selects candidates from an in-memory copy of the catalog's
 entries instead of scanning the table with `LIKE` on every keystroke; it selects

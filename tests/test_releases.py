@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from winlauncher import __version__
+from winlauncher import __version__, install
 from winlauncher.install import (
     REINSTALL_ATTEMPTS,
     finish_reinstall,
     mark_reinstall_pending,
+    take_engine_repair,
     take_pending_reinstall,
 )
 from winlauncher.releases import (
@@ -76,6 +79,63 @@ class ReleaseTest(unittest.TestCase):
             self.assertFalse(take_pending_reinstall(data_dir))
             (data_dir / "reinstall-pending").touch()  # Left by an older WinLauncher.
             self.assertTrue(take_pending_reinstall(data_dir))
+
+    def test_a_missing_or_old_engine_is_reinstalled_a_few_times_per_version(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(install, "engine_outdated", return_value=True),
+        ):
+            data_dir = Path(directory)
+            for _attempt in range(REINSTALL_ATTEMPTS):
+                self.assertTrue(take_engine_repair(data_dir))  # Each start fails.
+            self.assertFalse(take_engine_repair(data_dir))  # Then this version gives up.
+            marker = data_dir / install.REPAIR_MARKER
+            marker.write_text(f"0.0.1 {REINSTALL_ATTEMPTS}", encoding="ascii")
+            self.assertTrue(take_engine_repair(data_dir))  # A new version tries again.
+            with patch.object(install, "engine_outdated", return_value=False):
+                self.assertFalse(take_engine_repair(data_dir))
+            self.assertFalse(marker.exists())
+
+    def test_an_engine_of_another_version_is_kept_while_its_api_fits(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(install.sysconfig, "get_platform", return_value="win-amd64"),
+            patch.object(install, "RUST_EXTRA_BEFORE", (99, 0)),
+        ):
+            data_dir = Path(directory)
+            with patch.object(install.metadata, "version", return_value=__version__):
+                self.assertFalse(install.engine_outdated(data_dir))
+            missing = install.metadata.PackageNotFoundError("winlauncher_native")
+            with patch.object(install.metadata, "version", side_effect=missing):
+                self.assertTrue(install.engine_outdated(data_dir))
+            with (
+                patch.object(install.metadata, "version", return_value="0.6.0"),
+                patch.object(install, "_engine_fits", return_value=False),
+            ):
+                self.assertTrue(install.engine_outdated(data_dir))
+            with (
+                patch.object(install.metadata, "version", return_value="0.6.0"),
+                patch.object(install, "_engine_fits", return_value=True) as probe,
+            ):
+                self.assertFalse(install.engine_outdated(data_dir))
+                self.assertFalse(install.engine_outdated(data_dir))
+                probe.assert_called_once()  # The answer is remembered for these versions.
+        with patch.object(install, "RUST_EXTRA_BEFORE", (3, 0)):
+            self.assertFalse(install.engine_outdated(Path(".")))  # The extra installs nothing.
+
+    def test_the_manual_reinstall_runs_the_console_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            for name in ("python.exe", "pythonw.exe"):
+                (folder / name).touch()
+            with patch.object(install.sys, "executable", str(folder / "pythonw.exe")):
+                command = install.reinstall_command(Path("C:/WinLauncher"))
+        self.assertIn(f'"{folder / "python.exe"}" -m pip install', command)
+
+    def test_the_probe_imports_the_installed_engine_in_another_process(self):
+        if importlib.util.find_spec("winlauncher_native") is None:
+            self.skipTest("The Rust engine is not installed")
+        self.assertTrue(install._engine_fits())
 
 
 if __name__ == "__main__":

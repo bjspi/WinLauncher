@@ -83,7 +83,7 @@ flowchart TD
 | `ui/theme.py` | Light and dark colors, the stylesheet built from them, following the Windows color scheme; painters read `colors()` and refresh kept icons on `Theme.changed` |
 | `platform/git.py` | Read-only git queries for self-updating a source checkout |
 | `releases.py` | Release tags, installation kinds and their update commands |
-| `install.py` | The reinstall that finishes a checkout update at the next start |
+| `install.py` | The reinstall that finishes a checkout update, or repairs a missing or old engine, at the next start |
 | `__main__.py` | CLI, logging, crash logging, per-data-directory single instance and restart handover |
 | `crash_report.py` | Native crashes: `faulthandler` stacks in `crash.log`, moved into the log at the next start |
 | `platform/startup_timing.py` | One log line with the time of each startup phase, from process creation on |

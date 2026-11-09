@@ -323,6 +323,7 @@ class LoaderMigrationTest(unittest.TestCase):
                 startup._user_programs_folder = lambda: state / "programs"
                 code = "import json,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps({'python':sys.executable}))"
                 install.reinstall_arguments = lambda: ["-c", code, str(state / "update.json")]
+                install.engine_outdated = lambda data_dir: False  # Only the pending update.
                 original = LauncherController.__init__
                 def initialize(self, *args, **kwargs):
                     original(self, *args, **kwargs)

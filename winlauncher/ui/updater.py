@@ -4,7 +4,8 @@ Updates follow release tags, never untested commits, because only a release
 ships the matching prebuilt Rust engine. Every installation can check for a
 release through `git ls-remote`; only a source checkout applies it itself, by
 fast-forwarding to the tag, or on request by setting it to the tag after
-stashing local changes. Its packages are reinstalled at the next start
+stashing local changes. A checkout whose history was rewritten upstream, with
+the same files under new commits, is set to the tag without asking. Its packages are reinstalled at the next start
 (see `winlauncher.install`), when the old native engine is no longer loaded.
 
 Git runs through QProcess, so neither the periodic check nor the update blocks
@@ -22,7 +23,12 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 
 from winlauncher import __version__
 from winlauncher.connectivity import automatic_network_off
-from winlauncher.platform.git import checkout_root, current_head, git_available
+from winlauncher.platform.git import (
+    checkout_root,
+    current_head,
+    git_available,
+    replaced_history,
+)
 from winlauncher.releases import (
     REPOSITORY_URL,
     Installation,
@@ -61,6 +67,7 @@ class ReleaseUpdater(QObject):
         self._head_before_update: str | None = None
         self._update_steps: list[list[str]] = []
         self._update_output: list[str] = []
+        self._rewritten_tag: str | None = None  # Checked if fast-forwarding to it fails.
         self.forced = False  # Whether the running or last update was a forced one.
         self._confirming = False  # Asking whether a new tag's release is published.
         self.ask_published: PublishedCheck = self._ask_published
@@ -111,11 +118,13 @@ class ReleaseUpdater(QObject):
         """Fast-forward the checkout to the newest release.
 
         `--ff-only` refuses diverged or dirty checkouts instead of opening a merge,
-        and a checkout already past the release simply stays where it is.
+        and a checkout already past the release simply stays where it is. If it
+        refuses because the remote rewrote the history, see `replaced_history`.
         """
         if self._can_start_update():
             tag = self.latest.tag
-            self._run_update(False, [_fetch_tag(tag), ["merge", "--ff-only", f"refs/tags/{tag}"]])
+            steps = [_fetch_tag(tag), ["merge", "--ff-only", f"refs/tags/{tag}"]]
+            self._run_update(False, steps, rewritten_tag=tag)
 
     def force_apply(self) -> None:
         """Set the checkout to the newest release even with local changes or commits.
@@ -134,9 +143,12 @@ class ReleaseUpdater(QObject):
     def _can_start_update(self) -> bool:
         return self.can_apply and not self.updating and self.latest is not None
 
-    def _run_update(self, forced: bool, steps: list[list[str]]) -> None:
+    def _run_update(
+        self, forced: bool, steps: list[list[str]], *, rewritten_tag: str | None = None
+    ) -> None:
         """Run the git steps in order; the first failing one ends the update."""
         self.forced = forced
+        self._rewritten_tag = rewritten_tag
         self._head_before_update = current_head(self.root)
         self._update_steps = steps
         self._update_output = []
@@ -153,8 +165,24 @@ class ReleaseUpdater(QObject):
         if exit_code == 0 and self._update_steps:
             self._next_update_step()
             return
+        if exit_code != 0 and self._replace_rewritten_history():
+            return
         self._update_steps = []
         self._update_done(exit_code, "\n".join(self._update_output))
+
+    def _replace_rewritten_history(self) -> bool:
+        """After a refused fast-forward: set an unchanged checkout to the rewritten tag."""
+        tag, self._rewritten_tag = self._rewritten_tag, None
+        if tag is None or self._update_steps or not replaced_history(self.root, tag):
+            return False  # Not the fast-forward that failed, or local work could be lost.
+        logger.info("The history of %s was rewritten; setting the checkout to it", tag)
+        self._update_output.append(
+            f"The history up to {tag} was rewritten with the same files; "
+            "the checkout was set to the new history."
+        )
+        self._update_steps = [["reset", "--hard", f"refs/tags/{tag}"]]
+        self._next_update_step()
+        return True
 
     def _update_done(self, exit_code: int, output: str) -> None:
         self._update = None

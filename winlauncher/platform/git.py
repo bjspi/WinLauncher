@@ -57,14 +57,46 @@ def release_changes(root: Path, tag: str) -> str | None:
     return text
 
 
+def replaced_history(root: Path, tag: str) -> bool:
+    """Whether the remote rewrote the history under an unchanged checkout.
+
+    That is the case when HEAD shares no commit with the fetched `tag`, yet its
+    files equal a commit of the tag's history and nothing is changed locally:
+    setting the checkout to the tag then loses no work.
+    """
+    reference = f"refs/tags/{tag}"
+    if _git_status(root, "merge-base", "HEAD", reference) != 1:
+        return False  # A common commit exists, or git failed.
+    status = _run_git(root, "status", "--porcelain")  # Untracked files count, too.
+    if status is None or status.returncode != 0 or status.stdout.strip():
+        return False
+    head = _git_output(root, "rev-parse", "HEAD^{tree}")
+    trees = _git_output(root, "log", "--format=%T", reference)
+    return head is not None and trees is not None and head in trees.split()
+
+
 def git_environment() -> dict[str, str]:
     """Git must never wait for a password on a hidden console."""
     return {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"}
 
 
 def _git_output(root: Path, *arguments: str) -> str | None:
+    result = _run_git(root, *arguments)
+    if result is None:
+        return None
+    output = result.stdout.rstrip()
+    return output if result.returncode == 0 and output else None
+
+
+def _git_status(root: Path, *arguments: str) -> int | None:
+    """The exit code, for commands that answer with it; None if git did not run."""
+    result = _run_git(root, *arguments)
+    return None if result is None else result.returncode
+
+
+def _run_git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str] | None:
     try:
-        result = subprocess.run(
+        return subprocess.run(
             ["git", *arguments],
             cwd=root,
             capture_output=True,
@@ -76,5 +108,3 @@ def _git_output(root: Path, *arguments: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    output = result.stdout.rstrip()
-    return output if result.returncode == 0 and output else None

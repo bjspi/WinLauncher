@@ -124,7 +124,8 @@ WinLauncher updates a checkout only to release tags, never to unreleased commits
 because only releases ship the matching engine: **Check for updates** in the tray
 menu fast-forwards to the newest release (local changes are never overwritten),
 and the next start reinstalls the packages before loading the engine. After a
-manual `git pull`, run the install line again. Without the
+manual `git pull`, the next start notices the outdated engine and reinstalls it
+the same way. Without the
 extra — or on a commit newer than the latest release — WinLauncher still works
 with its slower Python engine and says so in the search bar; you can also
 [build the engine yourself](#rust-search-engine).

@@ -30,6 +30,7 @@ from winlauncher.install import (
     finish_reinstall,
     reinstall_arguments,
     reinstall_command,
+    take_engine_repair,
     take_pending_reinstall,
 )
 from winlauncher.platform.git import checkout_root
@@ -164,12 +165,14 @@ def _log_uncaught_exceptions() -> None:
     threading.excepthook = log_thread_exception
 
 
-def _finish_update(root: Path, data_dir: Path) -> None:
-    """Reinstall the updated checkout before anything loads the old Rust engine.
+def _finish_update(root: Path, data_dir: Path, *, update: bool = True) -> None:
+    """Reinstall the checkout before anything loads the old Rust engine.
 
-    A failure keeps the reinstall pending, so the next start tries again.
+    After an update, or for a missing or unfit engine (`update` False). A failure
+    is tried again at the next start.
     """
-    progress = QProgressDialog("Finishing the WinLauncher update…", None, 0, 0)
+    text = "Finishing the WinLauncher update…" if update else "Installing the Rust search engine…"
+    progress = QProgressDialog(text, None, 0, 0)
     progress.setWindowTitle("WinLauncher")
     progress.setMinimumDuration(0)
     progress.show()
@@ -195,11 +198,19 @@ def _finish_update(root: Path, data_dir: Path) -> None:
     if succeeded:
         finish_reinstall(data_dir)
         return
+    if update:
+        title = "Update incomplete"
+        summary = (
+            "The new version runs, but its packages could not be reinstalled, so the Rust "
+            "search engine may be unavailable."
+        )
+    else:
+        title = "Rust search engine not installed"
+        summary = "The Rust search engine is missing or does not fit this WinLauncher."
     show_message(
         None,
-        "Update incomplete",
-        "The new version runs, but its packages could not be reinstalled, so the Rust "
-        "search engine may be unavailable. WinLauncher tries again at its next start. "
+        title,
+        f"{summary} WinLauncher tries again at its next start. "
         f"To finish it now, run:\n{reinstall_command(root)}",
         [("OK", PRIMARY)],
         WARNING,
@@ -338,8 +349,10 @@ def main() -> int:
         )
         crashes.start()
         timings.mark("application")
-        if take_pending_reinstall(data_dir) and (root := checkout_root()) is not None:
-            _finish_update(root, data_dir)
+        pending = take_pending_reinstall(data_dir)
+        root = checkout_root()
+        if root is not None and (pending or take_engine_repair(data_dir)):
+            _finish_update(root, data_dir, update=pending)
         if _migrate_launcher(data_dir):
             return 0
         timings.mark("launcher_repair")

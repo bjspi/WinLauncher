@@ -308,6 +308,43 @@ class ReleaseUpdaterTest(unittest.TestCase):
         self.assertIn("forced update", self.git(self.checkout, "stash", "list"))
         self.assertFalse(updater.available)
 
+    def rewrite_history_and_release(self) -> None:
+        """The same files under new commits, as after changing every author's email."""
+        self.git(self.author, "checkout", "--orphan", "rewritten")
+        self.git(self.author, "-c", "user.email=new@example.invalid", "commit", "-m", "first")
+        self.commit(self.author, "second")
+        self.git(self.author, "tag", "v1.1.0")
+        self.git(self.author, "push", "--force", "origin", "HEAD:main", "v1.1.0")
+
+    def apply_update(self) -> tuple[bool, bool, str]:
+        updater = self.updater()
+        updater.latest = Release(1, 1, 0)
+        results = []
+        updater.update_finished.connect(lambda *result: results.append(result))
+        updater.apply()
+        self.wait_for(lambda: results)
+        return results[0]
+
+    def test_a_rewritten_history_with_the_same_files_is_followed(self):
+        self.rewrite_history_and_release()
+        succeeded, moved, output = self.apply_update()
+        self.assertTrue(succeeded and moved)
+        self.assertIn("rewritten", output)
+        self.assertEqual((self.checkout / "file.txt").read_text(), "second")
+
+    def test_a_rewritten_history_never_replaces_local_work(self):
+        self.rewrite_history_and_release()
+        for change in ("untracked file", "local commit"):
+            with self.subTest(change=change):
+                if change == "untracked file":
+                    (self.checkout / "notes.txt").write_text("mine")
+                else:
+                    (self.checkout / "notes.txt").unlink()
+                    self.commit(self.checkout, "local work")
+                head = self.git(self.checkout, "rev-parse", "HEAD")
+                self.assertEqual(self.apply_update()[:2], (False, False))
+                self.assertEqual(self.git(self.checkout, "rev-parse", "HEAD"), head)
+
     def test_unreleased_commits_and_older_tags_are_no_update(self):
         self.release("old", "v0.9.0")
         self.commit(self.author, "unreleased")
