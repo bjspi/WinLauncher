@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Qt
@@ -75,7 +76,7 @@ def _off_screen(widget: QWidget, visible: bool) -> None:
 
 QWidget.setVisible = _off_screen
 theme().use(APPEARANCE)
-NOW = time.time()
+NOW = datetime(2026, 11, 1, 9, 41).timestamp()  # Fixed, so dates never change an image.
 
 
 def hits(entries):
