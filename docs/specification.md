@@ -941,8 +941,8 @@ included: every typed word must appear, ignoring case, in the title, description
 or page name; title matches come first. The matches replace the page list while
 text is typed, each with its page below it, and for a plugin card's rows the page
 and the plugin, such as Plugin settings › Jira, so the plugin's name finds them
-too; the first search builds the pages not shown yet. The field stays muted until
-it has the focus; opening Settings focuses the page list. Enter or a click opens the page, scrolls to the row, unfolding nothing
+too; the first search builds the pages not shown yet. The field, with a magnifier,
+is a shade off the sidebar until it has the focus; opening Settings focuses the page list. Enter or a click opens the page, scrolls to the row, unfolding nothing
 but showing a folded card's header instead, and lights the row up briefly. Enter
 in the field never saves. Esc clears typed text first; then it closes Settings.
 

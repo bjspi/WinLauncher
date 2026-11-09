@@ -10,7 +10,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QWidget
+
+from winlauncher.ui.theme import colors, theme
+from winlauncher.ui.widgets import line_icon
 
 NO_MATCH = "No settings match"
 
@@ -62,6 +66,9 @@ class SettingsSearch(QObject):
         self.field.setPlaceholderText("Search settings")
         self.field.setAccessibleName("Search settings")
         self.field.setClearButtonEnabled(True)
+        self.magnifier = self.field.addAction(QIcon(), QLineEdit.ActionPosition.LeadingPosition)
+        self._use_theme_icon()
+        theme().changed.connect(self._use_theme_icon)
         self.field.textChanged.connect(self._search)
         self.field.installEventFilter(self)
         self.results = QListWidget()
@@ -72,6 +79,9 @@ class SettingsSearch(QObject):
         self.results.hide()
         self.results.itemClicked.connect(self._open)
         self.results.itemActivated.connect(self._open)
+
+    def _use_theme_icon(self) -> None:
+        self.magnifier.setIcon(line_icon("search", colors().faint))
 
     def focus(self) -> None:
         self.field.setFocus(Qt.FocusReason.ShortcutFocusReason)

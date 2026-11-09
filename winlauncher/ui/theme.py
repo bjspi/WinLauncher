@@ -348,7 +348,7 @@ QFrame#footer { background: $field; border: 0; border-top: 1px solid $card_borde
 QLabel#savedMessage { color: $success; font-weight: 600; }
 QDialog#settings QPushButton { padding: 7px 16px; border-radius: 8px; }
 QDialog#settings QLineEdit { border-radius: 8px; padding: 6px 9px; }
-QDialog#settings QLineEdit#settingsSearch { background: transparent; border-color: $sidebar_border; }
+QDialog#settings QLineEdit#settingsSearch { background: $nav_hover; border-color: $nav_hover; padding-left: 4px; }
 QDialog#settings QLineEdit#settingsSearch:focus { background: $field; border-color: $accent; }
 QDialog#settings QPlainTextEdit, QDialog#settings QListWidget#itemList { border-radius: 8px; }
 QPlainTextEdit#code { font-family: 'Cascadia Mono', 'Consolas'; font-size: 9pt; }
