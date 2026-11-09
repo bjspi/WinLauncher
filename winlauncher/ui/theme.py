@@ -327,6 +327,8 @@ QLabel#sidebarHint { color: $fainter; font-size: 8pt; padding: 0 8px; }
 QListWidget#nav { background: transparent; border: 0; outline: none; padding: 0; }
 QListWidget#nav::item { padding: 8px 10px; margin: 1px 0; border-radius: 8px; color: $secondary; border: 1px solid transparent; }
 QListWidget#nav::item:hover { background: $nav_hover; }
+QListWidget#nav::item:disabled { color: $fainter; }
+*[found="true"] { background: $nav_hover; border-radius: 8px; }
 QListWidget#nav::item:selected { background: $field; color: $accent_strong; border-color: $nav_selected_border; }
 QScrollArea#pageScroll { background: $page; border: 0; }
 QWidget#page { background: $page; }

@@ -73,6 +73,7 @@ flowchart TD
 | `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
 | `ui/answers.py` | Asks the plugins that answer typed text, on their own worker, for the calculator's row |
 | `ui/stall_tracer.py` | Logs the GUI thread's stack in the middle of an event-loop stall |
+| `ui/settings_search.py` | Settings' search field: pages and every titled card row, the result list that replaces the page list, opening a row |
 | `ui/welcome.py` | The first start's introduction: shortcuts, folders, tips, Start with Windows |
 | `ui/plugin_dialogs.py`, `ui/option_editors.py` | The checklist and form a plugin command shows; the option editors forms share with the settings cards |
 | `ui/plugin_sources.py`, `ui/source_settings.py` | Periodic source checks, update notices, installs and activations; the Plugins page: what sources offer, and the sources |

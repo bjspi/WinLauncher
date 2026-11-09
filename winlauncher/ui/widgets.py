@@ -251,7 +251,8 @@ class Card(QFrame):
     """A rounded group of settings; rows are separated by hairlines.
 
     `add_row` puts a control beside its title and description; `add_block` puts
-    a larger widget, such as a list or an editor, below them.
+    a larger widget, such as a list or an editor, below them. `rows` keeps each
+    row's title, description and widget, so Settings can search them.
     """
 
     def __init__(self, title: str = "", parent: QWidget | None = None):
@@ -261,6 +262,7 @@ class Card(QFrame):
         self._layout.setContentsMargins(CARD_PADDING, 6, CARD_PADDING, 6)
         self._layout.setSpacing(0)
         self.title = title
+        self.rows: list[tuple[str, str, QWidget]] = []
 
     def add_row(self, title: str, description: str, control: QWidget) -> QWidget:
         row = QWidget()
@@ -270,6 +272,7 @@ class Card(QFrame):
         layout.addLayout(_texts(title, description), 1)
         layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
         self._append(row)
+        self.rows.append((title, description, row))
         return row
 
     def add_block(self, title: str, description: str, content: QWidget) -> QWidget:
@@ -281,6 +284,7 @@ class Card(QFrame):
             layout.addLayout(_texts(title, description))
         layout.addWidget(content)
         self._append(block)
+        self.rows.append((title, description, block))
         return block
 
     def add_header(self, icon: QIcon, title: str, description: str, control: QWidget) -> FoldButton:
@@ -302,6 +306,7 @@ class Card(QFrame):
         layout.addWidget(fold, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
         self._append(header)
+        self.rows.append((title, description, header))
         return fold
 
     def show_details(self, visible: bool) -> None:

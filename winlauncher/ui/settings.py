@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -69,6 +70,7 @@ from winlauncher.ui.messages import ERROR, INFO, WARNING, ask, message
 from winlauncher.ui.plugin_dialogs import choose_items
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
+from winlauncher.ui.settings_search import SettingEntry, SettingsSearch
 from winlauncher.ui.tasks import BackgroundTasks, TaskCategory
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
@@ -91,6 +93,8 @@ if TYPE_CHECKING:
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
 SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
+FOUND_MS = 1600  # How long a setting chosen from search stays lit.
+REVEAL_MARGIN = 60  # Room above and below a setting scrolled into view.
 EXPORT_FILE_NAME = "WinLauncher settings.json"
 SETTINGS_FILE_FILTER = "WinLauncher settings (*.json)"
 FOLDER_PRIORITY_FORMAT = "25 | D:\\Projects | high"
@@ -564,6 +568,10 @@ class SettingsDialog(QDialog):
         theme().changed.connect(self._use_theme_icons)
         self.nav.currentRowChanged.connect(self._show_row)
         self.nav.setCurrentRow(0)
+        self.search = SettingsSearch(self._searchable, self)
+        self.search.active_changed.connect(lambda active: self.nav.setVisible(not active))
+        self.search.chosen.connect(self._open_setting)
+        QShortcut(QKeySequence.StandardKey.Find, self, self.search.focus)
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -693,6 +701,35 @@ class SettingsDialog(QDialog):
         self.pages.removeWidget(placeholder)
         placeholder.deleteLater()
 
+    def _searchable(self) -> list[SettingEntry]:
+        """Every page and its cards' titled rows; searching builds the pages not shown yet."""
+        self.build_all_pages()
+        entries = []
+        for row, spec in enumerate(self._specs):
+            entries.append(SettingEntry(row, spec.title, spec.title, spec.subtitle))
+            content = self.pages.widget(row).widget()
+            for card in content.findChildren(Card):
+                entries += [
+                    SettingEntry(row, spec.title, title, description, widget)
+                    for title, description, widget in card.rows
+                    if title
+                ]
+        return entries
+
+    def _open_setting(self, entry: SettingEntry) -> None:
+        """Show the entry's page, scrolled to its row, which lights up for a moment."""
+        self.nav.setCurrentRow(entry.page_row)
+        scroll = self.pages.widget(entry.page_row)
+        target = entry.widget
+        if target is None:
+            scroll.verticalScrollBar().setValue(0)
+            return
+        content = scroll.widget()
+        while not target.isVisibleTo(content) and target.parentWidget() is not content:
+            target = target.parentWidget()  # A folded detail: show its card instead.
+        # After the page's layout, so the row's position is known.
+        QTimer.singleShot(0, scroll, lambda: _reveal(scroll, target))
+
     def build_all_pages(self) -> None:
         """Build the pages not shown yet, such as for code that reads their fields."""
         for row in range(len(self._specs)):
@@ -766,7 +803,9 @@ class SettingsDialog(QDialog):
         brand.addWidget(logo)
         brand.addLayout(names, 1)
         layout.addLayout(brand)
+        layout.addWidget(self.search.field)
         layout.addWidget(self.nav, 1)
+        layout.addWidget(self.search.results, 1)
         hint = QLabel("Changes apply when you save; autostart applies at once.")
         hint.setObjectName("sidebarHint")
         hint.setWordWrap(True)
@@ -1372,6 +1411,20 @@ class SettingsDialog(QDialog):
         """Keep the edits, then restart WinLauncher, such as to load a new plugin."""
         if self.save() and self.restart_app is not None:
             self.restart_app()
+
+
+def _reveal(scroll: QScrollArea, row: QWidget) -> None:
+    """Scroll `row` into view and light it up until `FOUND_MS` passed."""
+    scroll.ensureWidgetVisible(row, 0, REVEAL_MARGIN)
+    row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+    _set_found(row, True)
+    QTimer.singleShot(FOUND_MS, row, lambda: _set_found(row, False))
+
+
+def _set_found(row: QWidget, found: bool) -> None:
+    row.setProperty("found", found)
+    row.style().unpolish(row)
+    row.style().polish(row)
 
 
 def _engine_chip() -> QLabel:

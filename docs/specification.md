@@ -935,6 +935,15 @@ tips and a **Start with Windows** switch, on at first. **Start searching** appli
 the switch and opens the bar; **Choose folders…** applies it and opens Settings on
 Search folders. Later starts never show it.
 
+Settings pages are built when first shown. **Search settings**, above the page
+list (Ctrl+F), finds pages and each titled row of their cards, plugin cards
+included: every typed word must appear, ignoring case, in the title, description
+or page name; title matches come first. The matches replace the page list while
+text is typed, each with its page below it; the first search builds the pages not
+shown yet. Enter or a click opens the page, scrolls to the row, unfolding nothing
+but showing a folded card's header instead, and lights the row up briefly. Enter
+in the field never saves. Esc clears typed text first; then it closes Settings.
+
 **Settings → General → Settings file**: **Export…** writes the settings as the
 dialog shows them, unsaved edits included, as the same JSON as `settings.json`, to
 a file the user picks. **Import…** reads such a file, validated like
