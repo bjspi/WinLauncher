@@ -116,17 +116,43 @@ def _belongs_here(runtime: HostRuntime) -> bool:
     return runtime.module == "winlauncher" and runtime.package == PACKAGE_PARENT
 
 
-def _old_entry_point(path: Path) -> bool:
-    """Recognize this interpreter's pip/pipx shim before replacing it."""
+def _check_old_entry_point(path: Path) -> None:
+    """Allow replacing a pip/pipx shim of WinLauncher from this or a removed environment.
+
+    A shim of another environment that still exists is a separate installation:
+    it stays, and the error says which one, so the user can remove it.
+    """
     try:
         with zipfile.ZipFile(path) as archive:
             script = archive.read("__main__.py")
-        return (
-            b"from winlauncher.__main__ import main" in script
-            and str(Path(sys.executable).parent).encode("utf-8") in path.read_bytes()
-        )
-    except (OSError, KeyError, zipfile.BadZipFile):
-        return False
+            archive_start = min(info.header_offset for info in archive.infolist())
+        data = path.read_bytes()
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        script = b""
+    if b"from winlauncher.__main__ import main" not in script:
+        raise FileExistsError(f"Refusing to replace an unrelated command: {path}")
+    if str(Path(sys.executable).parent).encode("utf-8") in data:
+        return
+    interpreter = _shebang_interpreter(data, archive_start)
+    if interpreter is not None and not interpreter.exists():
+        return  # Its environment was removed, for example by deleting a pipx venv.
+    raise FileExistsError(
+        f"{path} starts WinLauncher from another Python environment "
+        f"({interpreter or 'unknown interpreter'}). Uninstall that copy, for example with "
+        "`pipx uninstall winlauncher`, or delete the file; the next start installs this one."
+    )
+
+
+def _shebang_interpreter(data: bytes, archive_start: int) -> Path | None:
+    """The `#!` line pip and pipx write between their launcher and the zipped script."""
+    start = data.rfind(b"#!", 0, archive_start)
+    if start < 0:
+        return None
+    line = data[start + 2 : archive_start].splitlines()[0].strip().strip(b'"')
+    try:
+        return Path(line.decode("utf-8")) if line else None
+    except UnicodeDecodeError:
+        return None
 
 
 def write_host(path: Path, runtime: HostRuntime) -> None:
@@ -186,8 +212,8 @@ def install_launcher() -> Path | None:
     existing = read_host(target)
     if existing is not None and not _belongs_here(existing):
         raise FileExistsError(f"Another WinLauncher installation owns {target}")
-    if target.exists() and existing is None and not _old_entry_point(target):
-        raise FileExistsError(f"Refusing to replace an unrelated command: {target}")
+    if target.exists() and existing is None:
+        _check_old_entry_point(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     if existing != runtime:
         with tempfile.TemporaryDirectory(

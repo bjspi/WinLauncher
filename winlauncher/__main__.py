@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import os
 import queue
 import subprocess
 import sys
@@ -254,12 +255,21 @@ def _migrate_launcher(data_dir: Path) -> bool:
     """Repair PATH and shortcuts, then hand a legacy Python start to the branded host."""
     try:
         host = install_launcher()
-        if host is None:
-            return False
+    except FileExistsError as exc:  # Another command owns the name; its message says which.
+        logging.warning("Windows host not installed; continuing with Python: %s", exc)
+        host = None
+    except OSError:
+        logging.exception("Could not install the Windows host; continuing with Python")
+        host = None
+    if os.name == "nt":
+        # Also without the host: the shortcut then starts Python until the host is installed.
         try:
-            install_start_menu_shortcut(host)
+            install_start_menu_shortcut()
         except OSError:
             logging.exception("Could not install the Start-menu shortcut; keeping the original")
+    if host is None:
+        return False
+    try:
         try:
             StartupShortcut(data_dir).migrate()
         except OSError:
@@ -275,7 +285,7 @@ def _migrate_launcher(data_dir: Path) -> bool:
         logging.info("Handing the application to its Windows host: %s", host)
         return True
     except OSError:
-        logging.exception("Could not install or start the Windows host; continuing with Python")
+        logging.exception("Could not start the Windows host; continuing with Python")
         return False
 
 

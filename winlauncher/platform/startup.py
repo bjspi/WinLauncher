@@ -22,6 +22,7 @@ from typing import TypeVar
 from winlauncher.platform.launcher import (
     HOST_NAME,
     PACKAGE_PARENT,
+    TEMPLATE,
     application_command,
     bin_directory,
 )
@@ -133,18 +134,33 @@ class StartupShortcut:
         _write_shortcut(self.path, shortcut)
 
 
-def install_start_menu_shortcut(host: Path) -> None:
-    """Keep a searchable launch command even when automatic startup is disabled."""
+def install_start_menu_shortcut() -> None:
+    """Keep a searchable launch command even when automatic startup is disabled.
+
+    Without the host, the shortcut starts Python with the host's icon; once the
+    host is installed, the next start moves the shortcut over to it.
+    """
     path = _user_programs_folder() / SHORTCUT_NAME
+    command = application_command(["--show"])
+    host = bin_directory() / HOST_NAME
+    icon = command[0] if Path(command[0]) == host or not TEMPLATE.is_file() else str(TEMPLATE)
     shortcut = _Shortcut(
-        str(host), "--show", START_MENU_DESCRIPTION, str(PACKAGE_PARENT), (str(host), 0)
+        command[0],
+        subprocess.list2cmdline(command[1:]),
+        START_MENU_DESCRIPTION,
+        str(PACKAGE_PARENT),
+        (icon, 0),
     )
     if path.exists():
         current = _with_shortcut(lambda: _read_shortcut(path))
-        if current.description != START_MENU_DESCRIPTION or Path(current.target) != host:
+        module = subprocess.list2cmdline(MODULE_ARGUMENTS[:2])
+        legacy = current.arguments.startswith(module + " ")
+        if current.description != START_MENU_DESCRIPTION or not (
+            legacy or Path(current.target) == host
+        ):
             raise OSError(f"Refusing to change an unrelated shortcut: {path}")
-        if current == shortcut:
-            return
+        if current == shortcut or (Path(current.target) == host != Path(command[0])):
+            return  # Up to date, or the host of another installation keeps its shortcut.
     _write_shortcut(path, shortcut)
 
 

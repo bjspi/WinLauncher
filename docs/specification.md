@@ -952,18 +952,24 @@ the existing Python entry point.
 Starting an older Python entry point automatically installs or refreshes the host
 in `~/.local/bin` (or `XDG_BIN_HOME`), adds that directory to the user PATH if needed,
 and hands the elected application instance to it. New terminals find the command;
-already open terminals may need reopening. Owned pip/pipx command shims in that
-folder are migrated; unrelated commands and other installations are left alone.
+already open terminals may need reopening. WinLauncher's pip/pipx command shims in
+that folder are replaced when they belong to this environment or their environment
+no longer exists. A shim of another existing environment, unrelated commands and
+other installations are left alone; the log names the blocking file and its
+interpreter and suggests `pipx uninstall winlauncher`.
 Autostart, Restart, plugin-installation restarts and update restarts use the host.
 Python package tools continue using the real interpreter. A host setup failure is
 logged and falls back to Python. Windows may require enabling the new tray entry
 once because its executable path changed.
 
-Host setup also installs `WinLauncher.lnk` in the current user's Start-menu
-Programs folder. It uses the host's icon and `--show`, so Windows-key search opens
-the launcher or shows an already running instance. This shortcut remains when
-autostart is disabled. Unchanged links are not rewritten; unrelated or unreadable
-links are preserved, and failed saves leave the original intact.
+Every start also installs `WinLauncher.lnk` in the current user's Start-menu
+Programs folder, with `--show`, so Windows-key search opens the launcher or shows
+an already running instance. It starts the host with its icon; while the host is
+not installed, it starts `pythonw -m winlauncher --show` with the host's icon, and
+a later start moves it to the host. A link to a host another installation owns is
+kept. This shortcut remains when autostart is disabled. Unchanged links are not
+rewritten; unrelated or unreadable links are preserved, and failed saves leave the
+original intact.
 
 The tray menu offers Search, Refresh catalog, Settings, Start with Windows, Index
 status, Clear search history, Check for updates, About, Restart and Quit. A single

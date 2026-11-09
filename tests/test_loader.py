@@ -96,6 +96,28 @@ class LoaderTest(unittest.TestCase):
             launcher.install_launcher()
         self.assertEqual(host.read_bytes(), before)
 
+    def test_shim_of_a_removed_environment_is_replaced_but_a_live_one_is_named(self):
+        self.bin.mkdir()
+        host = self.bin / launcher.HOST_NAME
+        live = self.folder / "pipx venv" / "Scripts" / "pythonw.exe"
+        live.parent.mkdir(parents=True)
+        live.write_bytes(b"")
+        removed = self.folder / "removed venv" / "Scripts" / "pythonw.exe"
+        for interpreter, replaced in ((live, False), (removed, True)):
+            with self.subTest(interpreter=interpreter):
+                host.write_bytes(b"MZ launcher #!" + f'"{interpreter}"\r\n'.encode())
+                with zipfile.ZipFile(host, "a") as archive:
+                    archive.writestr("__main__.py", "from winlauncher.__main__ import main\n")
+                before = host.read_bytes()
+                if replaced:
+                    self.assertEqual(launcher.install_launcher(), host)
+                    self.assertIsNotNone(launcher.read_host(host))
+                else:
+                    with self.assertRaisesRegex(FileExistsError, "pipx uninstall") as raised:
+                        launcher.install_launcher()
+                    self.assertIn(str(live), str(raised.exception))
+                    self.assertEqual(host.read_bytes(), before)
+
     def test_template_integrity_is_checked_before_installation(self):
         template = self.folder / "template.exe"
         template.write_bytes(launcher.TEMPLATE.read_bytes() + b"changed")
