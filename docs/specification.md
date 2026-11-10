@@ -987,7 +987,9 @@ status, Clear search history, Check for updates, About, Restart and Quit. A sing
 click opens the launcher. Each entry shows a letter that triggers it while the menu
 is open, without Ctrl, Alt or the Windows key: S Search, R Refresh catalog, I Index
 status, K Settings, W Start with Windows, C Center search bar, H Clear search
-history, U updates, A About, N Restart and Q Quit. Restart starts a replacement process that waits for the
+history, U updates, A About, N Restart and Q Quit. A click on an entry within 0.4 s
+after a menu opens is ignored: the tray menu opens upwards with Quit under the pointer,
+and a touchpad tap right after the right-click would otherwise quit. Restart starts a replacement process that waits for the
 running one to release its instance lock, so two keyboard hooks never run at once. Clear search
 history asks for confirmation first and keeps favorites.
 
