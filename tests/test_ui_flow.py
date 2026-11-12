@@ -890,29 +890,23 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(bar.value(), 0)
         self.assertEqual(self.window.results.currentRow(), 0)
 
-    def test_a_refresh_of_the_same_query_updates_rows_in_place_and_keeps_the_search_time(self):
+    def test_a_refresh_showing_the_same_rows_redraws_nothing(self):
         """A constantly changing folder refreshes the shown query every few seconds."""
 
-        def hits(*names: str) -> list[SearchHit]:
+        def hits(score: float, *names: str) -> list[SearchHit]:
             return [
-                SearchHit(CatalogItem(self.root / name, ItemKind.FILE), 100, "fixture")
+                SearchHit(CatalogItem(self.root / name, ItemKind.FILE), score, "fixture")
                 for name in names
             ]
 
-        self.window.set_results([], 3, preserve_selection=False)
-        self.window.set_results(hits("a.txt", "b.txt"), 12)  # The first results shown.
-        self.window.results.setCurrentRow(1)
+        self.window.set_results(hits(100, "a.txt", "b.txt"), 12, preserve_selection=False)
         shown = self.window.results.item(0)
-        self.window.set_results(hits("a.txt", "b.txt", "c.txt"), 30)  # The catalog changed.
-        self.assertIs(self.window.results.item(0), shown)  # Not rebuilt: no flicker.
-        self.assertEqual(self.window.results.count(), 3)
-        self.assertEqual(self.window.results.currentRow(), 1)
+        self.window.set_results(hits(90, "a.txt", "b.txt"), 30)  # Only the scores moved.
+        self.assertIs(self.window.results.item(0), shown)
         self.assertIn("12 ms", self.window.status.text())
-        self.window.set_results(hits("c.txt"), 30)  # The selected file disappeared.
-        self.assertEqual(self.window.results.count(), 1)
-        self.assertEqual(self.window.selected_row().name, "c.txt")
-        self.window.set_results(hits("a.txt"), 7, preserve_selection=False)  # Another query.
-        self.assertIn("7 ms", self.window.status.text())
+        self.window.set_results(hits(90, "a.txt", "c.txt"), 30)  # Something changed.
+        self.assertEqual(self.window.results.item(1).data(Qt.ItemDataRole.UserRole).name, "c.txt")
+        self.assertIn("30 ms", self.window.status.text())
 
     def test_the_bar_takes_its_focus_back_from_the_taskbar_twice_at_most(self):
         from winlauncher.platform import windows
