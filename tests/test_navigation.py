@@ -289,6 +289,15 @@ class PathNavigationTest(unittest.TestCase):
         hits = self.service.search(parse_query(str(self.home / "notes.txt")), self.settings)
         self.assertTrue(hits[0].item.pinned)
 
+    def test_programs_reached_by_path_are_applications_like_in_the_catalog(self) -> None:
+        program = self.home / "Program.exe"
+        program.write_bytes(b"")  # Never run.
+        for text in (str(program), str(self.home / "Prog")):
+            with self.subTest(text=text):
+                query = replace(parse_query(text), kind=ItemKind.APP)
+                hits = self.service.search(query, self.settings)
+                self.assertEqual([hit.item.path for hit in hits], [program])
+
     def test_quoted_pasted_paths_navigate_without_their_quotes(self) -> None:
         report = self.home / "My Documents" / "Shared report.txt"
         report.write_text("fixture", encoding="utf-8")

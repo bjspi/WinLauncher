@@ -114,6 +114,11 @@ class PluginRankingTest(unittest.TestCase):
             rank_items("fake", "Fake", searchable_items([ANNA]), query("anna -schmidt"), limit=5),
             [],
         )
+        # Without a term the plugin's list is shown, still without the excluded items.
+        listed = rank_items(
+            "fake", "Fake", searchable_items([ANNA, BERND]), query("-schmidt"), limit=5
+        )
+        self.assertEqual([hit.item for hit in listed], [BERND])
 
     def test_earlier_items_win_ties_and_no_terms_keep_the_plugins_order(self):
         first = PluginItem("a", "Max Mustermann")

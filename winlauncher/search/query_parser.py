@@ -280,29 +280,30 @@ def _check_raw_text(text: str) -> None:
 
 
 def without_type_filter(text: str) -> str:
-    """Remove typed kind overrides when a user selects a different UI filter."""
+    """Remove typed kind overrides when a user selects a different UI filter.
+
+    The rest of the text stays as typed, so a quoted word still matches exactly.
+    """
     if _navigation_target(text) is not None:
         return text
-    tokens = _split_tokens(text)
-    kept = [
-        token
-        for token in tokens
-        if normalize(token.partition(":")[0]) not in ("type", "t")
-        or ":" not in token
-        or ntpath.isabs(token)
-    ]
-    if len(kept) == len(tokens):
-        return text
-    return " ".join(
-        f'"{token}"' if not token or any(c.isspace() for c in token) else token for token in kept
-    )
-
-
-def _split_tokens(text: str) -> list[str]:
-    tokens = list(_scan_tokens(text))
+    tokens = list(_query_tokens(text))
     if not all(token.closed for token in tokens):
         raise ValueError("Please close the quotation mark.")
-    return [token.text for token in tokens]
+    filters = [token for token in tokens if _is_type_filter(token.text)]
+    if not filters:
+        return text
+    pieces, position = [], 0
+    for token in filters:
+        pieces.append(text[position : token.start])
+        position = token.end
+    pieces.append(text[position:])
+    return " ".join(piece.strip() for piece in pieces if piece.strip())
+
+
+def _is_type_filter(token: str) -> bool:
+    """`type:app` or `t:dir`; a drive path such as `T:\\Work` is no filter."""
+    name, separator, _value = token.partition(":")
+    return bool(separator) and normalize(name) in ("type", "t") and not ntpath.isabs(token)
 
 
 @dataclass

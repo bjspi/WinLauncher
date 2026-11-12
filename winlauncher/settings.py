@@ -161,6 +161,8 @@ class Settings:
     excluded_paths: tuple[str, ...] = ()
     excluded_patterns: tuple[str, ...] = DEFAULT_EXCLUDED_PATTERNS
     marker_files: tuple[str, ...] = DEFAULT_MARKER_FILES
+    # A marked folder stays findable itself; only what is inside it is skipped.
+    keep_marked_folders: bool = False
     folder_priorities: tuple[FolderPriority, ...] = ()
     name_priorities: tuple[NamePriority, ...] = ()
     extension_priorities: tuple[ExtensionPriority, ...] = ()
@@ -226,6 +228,7 @@ class Settings:
             self.excluded_paths,
             self.excluded_patterns,
             self.marker_files,
+            self.keep_marked_folders,
             self.folder_priorities,
             self.name_priorities,
             self.extension_priorities,
@@ -247,7 +250,11 @@ class Settings:
 
     def exclusions(self, *, raise_marker_errors: bool = False) -> ExclusionPolicy:
         return ExclusionPolicy(
-            self.excluded_paths, self.excluded_patterns, self.marker_files, raise_marker_errors
+            self.excluded_paths,
+            self.excluded_patterns,
+            self.marker_files,
+            raise_marker_errors,
+            self.keep_marked_folders,
         )
 
     def priorities(self) -> PriorityPolicy:

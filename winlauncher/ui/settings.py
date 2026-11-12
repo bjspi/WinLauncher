@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from winlauncher import __version__
 from winlauncher.catalog.analysis import LOW_WEIGHT, Suggestion, SuggestionKind, analyze
@@ -991,18 +992,22 @@ class SettingsDialog(QDialog):
             self.tasks.submit(TaskCategory.PREFETCH, work, self._analyzed, self._analysis_failed)
 
     def _analysis_failed(self, failure: str) -> None:
-        self._analysis_done()
+        if not self._analysis_done():
+            return
         message(self, "Analysis failed", failure, ERROR)
 
-    def _analysis_done(self) -> None:
+    def _analysis_done(self) -> bool:
+        """Re-enable Analyze; False once closing Settings deleted the dialog meanwhile."""
+        if not isValid(self):
+            return False
         self.analyzing = False
         self.analyze_button.setEnabled(True)
         self.analyze_button.setText("Analyze…")
+        return True
 
     def _analyzed(self, suggestions: list[Suggestion]) -> None:
         """Offer the suggestions, unless the dialog went away meanwhile."""
-        self._analysis_done()
-        if not self.isVisible():
+        if not self._analysis_done() or not self.isVisible():
             return
         if not suggestions:
             message(
@@ -1200,6 +1205,8 @@ class SettingsDialog(QDialog):
         )
         self.markers = QLineEdit(", ".join(settings.marker_files))
         self.markers.setAccessibleName("Marker file names, comma-separated")
+        self.keep_marked = ToggleSwitch("Keep marked folders themselves findable")
+        self.keep_marked.setChecked(settings.keep_marked_folders)
         card = Card()
         card.add_block(
             "Excluded folders and entries",
@@ -1216,6 +1223,12 @@ class SettingsDialog(QDialog):
             "A folder that contains one of these files is skipped entirely. Separate "
             "names with commas.",
             self.markers,
+        )
+        card.add_row(
+            "Keep marked folders findable",
+            "The marked folder itself still shows up in results; only what is inside "
+            "it is skipped.",
+            self.keep_marked,
         )
         return [card]
 
@@ -1371,6 +1384,7 @@ class SettingsDialog(QDialog):
             excluded_paths=self.excluded.paths(),
             excluded_patterns=_split_lines(self.patterns.toPlainText()),
             marker_files=_split_commas(self.markers.text()),
+            keep_marked_folders=self.keep_marked.isChecked(),
         )
 
     def _read_ranking(self, settings: Settings) -> Settings:

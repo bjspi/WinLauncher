@@ -18,7 +18,7 @@ import time
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QEventLoop, QLockFile, QProcess, QTimer
+from PySide6.QtCore import QEventLoop, QLockFile, QProcess, Qt, QTimer
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QSslSocket
 from PySide6.QtWidgets import QApplication, QProgressDialog, QSystemTrayIcon
 
@@ -99,6 +99,9 @@ def _create_application() -> QApplication:
     app.setApplicationVersion(__version__)
     app.setQuitOnLastWindowClosed(False)  # The tray keeps WinLauncher running.
     app.setStyle("Fusion")
+    # Qt adopts Windows' tooltip slide and fade; tooltips appear at once instead.
+    app.setEffectEnabled(Qt.UIEffect.UI_AnimateTooltip, False)
+    app.setEffectEnabled(Qt.UIEffect.UI_FadeTooltip, False)
     theme().use(Appearance.SYSTEM)  # Until the controller applies the user's choice.
     app.setWindowIcon(app_icon())
     _use_windows_tls()

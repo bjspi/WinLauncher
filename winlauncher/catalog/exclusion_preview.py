@@ -75,7 +75,7 @@ def preview_exclusion(
             else:
                 files += 1
             if len(matches) < limit:
-                inherited = not policy.allows(path.parent, directory=True)
+                inherited = not policy.allows_contents(path.parent)
                 matches.append(ExclusionMatch(path, kind, inherited))
     if cancelled.is_set():
         return None

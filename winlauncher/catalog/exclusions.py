@@ -26,8 +26,11 @@ _ANY_FOLDERS = "(?:/[^/]+)*"
 class ExclusionPolicy:
     """Excluded paths, file/folder name patterns and marker files.
 
-    A marker file excludes its directory and the entire subtree. Marker probes
-    are cached per policy instance, so create a fresh policy per scan, search or
+    A marker file excludes its directory and the entire subtree. With
+    `keep_marked_folders`, the marked directory itself stays an allowed entry and
+    only what is inside it is excluded: `allows` answers for the folder as an
+    entry, `allows_contents` for what lies inside it. Marker probes are cached
+    per policy instance, so create a fresh policy per scan, search or
     notification batch (see `fresh`).
 
     If a marker cannot be probed, indexing must keep the previous snapshot of
@@ -39,6 +42,7 @@ class ExclusionPolicy:
     patterns: tuple[str, ...] = ()
     markers: tuple[str, ...] = DEFAULT_MARKER_FILES
     raise_marker_errors: bool = False
+    keep_marked_folders: bool = False
     _excluded_keys: tuple[str, ...] = field(init=False, repr=False)
     _plain_names: frozenset[str] = field(init=False, repr=False)
     _name_globs: tuple[re.Pattern[str], ...] = field(init=False, repr=False)
@@ -56,7 +60,13 @@ class ExclusionPolicy:
 
     def fresh(self) -> ExclusionPolicy:
         """The same rules with an empty marker cache."""
-        return ExclusionPolicy(self.paths, self.patterns, self.markers, self.raise_marker_errors)
+        return ExclusionPolicy(
+            self.paths,
+            self.patterns,
+            self.markers,
+            self.raise_marker_errors,
+            self.keep_marked_folders,
+        )
 
     def allows(self, path: Path, *, directory: bool = False, application: bool = False) -> bool:
         """`application` marks Start-menu and App Paths entries: file-name patterns such
@@ -65,7 +75,15 @@ class ExclusionPolicy:
             return False
         if not directory and not application and self._matches_pattern(path):
             return False
+        if directory and self.keep_marked_folders:
+            return self._allows_directory(path.parent) and not self._matches_pattern(path)
         return self._allows_directory(path if directory else path.parent)
+
+    def allows_contents(self, folder: Path) -> bool:
+        """Whether entries inside `folder` may be listed, and the folder scanned."""
+        if self._excluded_keys and path_key(folder).startswith(self._excluded_keys):
+            return False
+        return self._allows_directory(folder)
 
     def _allows_directory(self, folder: Path) -> bool:
         cached = self._directory_cache.get(folder)

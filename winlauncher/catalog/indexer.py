@@ -104,6 +104,10 @@ class _EntryRules:
             return None
         return self._unless_ignored(catalog_item(path, info, ItemKind.APP))
 
+    def allows_contents(self, folder: Path) -> bool:
+        """Whether a listed folder is scanned; a marked folder may be listed but not scanned."""
+        return self.exclusions.allows_contents(folder)
+
     def allows_scope(self, folder: Path, source_root: Path) -> bool:
         """A scoped scan inherits every pruning decision of the folders above it.
 
@@ -111,17 +115,25 @@ class _EntryRules:
         it are never followed through links.
         """
         return all(
-            self._allows_folder(ancestor, explicit_root=ancestor == source_root)
+            self._allows_folder(ancestor, explicit_root=ancestor == source_root, contents=True)
             for ancestor in _folders_up_to(folder, source_root)
         )
 
-    def _allows_folder(self, folder: Path, *, explicit_root: bool) -> bool:
+    def allows_folder_entry(self, folder: Path, source_root: Path) -> bool:
+        """Whether a scan root is listed itself, even when its contents are not scanned."""
+        return self.allows_scope(folder.parent, source_root) and self._allows_folder(
+            folder, explicit_root=folder == source_root, contents=False
+        )
+
+    def _allows_folder(self, folder: Path, *, explicit_root: bool, contents: bool) -> bool:
         info = long_paths.stat(folder) if explicit_root else long_paths.lstat(folder)
         if not stat.S_ISDIR(info.st_mode):
             return False
         if not explicit_root and _is_link_or_offline(info, directory=True):
             return False
         if not self.exclusions.allows(folder, directory=True):
+            return False
+        if contents and not self.exclusions.allows_contents(folder):
             return False
         return self._unless_ignored(catalog_item(folder, info, ItemKind.FOLDER)) is not None
 
@@ -280,17 +292,23 @@ class _ScanSession:
 
     def _enter_root(self, root: Path, source: CatalogSource, *, configured: bool) -> bool:
         try:
-            if not self.rules.allows_scope(root, source.root):
-                self.outcome.skip()
-                return False
             # A configured folder such as D:\Projects is an entry itself, so it can be
             # found by name, and a scoped root stays an entry of its parent. An Explorer
             # folder outside every source only lends its scope; a drive root has no
-            # name to find; application sources list only applications.
+            # name to find; application sources list only applications. A marked
+            # folder that stays findable is listed without its contents.
             listed = configured or root != source.root
-            if listed and not source.apps_only and root.parent != root:
+            if (
+                listed
+                and not source.apps_only
+                and root.parent != root
+                and self.rules.allows_folder_entry(root, source.root)
+            ):
                 info = long_paths.stat(root)
                 self.rows.add(catalog_item(root, info, ItemKind.FOLDER), source.id)
+            if not self.rules.allows_scope(root, source.root):
+                self.outcome.skip()
+                return False
         except OSError as exc:
             self.outcome.source_unavailable(source, root, exc)
             return False
@@ -342,7 +360,12 @@ class _ScanSession:
             return None
         if source.accepts(item):
             self.rows.add(item, source.id)
-        return path if directory else None
+        try:
+            scanned = directory and self.rules.allows_contents(path)
+        except OSError as exc:
+            self.outcome.failure(path, "Cannot read", exc)
+            return None
+        return path if scanned else None
 
     def _inside_project(self, folder: Path, source: CatalogSource) -> bool:
         """Whether `folder` lies inside a code project below the search folder, so that

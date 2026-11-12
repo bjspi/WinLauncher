@@ -440,6 +440,12 @@ def _shortcut_hint(
     return "↵ open · Ctrl+↵ show in folder · Ctrl+C copy file · Ctrl+1–9"
 
 
+def _describe_item(item: QListWidgetItem, row: ResultRow) -> None:
+    item.setText(row.accessible_text)
+    item.setData(Qt.ItemDataRole.UserRole, row)
+    item.setToolTip(row.tooltip)
+
+
 def _with_result_separators(rows: list[ResultRow]) -> list[ResultRow]:
     """Separate tools, direct entries and subfolder matches, in either tool order."""
     for index, (before, row) in enumerate(itertools.pairwise(rows), start=1):
@@ -649,6 +655,8 @@ class LauncherWindow(QWidget):
         self._bottom_anchor: int | None = None
         self._resize_pending = False
         self._refreshing_results = False
+        # The search time in the status line; a refresh of the same query keeps it.
+        self._elapsed_ms = 0.0
         # Started when focus leaves the launcher; see `set_auto_hide` and `_hide_if_unused`.
         self.auto_hide = QTimer(self)
         self.auto_hide.setSingleShot(True)
@@ -1187,11 +1195,18 @@ class LauncherWindow(QWidget):
         `query` is the file search behind the catalog hits; it drives the name
         highlighting and the size and date details. `missing` files are shown
         dimmed. Without hits, `content_search` is offered as the next query.
+
+        `preserve_selection` means the same query refreshed, such as after a
+        catalog or plugin refresh. Folders that change constantly refresh it every
+        few seconds, so it updates the shown rows in place and keeps the status
+        line's search time: rebuilding the list would flicker and drop the hovered
+        row's highlight.
         """
         previous = self.selected_row() if preserve_selection else None
-        # The same query refreshed, such as after a plugin's refresh: stay where the
-        # user scrolled to; clearing the list would jump back to its top.
+        # Stay where the user scrolled to; clearing the list would jump back to its top.
         scrolled = self.results.verticalScrollBar().value() if preserve_selection else 0
+        if not preserve_selection or self.results.count() == 0:
+            self._elapsed_ms = elapsed_ms  # Shown results refreshed keep their time.
         self.delegate.terms = query.terms if query is not None else ()
         rows = _with_result_separators(
             [
@@ -1205,18 +1220,21 @@ class LauncherWindow(QWidget):
             ]
         )
         selected_index = 0
+        if previous is not None:
+            identities = [row.identity for row in rows]
+            if previous.identity in identities:
+                selected_index = identities.index(previous.identity)
         with self._replacing_results():
-            self.results.clear()
-            for index, row in enumerate(rows):
-                item = QListWidgetItem(row.accessible_text)
-                item.setData(Qt.ItemDataRole.UserRole, row)
-                item.setToolTip(row.tooltip)
-                self.results.addItem(item)
-                if previous is not None and row.identity == previous.identity:
-                    selected_index = index
+            if preserve_selection:
+                self._update_rows(rows)
+            else:
+                self._replace_rows(rows)
             if hits and not self.calculation_selected:
                 self.results.setCurrentRow(selected_index)
             self.results.verticalScrollBar().setValue(scrolled)
+        if preserve_selection:
+            # The current row may still be the same list item, now with a new row.
+            self._current_row_changed()
         self._follow_in_explorer(direct_only=True)
         # An empty query without history stays a bare search bar.
         self.content_search = None if hits else content_search
@@ -1232,7 +1250,7 @@ class LauncherWindow(QWidget):
         self.empty.setVisible(
             not hits and bool(self.query.text().strip()) and self.calculation is None
         )
-        status = f"{len(hits)} results  ·  {elapsed_ms:.0f} ms"
+        status = f"{len(hits)} results  ·  {self._elapsed_ms:.0f} ms"
         if not self.explorer_mode:
             status += f"  ·  {self.catalog_count:,} indexed"
         self.status.setText(status if hits else "")
@@ -1691,6 +1709,30 @@ class LauncherWindow(QWidget):
         )
         self.hint.setText(hint)
         self.hint.setVisible(bool(hint))
+
+    def _replace_rows(self, rows: list[ResultRow]) -> None:
+        self.results.clear()
+        for row in rows:
+            item = QListWidgetItem()
+            _describe_item(item, row)
+            self.results.addItem(item)
+
+    def _update_rows(self, rows: list[ResultRow]) -> None:
+        """Show `rows` in the list's existing items, adding or removing only the difference."""
+        while self.results.count() > len(rows):
+            self.results.takeItem(self.results.count() - 1)
+        for index, row in enumerate(rows):
+            item = self.results.item(index)
+            if item is None:
+                item = QListWidgetItem()
+                self.results.addItem(item)
+            _describe_item(item, row)
+
+    def _current_row_changed(self) -> None:
+        """What follows the current row, for a change the list does not signal."""
+        self.update_detail()
+        self._update_hint()
+        self._update_preview()
 
     @contextmanager
     def _replacing_results(self) -> Iterator[None]:

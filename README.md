@@ -92,7 +92,7 @@ and replaces it, and your settings and catalog stay. You can
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.20.5"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.21.0"
 winlauncher --show
 ```
 
@@ -511,6 +511,8 @@ patterns with `*`, `?` and `[…]` wildcards, and marker file names. Defaults:
 
 - **Markers:** `.nobackup`, `.no-backup`, `pyvenv.cfg` (Python environments) and
   `conda-meta` (Conda environments) exclude their folder and everything below it.
+  With **Keep marked folders findable**, the marked folder itself still shows up and
+  only what is inside it is skipped.
 - **Windows shortcuts:** `*.lnk` excludes shortcuts in your folders, including existing
   catalog results. Start-menu and registered applications stay searchable: file-name
   patterns do not apply to them (folder exclusions and markers still do).

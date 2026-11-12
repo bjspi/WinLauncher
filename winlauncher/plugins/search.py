@@ -203,7 +203,7 @@ def rank_items(
     """
     if cancel is not None and cancel.is_set():
         return []
-    entries = _in_period(items, query)
+    entries = _without_excluded(_in_period(items, query), query)
     order = hit_order(query.sort)
     if not query.terms:
         listed = (
@@ -227,6 +227,18 @@ def rank_items(
     if cancel is not None and cancel.is_set():
         return []
     return heapq.nsmallest(limit, hits, key=order)
+
+
+def _without_excluded(
+    items: Iterable[SearchableItem], query: SearchQuery
+) -> Iterator[SearchableItem]:
+    """The items whose name and keywords contain none of the excluded terms (`-word`)."""
+    if not query.excluded_terms:
+        yield from items
+        return
+    for item in items:
+        if not any(excluded in item.searchable for excluded in query.excluded_terms):
+            yield item
 
 
 def _in_period(items: Iterable[SearchableItem], query: SearchQuery) -> Iterator[SearchableItem]:
@@ -326,8 +338,6 @@ def _text_relevance(
     entry: SearchableItem, query: SearchQuery, loose: frozenset[str]
 ) -> tuple[float, str] | None:
     """Every term must match the name or a keyword; terms add up."""
-    if any(excluded in entry.searchable for excluded in query.excluded_terms):
-        return None
     points, reasons = 0.0, []
     for term in query.terms:
         term_fuzzy = term in loose

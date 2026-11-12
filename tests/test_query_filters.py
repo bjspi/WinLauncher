@@ -103,6 +103,9 @@ class QueryFiltersTest(unittest.TestCase):
         text = r"report T:\Work t:dir"
         self.assertEqual(parse_query(text), parse_query(r"report T:\Work type:folder"))
         self.assertEqual(without_type_filter(text), r"report T:\Work")
+        # The rest stays as typed: a quoted word still matches exactly.
+        self.assertEqual(without_type_filter('"vsc" type:app -old'), '"vsc" -old')
+        self.assertEqual(parse_query(without_type_filter('t:dir "vsc"')).exact_terms, ("vsc",))
         for text in ("t:", "t:unknown"):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, "t: expects"):
                 parse_query(text)

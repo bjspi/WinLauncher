@@ -419,9 +419,7 @@ class LauncherController(QObject):
 
         settings = self.effective_settings()
         exclusions = settings.exclusions()
-        roots = tuple(
-            root for root in self._configured_roots() if exclusions.allows(root, directory=True)
-        )
+        roots = tuple(root for root in self._configured_roots() if exclusions.allows_contents(root))
         self.monitor = ChangeMonitor(roots, self.watch_events, exclusions=exclusions)
         self.monitor.start()
 

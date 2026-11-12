@@ -11,6 +11,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from winlauncher.actions import ExplorerTarget, ItemActions
@@ -85,6 +86,29 @@ class BusinessRulesTest(unittest.TestCase):
             paths = [row[0] for row in connection.execute("SELECT path FROM entries")]
         # The configured folder itself is an entry, too.
         self.assertEqual(paths, [str(self.root), str(visible)])
+
+    def test_a_kept_marked_folder_is_found_but_its_contents_are_not(self):
+        settings = replace(self.settings, keep_marked_folders=True)
+        self.file("private/.nobackup", "")
+        self.file("private/secret.txt")
+        self.file("private/nested/hidden.txt")
+        self.indexer.scan(settings)
+        with self.store.connect() as connection:
+            paths = {row[0] for row in connection.execute("SELECT path FROM entries")}
+        self.assertEqual(paths, {str(self.root), str(self.root / "private")})
+        self.assertEqual(
+            [hit.item.path for hit in self.hits("private", settings)], [self.root / "private"]
+        )
+        self.assertFalse(self.hits("secret", settings))
+        # The marker appears after the scan: the folder's refresh keeps the folder itself.
+        self.file("public/report.txt")
+        self.indexer.scan(settings)
+        self.file("public/.nobackup", "")
+        self.indexer.scan(settings, scope=self.root / "public")
+        self.assertEqual(
+            [hit.item.path for hit in self.hits("public", settings)], [self.root / "public"]
+        )
+        self.assertFalse(self.hits("report", settings))
 
     def test_new_marker_hides_old_results_and_subtree_refresh_removes_them(self):
         self.file("private/secret.txt")
@@ -956,6 +980,33 @@ class BusinessRulesTest(unittest.TestCase):
             active_tab.return_value = 33
             with self.assertRaises(OSError):
                 navigate_to(destination, 11, 22, self.root)
+
+    @unittest.skipUnless(os.name == "nt", "Windows Explorer adapter")
+    def test_an_active_tab_with_a_virtual_folder_never_resolves_another_tab(self):
+        """Explorer opens on Home; an inactive tab's folder must not stand in for it."""
+        from winlauncher.platform.explorer import _captured_window, resolve_folder
+
+        def shell_window(path: str, tab: int):
+            provider = Mock()
+            browser = provider.QueryInterface.return_value.QueryService.return_value
+            browser.GetWindow.return_value = tab
+            folder = SimpleNamespace(Self=SimpleNamespace(Path=path))
+            return SimpleNamespace(
+                HWND=11, Document=SimpleNamespace(Folder=folder), _oleobj_=provider
+            )
+
+        inactive = shell_window(str(self.root), 22)
+        home = shell_window("::{F874310E-B6B7-47DC-BC84-B9E6B38F5903}", 33)
+        self.assertIsNone(resolve_folder([inactive, home], 11, 33))
+        self.assertEqual(resolve_folder([inactive], 11, 33), self.root)  # No active tab.
+        moved = shell_window(str(self.root / "changed"), 33)
+        with (
+            patch("winlauncher.platform.explorer.active_tab", return_value=33),
+            patch("win32com.client.Dispatch") as dispatch,
+        ):
+            dispatch.return_value.Windows.return_value = [inactive, moved]
+            with self.assertRaises(OSError):
+                _captured_window(11, 33, self.root)
 
     def test_explorer_fallback_matches_paths_below_the_folder_and_program_names(self):
         receipt = self.file("invoices 2024/receipt.pdf")

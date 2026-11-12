@@ -146,7 +146,10 @@ or priority boost. Search rechecks current exclusions rather than trusting only
 the last scan. If marker metadata cannot be checked, search hides the affected path
 and indexing preserves its old snapshot while reporting the error. Marker creation triggers subtree cleanup where a watcher is active;
 marker removal allows reindexing. Roots excluded when monitoring starts rely on the
-periodic refresh to rediscover removal of their marker.
+periodic refresh to rediscover removal of their marker. With
+`keep_marked_folders` (off by default; **Settings → Exclusions → Keep marked folders
+findable**) a marked folder stays an entry of its parent and is found by name, while
+everything inside it stays excluded as before.
 
 ## Query language
 

@@ -25,6 +25,7 @@ from pathlib import Path
 
 from winlauncher.catalog import long_paths, storage
 from winlauncher.catalog.exclusions import ExclusionPolicy
+from winlauncher.catalog.indexer import catalog_item, classify_kind
 from winlauncher.catalog.model import FOLDER_SEPARATORS, CatalogItem, ItemKind, normalize, path_key
 from winlauncher.catalog.priority import PriorityPolicy
 from winlauncher.catalog.store import CatalogStore
@@ -152,7 +153,7 @@ def _navigation_matches(
     _require_responsive_root(path)
     browsing = text.endswith(FOLDER_SEPARATORS)
     folder = path if browsing else path.parent
-    if not exclusions.allows(folder, directory=True):
+    if not exclusions.allows_contents(folder):
         return
     if not browsing and os.path.lexists(long_paths.os_path(path)):
         if (target := _exact_target(text, path)) is not None:
@@ -289,5 +290,4 @@ def _cancelled(cancel: threading.Event | None) -> bool:
 def _item(path: Path) -> CatalogItem:
     """A catalog value for `path` read live from the filesystem; it stays unstored."""
     info = long_paths.stat(path)
-    kind = ItemKind.FOLDER if stat.S_ISDIR(info.st_mode) else ItemKind.FILE
-    return CatalogItem(path, kind, info.st_size, info.st_mtime, attributes=info.st_file_attributes)
+    return catalog_item(path, info, classify_kind(path, stat.S_ISDIR(info.st_mode)))

@@ -27,6 +27,7 @@ SVSI_DESELECTOTHERS = 0x04
 SVSI_ENSUREVISIBLE = 0x08
 SVSI_FOCUSED = 0x10
 SELECT_ONLY_AND_REVEAL = SVSI_SELECT | SVSI_DESELECTOTHERS | SVSI_ENSUREVISIBLE | SVSI_FOCUSED
+STALE_FOLDER = "The original Explorer folder is no longer available. Search again in Explorer."
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,33 +48,37 @@ FocusedView = tuple[ViewKind, tuple[int, int]]
 
 
 def resolve_folder(shell_windows, hwnd: int, tab: int) -> Path | None:
-    """Prefer the active tab's folder; refuse to guess between inactive tabs."""
-    exact, fallback = set(), set()
+    """The active tab's folder; None for a virtual one, such as Home or This PC.
+
+    Only when no shell window identifies as the active tab may a single folder
+    stand in for it; between inactive tabs WinLauncher refuses to guess.
+    """
+    fallback = set()
     for window in shell_windows:
         folder, is_active_tab = _window_folder(window, hwnd, tab)
-        if folder is None:
-            continue
-        fallback.add(folder)
         if is_active_tab:
-            exact.add(folder)
-    choices = exact or fallback
-    return next(iter(choices)) if len(choices) == 1 else None
+            return folder
+        if folder is not None:
+            fallback.add(folder)
+    return next(iter(fallback)) if len(fallback) == 1 else None
 
 
 def _window_folder(window, hwnd: int, tab: int) -> tuple[Path | None, bool]:
-    """The folder of one shell window belonging to `hwnd`, and whether it is `tab`."""
+    """The folder of one shell window belonging to `hwnd`, and whether it is `tab`.
+
+    The folder is None for a virtual folder; the window can still be the active tab.
+    """
     import pythoncom
     from win32com.shell import shell
 
     try:
         if int(window.HWND) != hwnd:
             return None, False
-        folder = Path(window.Document.Folder.Self.Path)
-        if not folder.is_absolute():
-            return None, False  # Virtual folders such as Home or This PC.
         provider = window._oleobj_.QueryInterface(pythoncom.IID_IServiceProvider)
         browser = provider.QueryService(shell.SID_STopLevelBrowser, pythoncom.IID_IOleWindow)
-        return folder, int(browser.GetWindow()) == tab
+        is_active_tab = int(browser.GetWindow()) == tab
+        folder = Path(window.Document.Folder.Self.Path)
+        return (folder if folder.is_absolute() else None), is_active_tab
     except (pythoncom.com_error, AttributeError, TypeError, ValueError):
         return None, False
 
@@ -115,20 +120,18 @@ def _captured_window(hwnd: int, tab: int, original_folder: Path):
 
     if active_tab(hwnd) != tab:
         raise OSError("The original Explorer tab is no longer active. Search again in Explorer.")
-    exact, fallback = [], []
+    fallback = []
     for window in win32com.client.Dispatch("Shell.Application").Windows():
         folder, active = _window_folder(window, hwnd, tab)
-        if folder != original_folder:
-            continue
-        fallback.append(window)
         if active:
-            exact.append(window)
-    choices = exact or fallback
-    if len(choices) != 1:
-        raise OSError(
-            "The original Explorer folder is no longer available. Search again in Explorer."
-        )
-    return choices[0]
+            if folder != original_folder:
+                raise OSError(STALE_FOLDER)
+            return window
+        if folder == original_folder:
+            fallback.append(window)
+    if len(fallback) != 1:
+        raise OSError(STALE_FOLDER)
+    return fallback[0]
 
 
 class ExplorerTracker(threading.Thread):

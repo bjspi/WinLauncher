@@ -319,6 +319,21 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(read.folder_priorities[-1], FolderPriority(low, -20, "low"))
         self.assertEqual(self.controller.settings.folder_depths, ())  # Not saved yet.
 
+    def test_an_analysis_finishing_after_settings_closed_touches_nothing(self):
+        from PySide6.QtCore import QCoreApplication
+
+        self.controller.edit_settings("Search folders")
+        dialog = self.controller.settings_dialog
+        with (
+            patch("winlauncher.ui.settings.analyze", return_value=[]),
+            patch("winlauncher.ui.settings.message") as told,
+        ):
+            dialog.analyze_catalog()
+            dialog.reject()  # Closing Settings deletes the dialog.
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            self.tasks.finish(TaskCategory.PREFETCH)  # Raises on a deleted button.
+        told.assert_not_called()
+
     def test_settings_export_and_import_replace_everything_after_asking(self):
         exported = self.root.parent / "exported.json"
         self.controller.edit_settings()
@@ -859,6 +874,30 @@ class UiFlowTest(unittest.TestCase):
         self.window.set_results(hits, 1, preserve_selection=False)  # Another query.
         self.assertEqual(bar.value(), 0)
         self.assertEqual(self.window.results.currentRow(), 0)
+
+    def test_a_refresh_of_the_same_query_updates_rows_in_place_and_keeps_the_search_time(self):
+        """A constantly changing folder refreshes the shown query every few seconds."""
+
+        def hits(*names: str) -> list[SearchHit]:
+            return [
+                SearchHit(CatalogItem(self.root / name, ItemKind.FILE), 100, "fixture")
+                for name in names
+            ]
+
+        self.window.set_results([], 3, preserve_selection=False)
+        self.window.set_results(hits("a.txt", "b.txt"), 12)  # The first results shown.
+        self.window.results.setCurrentRow(1)
+        shown = self.window.results.item(0)
+        self.window.set_results(hits("a.txt", "b.txt", "c.txt"), 30)  # The catalog changed.
+        self.assertIs(self.window.results.item(0), shown)  # Not rebuilt: no flicker.
+        self.assertEqual(self.window.results.count(), 3)
+        self.assertEqual(self.window.results.currentRow(), 1)
+        self.assertIn("12 ms", self.window.status.text())
+        self.window.set_results(hits("c.txt"), 30)  # The selected file disappeared.
+        self.assertEqual(self.window.results.count(), 1)
+        self.assertEqual(self.window.selected_row().name, "c.txt")
+        self.window.set_results(hits("a.txt"), 7, preserve_selection=False)  # Another query.
+        self.assertIn("7 ms", self.window.status.text())
 
     def test_the_bar_takes_its_focus_back_from_the_taskbar_twice_at_most(self):
         from winlauncher.platform import windows
