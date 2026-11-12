@@ -451,8 +451,11 @@ class LauncherController(QObject):
     # Indexing results -----------------------------------------------------------
 
     def _index_started(self, job: IndexJob) -> None:
-        full = job.kind == IndexJobKind.FULL
-        self.status.set_activity("Refreshing local catalog…" if full else "Refreshing folder…")
+        """Announce full scans only. Folder and file refreshes follow the folder watcher,
+        every few seconds in a busy folder; a line shown for a few milliseconds each
+        time would make the open bar jump."""
+        if job.kind == IndexJobKind.FULL:
+            self.status.set_activity("Refreshing local catalog…")
 
     def _index_progress(self, count: int) -> None:
         self.status.set_activity(f"Refreshing catalog… {count:,} entries scanned")

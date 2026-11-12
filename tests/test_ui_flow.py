@@ -330,7 +330,8 @@ class UiFlowTest(unittest.TestCase):
         ):
             dialog.analyze_catalog()
             dialog.reject()  # Closing Settings deletes the dialog.
-            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            # Delete only this dialog; other tests' pending deletions stay pending.
+            QCoreApplication.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)
             self.tasks.finish(TaskCategory.PREFETCH)  # Raises on a deleted button.
         told.assert_not_called()
 
@@ -719,6 +720,16 @@ class UiFlowTest(unittest.TestCase):
         c._drain_watch_events()
         self.assertIsNone(self.indexing.running)
         self.assertFalse(self.indexing.dirty_files)
+
+    def test_only_full_scans_show_an_activity_line(self):
+        """A busy folder refreshes every few seconds; the open bar must not jump each time."""
+        self.indexing.request_folder(self.root)
+        self.assertTrue(self.window.activity.isHidden())
+        self.tasks.finish(TaskCategory.INDEX)
+        self.indexing.request_full()
+        self.assertEqual(self.window.activity.text(), "Refreshing local catalog…")
+        self.tasks.finish(TaskCategory.INDEX)
+        self.assertTrue(self.window.activity.isHidden())
 
     def test_partial_repairs_cannot_postpone_periodic_full_scan(self):
         self.indexing.request_folder(self.root)

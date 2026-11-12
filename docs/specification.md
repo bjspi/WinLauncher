@@ -94,6 +94,8 @@ changes trigger subtree refreshes, and the default periodic full
 refresh interval is 1,800 seconds; it only repairs events the folder watcher missed. The interval is configurable from 30 to 86,400
 seconds after the previous full scan completes. Requests queue behind running scans;
 partial repairs cannot postpone the periodic full-scan deadline.
+Only full scans show an activity line in the bar; the watcher's exact-file and
+subtree refreshes run silently, so a busy folder does not make the open bar jump.
 Directory metadata-only notifications wait for periodic refresh; they do not trigger
 recursive scans of their parents. A scoped scan containing separate configured
 sources retains their snapshots and indexing modes. Hiding an Explorer search
