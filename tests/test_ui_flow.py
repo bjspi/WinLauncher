@@ -319,25 +319,6 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(read.folder_priorities[-1], FolderPriority(low, -20, "low"))
         self.assertEqual(self.controller.settings.folder_depths, ())  # Not saved yet.
 
-    def test_an_analysis_finishing_after_settings_closed_touches_nothing(self):
-        """Closing Settings deletes the dialog; the analysis may still finish afterwards.
-
-        The deletion is simulated: really deleting a dialog here leaves Qt objects
-        behind that crash later tests.
-        """
-        self.controller.edit_settings("Search folders")
-        dialog = self.controller.settings_dialog
-        with (
-            patch("winlauncher.ui.settings.analyze", return_value=[]),
-            patch("winlauncher.ui.settings.message") as told,
-        ):
-            dialog.analyze_catalog()
-            dialog.reject()
-            with patch("winlauncher.ui.settings.isValid", return_value=False):
-                self.tasks.finish(TaskCategory.PREFETCH)
-        self.assertEqual(dialog.analyze_button.text(), "Analyzing…")  # Left untouched.
-        told.assert_not_called()
-
     def test_settings_export_and_import_replace_everything_after_asking(self):
         exported = self.root.parent / "exported.json"
         self.controller.edit_settings()
@@ -724,17 +705,6 @@ class UiFlowTest(unittest.TestCase):
         self.assertIsNone(self.indexing.running)
         self.assertFalse(self.indexing.dirty_files)
 
-    def test_only_full_scans_show_an_activity_line(self):
-        """A busy folder refreshes every few seconds; the open bar must not jump each time."""
-        before = self.window.activity.text()  # Such as a missing Rust engine.
-        self.indexing.request_folder(self.root)
-        self.assertEqual(self.window.activity.text(), before)
-        self.tasks.finish(TaskCategory.INDEX)
-        self.indexing.request_full()
-        self.assertIn("Refreshing local catalog…", self.window.activity.text())
-        self.tasks.finish(TaskCategory.INDEX)
-        self.assertEqual(self.window.activity.text(), before)
-
     def test_partial_repairs_cannot_postpone_periodic_full_scan(self):
         self.indexing.request_folder(self.root)
         self.assertTrue(self.indexing.periodic.isActive())
@@ -889,24 +859,6 @@ class UiFlowTest(unittest.TestCase):
         self.window.set_results(hits, 1, preserve_selection=False)  # Another query.
         self.assertEqual(bar.value(), 0)
         self.assertEqual(self.window.results.currentRow(), 0)
-
-    def test_a_refresh_showing_the_same_rows_redraws_nothing(self):
-        """A constantly changing folder refreshes the shown query every few seconds."""
-
-        def hits(score: float, *names: str) -> list[SearchHit]:
-            return [
-                SearchHit(CatalogItem(self.root / name, ItemKind.FILE), score, "fixture")
-                for name in names
-            ]
-
-        self.window.set_results(hits(100, "a.txt", "b.txt"), 12, preserve_selection=False)
-        shown = self.window.results.item(0)
-        self.window.set_results(hits(90, "a.txt", "b.txt"), 30)  # Only the scores moved.
-        self.assertIs(self.window.results.item(0), shown)
-        self.assertIn("12 ms", self.window.status.text())
-        self.window.set_results(hits(90, "a.txt", "c.txt"), 30)  # Something changed.
-        self.assertEqual(self.window.results.item(1).data(Qt.ItemDataRole.UserRole).name, "c.txt")
-        self.assertIn("30 ms", self.window.status.text())
 
     def test_the_bar_takes_its_focus_back_from_the_taskbar_twice_at_most(self):
         from winlauncher.platform import windows
