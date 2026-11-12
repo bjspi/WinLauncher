@@ -320,8 +320,11 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(self.controller.settings.folder_depths, ())  # Not saved yet.
 
     def test_an_analysis_finishing_after_settings_closed_touches_nothing(self):
-        from PySide6.QtCore import QCoreApplication
+        """Closing Settings deletes the dialog; the analysis may still finish afterwards.
 
+        The deletion is simulated: really deleting a dialog here leaves Qt objects
+        behind that crash later tests.
+        """
         self.controller.edit_settings("Search folders")
         dialog = self.controller.settings_dialog
         with (
@@ -329,10 +332,10 @@ class UiFlowTest(unittest.TestCase):
             patch("winlauncher.ui.settings.message") as told,
         ):
             dialog.analyze_catalog()
-            dialog.reject()  # Closing Settings deletes the dialog.
-            # Delete only this dialog; other tests' pending deletions stay pending.
-            QCoreApplication.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)
-            self.tasks.finish(TaskCategory.PREFETCH)  # Raises on a deleted button.
+            dialog.reject()
+            with patch("winlauncher.ui.settings.isValid", return_value=False):
+                self.tasks.finish(TaskCategory.PREFETCH)
+        self.assertEqual(dialog.analyze_button.text(), "Analyzing…")  # Left untouched.
         told.assert_not_called()
 
     def test_settings_export_and_import_replace_everything_after_asking(self):
@@ -723,13 +726,14 @@ class UiFlowTest(unittest.TestCase):
 
     def test_only_full_scans_show_an_activity_line(self):
         """A busy folder refreshes every few seconds; the open bar must not jump each time."""
+        before = self.window.activity.text()  # Such as a missing Rust engine.
         self.indexing.request_folder(self.root)
-        self.assertTrue(self.window.activity.isHidden())
+        self.assertEqual(self.window.activity.text(), before)
         self.tasks.finish(TaskCategory.INDEX)
         self.indexing.request_full()
-        self.assertEqual(self.window.activity.text(), "Refreshing local catalog…")
+        self.assertIn("Refreshing local catalog…", self.window.activity.text())
         self.tasks.finish(TaskCategory.INDEX)
-        self.assertTrue(self.window.activity.isHidden())
+        self.assertEqual(self.window.activity.text(), before)
 
     def test_partial_repairs_cannot_postpone_periodic_full_scan(self):
         self.indexing.request_folder(self.root)
