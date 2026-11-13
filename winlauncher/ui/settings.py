@@ -226,6 +226,7 @@ SHORTCUTS = (
             ("Open the selected result", ("Enter",)),
             ("Open result 1 to 9", ("Ctrl", "1…9")),
             ("Show it in its folder", ("Ctrl", "Enter")),
+            ("Run the app as administrator", ("Ctrl", "Shift", "Enter")),
             (
                 "Run a menu command with its shortcut",
                 ("Alt", "Enter"),

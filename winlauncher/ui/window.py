@@ -590,6 +590,8 @@ class LauncherWindow(QWidget):
     open_requested = Signal(object)
     reveal_requested = Signal(object)
     open_with_requested = Signal(object)  # SearchHit of a file.
+    # The selected SearchHit, or None; the search session checks it is an app.
+    run_as_administrator_requested = Signal(object)
     # PluginHit, and the PluginAction to run for it.
     plugin_action_requested = Signal(object, object)
     plugin_exclude_requested = Signal(object)  # PluginHit.
@@ -871,6 +873,8 @@ class LauncherWindow(QWidget):
             ("Ctrl+L", self.focus_query),
             ("Ctrl+Return", self.reveal_selected),
             ("Ctrl+Enter", self.reveal_selected),  # Keypad Enter.
+            ("Ctrl+Shift+Return", self.run_selected_as_administrator),
+            ("Ctrl+Shift+Enter", self.run_selected_as_administrator),
             ("Ctrl+Shift+C", self.copy_target),
             ("Ctrl+D", self.favorite_selected),
             ("Ctrl+P", self.pin_button.toggle),
@@ -1786,6 +1790,10 @@ class LauncherWindow(QWidget):
         if (row := self.selected_row()) and (hit := row.file_hit):
             self.reveal_requested.emit(hit)
 
+    def run_selected_as_administrator(self) -> None:
+        """Ctrl+Shift+Enter, as in the Start menu: start the selected app elevated."""
+        self.run_as_administrator_requested.emit(self.selected_hit())
+
     def favorite_selected(self) -> None:
         if (row := self.selected_row()) and (hit := row.file_hit):
             self.favorite_requested.emit(hit)
@@ -1878,6 +1886,11 @@ class LauncherWindow(QWidget):
     def _add_file_actions(self, menu: QMenu, row: ResultRow, hit: SearchHit) -> None:
         clipboard = QApplication.clipboard()
         menu.addAction("Open", lambda: self.open_requested.emit(hit))
+        if hit.item.kind == ItemKind.APP:
+            menu.addAction(
+                "Run as administrator\tCtrl+Shift+Enter",
+                lambda: self.run_as_administrator_requested.emit(hit),
+            )
         if hit.item.kind == ItemKind.FILE:
             menu.addAction("Open with…", lambda: self.open_with_requested.emit(hit))
         menu.addAction("Show in containing folder", lambda: self.reveal_requested.emit(hit))

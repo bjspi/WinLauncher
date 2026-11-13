@@ -2,12 +2,48 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from winlauncher.catalog.model import ItemKind, normalize
+from winlauncher.catalog.model import FOLDER_SEPARATORS, ItemKind, normalize
 from winlauncher.search.matching import MIN_FUZZY_TERM_LENGTH, is_wildcard
+
+# `%TEMP%` names a folder by its environment variable or known-folder name.
+VARIABLE_MARK = "%"
+# Typed like Explorer's address, `shell:Startup` navigates to a Windows shell folder.
+SHELL_FOLDER_PREFIX = "shell:"
+_ANY_SEPARATOR = re.compile("|".join(map(re.escape, FOLDER_SEPARATORS)))
+
+
+def is_shell_folder_path(text: str) -> bool:
+    """`text` starts with `shell:`, in any case, as Explorer accepts it."""
+    return text[: len(SHELL_FOLDER_PREFIX)].casefold() == SHELL_FOLDER_PREFIX
+
+
+def variable_name_prefix(text: str) -> str | None:
+    """`APP` for `%APP`, a folder variable name still being typed; else None."""
+    if not text.startswith(VARIABLE_MARK) or VARIABLE_MARK in text[1:]:
+        return None
+    return text.removeprefix(VARIABLE_MARK)
+
+
+def shell_folder_name_prefix(text: str) -> str | None:
+    """`Sta` for `shell:Sta`, a shell folder name still being typed; else None."""
+    if not is_shell_folder_path(text):
+        return None
+    name = text[len(SHELL_FOLDER_PREFIX) :]
+    return None if has_folder_separator(name) else name
+
+
+def has_folder_separator(text: str) -> bool:
+    return _ANY_SEPARATOR.search(text) is not None
+
+
+def split_at_first_separator(text: str) -> list[str]:
+    """`text` split once at its first folder separator; one part without any."""
+    return _ANY_SEPARATOR.split(text, maxsplit=1)
 
 
 class MatchMode(StrEnum):

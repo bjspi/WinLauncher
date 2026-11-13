@@ -63,6 +63,7 @@ from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFE
 from winlauncher.ui.indexing import IndexJobKind
 from winlauncher.ui.messages import MessageDialog, message
 from winlauncher.ui.plugins import ask_text
+from winlauncher.ui.search_session import PendingAction
 from winlauncher.ui.settings import SettingsDialog
 from winlauncher.ui.tasks import TaskCategory
 from winlauncher.ui.theme import colors
@@ -367,6 +368,37 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(self.window.query.text(), "date:")
         self.assertTrue(self.window.isVisible())
         self.launch.assert_not_called()
+
+    def test_run_as_administrator_waits_for_the_typed_query_and_needs_an_app(self):
+        old_app = CatalogItem(self.root / "cmd.exe", ItemKind.APP)
+        new_app = CatalogItem(self.root / "regedit.exe", ItemKind.APP)
+        document = CatalogItem(self.root / "notes.txt", ItemKind.FILE)
+        found = {"cmd": [old_app], "regedit": [new_app], "notes": [document]}
+
+        def search(query, *_args, **_kwargs):
+            return [SearchHit(item, 900, "Exact name") for item in found[query.terms[0]]]
+
+        patch.object(self.controller.search.service, "search", side_effect=search).start()
+        elevate = patch.object(self.controller.actions, "run_as_administrator").start()
+        self.window.show()
+        self.window.query.setText("cmd")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.window.query.setText("regedit")
+        # The old app is still selected, but Ctrl+Shift+Enter means the typed query.
+        self.window.run_selected_as_administrator()
+        self.tasks.finish(TaskCategory.SEARCH)
+        self.tasks.finish(TaskCategory.ACTION)
+        elevate.assert_called_once_with(new_app.path)
+        self.window.show()
+        self.window.query.setText("notes")
+        self.controller.search.run()
+        self.tasks.finish(TaskCategory.SEARCH)
+        actions = self.tasks.count(TaskCategory.ACTION)
+        self.window.run_selected_as_administrator()
+        # A document cannot run as administrator.
+        self.assertEqual(self.tasks.count(TaskCategory.ACTION), actions)
+        elevate.assert_called_once()
 
     def test_website_enter_waits_for_current_query_and_keeps_local_results(self):
         site = WebsiteShortcut("az", "Amazon", "https://www.amazon.de/s?k=%s")
@@ -740,7 +772,7 @@ class UiFlowTest(unittest.TestCase):
         # The old result stays visible, but Enter waits for the typed query's results.
         self.assertEqual(self.window.selected_hit().item.path, first)
         self.window.open_selected()
-        self.assertTrue(self.controller.search.open_pending)
+        self.assertIs(self.controller.search.pending, PendingAction.OPEN)
         self.tasks.finish(TaskCategory.SEARCH)
         self.tasks.finish(TaskCategory.ACTION)
         self.launch.assert_called_once_with(second, "second", explorer=None)
@@ -1092,7 +1124,7 @@ class UiFlowTest(unittest.TestCase):
         hit = self.window.selected_hit()
         self.controller.search.run()  # A background refresh of the query already displayed.
         self.window.open_requested.emit(hit)
-        self.assertFalse(self.controller.search.open_pending)
+        self.assertIsNone(self.controller.search.pending)
         self.tasks.finish(TaskCategory.ACTION)
         self.launch.assert_called_once_with(path, "report", explorer=None)
 
@@ -1725,7 +1757,7 @@ class UiFlowTest(unittest.TestCase):
             stale = self.window.selected_hit()
             self.window.query.setText("codex")
             self.window.open_selected()
-            self.assertTrue(self.controller.search.open_pending)
+            self.assertIs(self.controller.search.pending, PendingAction.OPEN)
             run.assert_not_called()
             self.tasks.finish(TaskCategory.SEARCH)
             self.assertNotEqual(self.window.selected_hit(), stale)
@@ -1749,7 +1781,7 @@ class UiFlowTest(unittest.TestCase):
             self.assertEqual(self.window.selected_hit(), file)
             self.window.present(text="wt", scope=self.root, explorer_view=(11, 22))
             self.window.open_selected()
-            self.assertTrue(self.controller.search.open_pending)
+            self.assertIs(self.controller.search.pending, PendingAction.OPEN)
             self.tasks.finish(TaskCategory.SEARCH)
             self.tasks.finish(TaskCategory.ACTION)
             run.assert_called_once_with(EXPLORER_TERMINAL, self.root)

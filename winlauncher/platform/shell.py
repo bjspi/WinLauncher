@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING
 
 from winlauncher.catalog import storage
 from winlauncher.catalog.model import path_key
+from winlauncher.platform.known_folders import folder_locations, known_folder
 from winlauncher.platform.store_apps import store_app_folder
-from winlauncher.platform.windows_tools import windows_tools_folder
+from winlauncher.platform.windows_tools import shell_folder_shortcuts, windows_tools_folder
 
 if TYPE_CHECKING:
     from winlauncher.settings import Settings
@@ -26,31 +27,13 @@ START_MENU_SUBFOLDER = "Microsoft/Windows/Start Menu/Programs"
 # Known folders (FOLDERID_ names) Explorer shows with their own icon, wherever
 # they were redirected to.
 SPECIAL_FOLDERS = ("Profile", "Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos")
-# Known folders offered as %NAME% shortcuts beside the environment variables.
-FOLDER_SHORTCUTS = (
-    *SPECIAL_FOLDERS[1:],
-    "Startup",
-    "CommonStartup",
-    "SendTo",
-    "Recent",
-    "Templates",
-    "StartMenu",
-    "Programs",
-    "SavedGames",
-    "Favorites",
-    "Links",
-    "LocalAppDataLow",
-    "UserProgramFiles",
-    "QuickLaunch",
-    "Fonts",
-    "PublicDesktop",
-    "PublicDocuments",
-)
 # SHOpenWithDialog: run the chosen program, and offer "Always use this app".
 OAIF_ALLOW_REGISTRATION, OAIF_REGISTER_EXT, OAIF_EXEC = 0x1, 0x2, 0x4
 OPEN_WITH_FLAGS = OAIF_ALLOW_REGISTRATION | OAIF_REGISTER_EXT | OAIF_EXEC
 COINIT_APARTMENTTHREADED = 0x2
+ERROR_CANCELLED = 1223  # The user declined, such as the consent prompt.
 ERROR_CANCELLED_HRESULT = -2147023673  # HRESULT_FROM_WIN32(ERROR_CANCELLED), signed.
+RUN_AS_ADMINISTRATOR = "runas"  # The shell verb that asks for elevation.
 logger = logging.getLogger(__name__)
 
 
@@ -63,27 +46,16 @@ def special_folders() -> frozenset[str]:
     return frozenset(path_key(path) for name in SPECIAL_FOLDERS if (path := known_folder(name)))
 
 
-@functools.cache
-def folder_shortcuts() -> dict[str, Path]:
-    """Known folders by `%NAME%` shortcut name, such as DOWNLOADS or SENDTO."""
-    return {name.upper(): path for name in FOLDER_SHORTCUTS if (path := known_folder(name))}
+def shell_folders() -> dict[str, Path]:
+    """What each `shell:` name opens: a folder, or a shortcut for a virtual folder.
 
-
-def known_folder(name: str) -> Path | None:
-    """The current location of a Windows known folder, such as `Downloads`."""
-    if os.name != "nt":
-        return None
-    import pywintypes
-    from win32comext.shell import shell
-
-    folder_id = getattr(shell, f"FOLDERID_{name}", None)
-    if folder_id is None:
-        return None  # Not known to this pywin32 or Windows version.
-    try:
-        return Path(shell.SHGetKnownFolderPath(folder_id, 0, None))
-    except pywintypes.com_error:
-        logger.info("Known folder unavailable: %s", name)
-        return None
+    Those shortcuts exist only after a scan with Windows tools enabled wrote them,
+    so they are looked up on every call; folder locations are asked once.
+    """
+    named = folder_locations()
+    if (tools := windows_tools_folder()) is not None:
+        named.update(shell_folder_shortcuts(tools))
+    return named
 
 
 def application_roots(*, apps: bool = True, windows_tools: bool = False) -> tuple[Path, ...]:
@@ -152,6 +124,21 @@ def _is_executable_path(path: Path) -> bool:
 def open_path(path: Path) -> None:
     _require_existing(path)
     os.startfile(str(path), cwd=str(path.parent))
+
+
+def run_as_administrator(path: Path) -> bool:
+    """Start `path` elevated after Windows' consent prompt; False if the user declined.
+
+    Shortcuts work too: the shell elevates the program or console they open.
+    """
+    _require_existing(path)
+    try:
+        os.startfile(str(path), RUN_AS_ADMINISTRATOR, cwd=str(path.parent))
+    except OSError as error:
+        if getattr(error, "winerror", None) == ERROR_CANCELLED:
+            return False
+        raise
+    return True
 
 
 class _OpenAsInfo(ctypes.Structure):

@@ -39,8 +39,9 @@ from winlauncher.platform.gesture import (
     ViewKind,
 )
 from winlauncher.platform.git import release_changes
+from winlauncher.platform.known_folders import variable_folders
 from winlauncher.platform.launcher import PACKAGE_PARENT, application_command
-from winlauncher.platform.shell import folder_shortcuts, indexed_application_roots
+from winlauncher.platform.shell import indexed_application_roots, shell_folders
 from winlauncher.platform.startup import StartupShortcut
 from winlauncher.platform.startup_timing import StartupTimings
 from winlauncher.platform.store_apps import store_app_folder
@@ -53,6 +54,7 @@ from winlauncher.plugins.sources import CLONES_FOLDER, Offer, PluginSources
 from winlauncher.releases import Release, install_command
 from winlauncher.search.commands import CommandHit
 from winlauncher.search.native_engine import native_availability, warm_search_index
+from winlauncher.search.navigation import FolderNames
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.service import SearchService
 from winlauncher.search.syntax_help import SyntaxTip
@@ -164,7 +166,7 @@ class LauncherController(QObject):
         timings.mark("window")
         self.search = SearchSession(
             self.window,
-            SearchService(self.store, folder_shortcuts),
+            SearchService(self.store, _folder_names),
             self.tasks,
             self.effective_settings,
             self,
@@ -236,6 +238,7 @@ class LauncherController(QObject):
         window.open_requested.connect(self.search.request_open)
         window.reveal_requested.connect(self.reveal_item)
         window.open_with_requested.connect(self.open_with)
+        window.run_as_administrator_requested.connect(self.search.request_run_as_administrator)
         window.plugin_action_requested.connect(self.run_plugin_action)
         window.plugin_exclude_requested.connect(self.exclude_plugin_item)
         window.plugin_menu = self.plugins.item_menu
@@ -252,6 +255,7 @@ class LauncherController(QObject):
         window.restart_requested.connect(self.restart)
         window.about_requested.connect(self.show_about)
         self.search.open_requested.connect(self.open_item)
+        self.search.run_as_administrator_requested.connect(self.run_as_administrator)
 
     def _connect_tray(self) -> None:
         tray = self.tray
@@ -671,6 +675,10 @@ class LauncherController(QObject):
     def reveal_item(self, hit: SearchHit) -> None:
         self.window.close_after_action()
         self._run_action(partial(self.actions.reveal, hit.item.path))
+
+    def run_as_administrator(self, hit: SearchHit) -> None:
+        self.window.close_after_action()
+        self._run_action(partial(self.actions.run_as_administrator, hit.item.path))
 
     def open_with(self, hit: SearchHit) -> None:
         self.window.close_after_action()
@@ -1160,3 +1168,16 @@ def _details(title: str, text: str) -> QPlainTextEdit:
     box.setPlaceholderText(title)
     box.setMaximumHeight(DETAILS_HEIGHT)
     return box
+
+
+def _folder_names() -> FolderNames:
+    """The known folders `%NAME%` and `shell:` reach, asked on a search worker.
+
+    They only add to navigation: if Windows cannot list them, environment
+    variables and paths still work.
+    """
+    try:
+        return FolderNames(variable_folders(), shell_folders())
+    except Exception:
+        logger.warning("Could not list the Windows known folders", exc_info=True)
+        return FolderNames()

@@ -248,6 +248,7 @@ built-in keys and Ctrl+Alt is AltGr on many keyboards.
 | <kbd>Tab</kbd> on a folder | Search inside that folder; <kbd>Shift</kbd>+<kbd>Tab</kbd> moves to its parent, <kbd>Backspace</kbd> in the empty field searches everywhere again |
 | <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>Ctrl</kbd>+<kbd>9</kbd> | Open the numbered result |
 | <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Show the result in its folder |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> | Run the selected app as administrator (also in its context menu) |
 | <kbd>Alt</kbd>+<kbd>Enter</kbd> / <kbd>Alt</kbd>+click / <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> | Run your own command whose shortcut is Alt (also Shift or Alt+Shift) |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy the path |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> | Toggle favorite |
@@ -327,6 +328,8 @@ report match:keyword score:match        no fuzzy matching, text relevance only
 report low:true                         include low-priority results
 %TEMP%                                  open the Windows temporary directory
 %LOCALAPPDATA%                          open local application data
+shell:startup                           open a shell folder, as in the Run dialog
+shell:Recycle                           suggest shell folders, virtual ones included
 ~/                                      list the user directory's direct children
 ~/.config                               open this folder even outside indexed roots
 D:\Work\                                list this folder's direct children without indexing
@@ -339,6 +342,8 @@ navigation as `~/`; spaces belong to the path, and the quotes of Explorer's
 "Copy as path" are removed. For a catalog search within a folder, use
 `in:"D:\Work" report` (a leading `D:\Work\ report` now navigates instead). `%` suggestions and exact references such as
 `%TEMP%` show the variable name and its full resolved path; `%TEMP%\` lists its contents.
+`shell:` suggests the shell folders Explorer and the Run dialog know, such as
+`shell:startup`, `shell:sendto` or the Recycle Bin (`shell:RecycleBinFolder`).
 
 | Filter | Meaning |
 | --- | --- |

@@ -1,7 +1,8 @@
 """Debounced, cancellable launcher searches and the "Enter opens" contract.
 
 Enter must open a result of the query the user currently sees typed. If that
-query's results are not displayed yet, opening waits for them.
+query's results are not displayed yet, opening waits for them; so does running an
+app as administrator.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from functools import partial
 from pathlib import Path
 from typing import TypeAlias
@@ -19,6 +21,7 @@ from typing import TypeAlias
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from winlauncher.catalog import long_paths, storage
+from winlauncher.catalog.model import ItemKind
 from winlauncher.platform.gesture import ViewKind
 from winlauncher.plugins.host import PluginHost, PluginSearch
 from winlauncher.plugins.search import PluginQuery, merge_hits, plugin_query
@@ -62,8 +65,16 @@ class StartList:
     results: SearchResults
 
 
+class PendingAction(Enum):
+    """What the user asked of the selected result before its query's results arrived."""
+
+    OPEN = "open"
+    RUN_AS_ADMINISTRATOR = "run as administrator"
+
+
 class SearchSession(QObject):
     open_requested = Signal(object, str)  # LauncherHit, history key of its file query
+    run_as_administrator_requested = Signal(object)  # SearchHit of an app.
 
     def __init__(
         self,
@@ -80,7 +91,7 @@ class SearchSession(QObject):
         self.running: threading.Event | None = None  # Cancel flag of the search in flight.
         self.displayed_query: LauncherQuery | None = None
         self.displayed_command_folder: Path | None = None
-        self.open_pending = False
+        self.pending: PendingAction | None = None
         # Kept ready while the bar is hidden, so it opens with its list at once.
         self.start_list: StartList | None = None
         self.prefetching: threading.Event | None = None  # Cancel flag of the prefetch.
@@ -117,7 +128,7 @@ class SearchSession(QObject):
         return query
 
     def text_changed(self) -> None:
-        self.open_pending = False
+        self.pending = None
         self._abandon_running()
         if (start := self._start_list_for_typed_query()) is not None:
             # Shown at once; a fresh search confirms it, invisibly when nothing changed.
@@ -134,7 +145,7 @@ class SearchSession(QObject):
         try:
             query = self.current_query()
         except ValueError as exc:
-            self.open_pending = False
+            self.pending = None
             self.window.show_query_error(str(exc))
             return
         cancel = self.running = threading.Event()
@@ -221,21 +232,35 @@ class SearchSession(QObject):
         except ValueError:
             return
         if self._must_wait_for_results(hit, query):
-            self.open_pending = True
+            self.pending = PendingAction.OPEN
             self.run()
             return
         if hit is not None:
             files = _file_query(query)
             self.open_requested.emit(hit, files.history_key if files else "")
 
+    def request_run_as_administrator(self, hit: LauncherHit | None) -> None:
+        """Run the selected app elevated, once the typed query's results are shown."""
+        try:
+            query = self.current_query()
+        except ValueError:
+            return
+        if self._must_wait_for_results(hit, query):
+            self.pending = PendingAction.RUN_AS_ADMINISTRATOR
+            self.run()
+            return
+        if isinstance(hit, SearchHit) and hit.item.kind == ItemKind.APP:
+            self.run_as_administrator_requested.emit(hit)
+
     def _must_wait_for_results(self, hit: LauncherHit | None, query: LauncherQuery) -> bool:
-        """Enter refers to the typed query; its results may not be displayed yet."""
+        """Enter and Ctrl+Shift+Enter refer to the typed query, whose results may not
+        be displayed yet."""
         if not self._is_displayed(query):
             return True
         return hit is None and self.running is not None
 
     def window_hidden(self) -> None:
-        self.open_pending = False
+        self.pending = None
         self.debounce.stop()
         self._abandon_running()
         self.prefetch_start_list()
@@ -348,9 +373,11 @@ class SearchSession(QObject):
             self.displayed_query = None
             return
         self._show(query, result)
-        if self.open_pending:
-            self.open_pending = False
+        pending, self.pending = self.pending, None
+        if pending is PendingAction.OPEN:
             self.request_open(self.window.selected_hit())
+        elif pending is PendingAction.RUN_AS_ADMINISTRATOR:
+            self.request_run_as_administrator(self.window.selected_hit())
 
     def _show(self, query: LauncherQuery, result: SearchResults) -> None:
         same_query = (
@@ -379,7 +406,7 @@ class SearchSession(QObject):
             return
         self.running = None
         self.displayed_query = None
-        self.open_pending = False
+        self.pending = None
         self.window.show_search_error(message)
 
 

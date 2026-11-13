@@ -4,7 +4,7 @@ Tokens are separated by whitespace; double quotes group words, and a quoted term
 matches only as contiguous text. Backslashes and apostrophes are literal, so
 Windows paths and names like "mom's" survive. A token `key:value` is a filter
 only when `key` is a known filter name. Input that starts with an absolute path,
-`%` or the home shortcut `~` is one path for direct navigation instead (see
+`%`, `shell:` or the home shortcut `~` is one path for direct navigation instead (see
 `_navigation_target`). A leading `!` or `-` excludes, and a trailing separator
 within a search (`reports\\`, `D:\\Work\\`) names a folder.
 """
@@ -30,7 +30,13 @@ from winlauncher.catalog.model import (
     normalize,
     normalize_extension,
 )
-from winlauncher.search.query import MatchMode, ScoreMode, SearchQuery, SortOrder
+from winlauncher.search.query import (
+    MatchMode,
+    ScoreMode,
+    SearchQuery,
+    SortOrder,
+    is_shell_folder_path,
+)
 
 MAX_QUERY_LENGTH = 512
 MAX_TERM_LENGTH = 128
@@ -173,8 +179,8 @@ def _navigation_target(text: str) -> str | None:
     """The path that `text` navigates to directly, or None for an ordinary search.
 
     The whole trimmed input is one path, spaces and filter-like text included, when
-    it starts with `%`, is `~` or starts with `~/`, or is an absolute drive or UNC
-    path. One pair of quotes around an absolute path is removed, as Explorer's
+    it starts with `%` or `shell:` (in any case), is `~` or starts with `~/`, or is
+    an absolute drive or UNC path. One pair of quotes around an absolute path is removed, as Explorer's
     "Copy as path" adds them. Purely syntactic: the filesystem is not touched.
     """
     stripped = text.strip()
@@ -182,6 +188,8 @@ def _navigation_target(text: str) -> str | None:
     if unquoted is not None and _is_absolute_path(unquoted):
         return unquoted
     if stripped == _HOME_SHORTCUT or stripped.startswith(_NAVIGATION_PREFIXES):
+        return stripped
+    if is_shell_folder_path(stripped):
         return stripped
     return stripped if _is_absolute_path(stripped) else None
 

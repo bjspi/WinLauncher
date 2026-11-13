@@ -160,6 +160,7 @@ class EnglishNamesTest(unittest.TestCase):
         self.folder = Path(temporary.name)
 
     def sync(self, folder: Path, known=None, **kinds) -> dict[str, set[str]]:
+        kinds.setdefault("shell_folders", ())
         stubs = {f"_{name}": _stub_kind(*titles) for name, titles in kinds.items()}
         with patch.multiple(windows_tools, **stubs):
             return windows_tools._sync_kinds(folder, [], True, known=known)
@@ -196,6 +197,30 @@ class EnglishNamesTest(unittest.TestCase):
         self.assertFalse(english.parent.exists())
 
 
+class ShellFolderShortcutTest(unittest.TestCase):
+    def test_shortcuts_are_found_by_the_shell_name_in_their_title(self):
+        with tempfile.TemporaryDirectory(prefix="winlauncher-tools-") as temporary:
+            folder = Path(temporary)
+            shortcuts = folder / windows_tools.SHELL_FOLDERS
+            shortcuts.mkdir()
+            for name in (
+                "Papierkorb (RecycleBinFolder).lnk",
+                "Lokale Benutzer (lokal) (UsersFilesFolder).lnk",
+                "Ohne Namen.lnk",
+                "Notiz (Other).txt",
+            ):
+                (shortcuts / name).write_text("stub")
+            self.assertEqual(
+                windows_tools.shell_folder_shortcuts(folder),
+                {
+                    "RecycleBinFolder": shortcuts / "Papierkorb (RecycleBinFolder).lnk",
+                    "UsersFilesFolder": shortcuts
+                    / "Lokale Benutzer (lokal) (UsersFilesFolder).lnk",
+                },
+            )
+            self.assertEqual(windows_tools.shell_folder_shortcuts(folder / "missing"), {})
+
+
 @unittest.skipUnless(os.name == "nt", "Windows shell")
 class WindowsToolShortcutTest(unittest.TestCase):
     @classmethod
@@ -218,6 +243,11 @@ class WindowsToolShortcutTest(unittest.TestCase):
         for file_name in ("(services.msc)", "(taskmgr)", "(regedit)"):
             with self.subTest(file_name=file_name):
                 self.assertTrue(any(name.endswith(file_name) for name in names), names)
+
+    def test_virtual_shell_folders_get_shortcuts_named_after_them(self):
+        names = windows_tools.shell_folder_shortcuts(self.folder)
+        self.assertIn("RecycleBinFolder", names)
+        self.assertNotIn("Startup", names)  # A folder on disk needs no shortcut.
 
     def test_shortcuts_show_an_icon(self):
         for kind in (windows_tools.CONTROL_PANEL, windows_tools.SETTINGS, windows_tools.TOOLS):

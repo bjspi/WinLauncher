@@ -15,7 +15,7 @@ import heapq
 import itertools
 import logging
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -33,7 +33,7 @@ from winlauncher.search.native_engine import (
     rank_with_native,
     select_native,
 )
-from winlauncher.search.navigation import search_paths
+from winlauncher.search.navigation import FolderNames, search_paths
 from winlauncher.search.query import SearchQuery, SortOrder
 from winlauncher.search.ranking import PriorityBand, Ranker, Ranking, SearchHit
 from winlauncher.settings import Settings
@@ -152,12 +152,12 @@ class SearchService:
     def __init__(
         self,
         store: CatalogStore,
-        folder_shortcuts: Callable[[], Mapping[str, Path]] = dict,
+        folder_names: Callable[[], FolderNames] = FolderNames,
     ):
-        """`folder_shortcuts` names folders that `%NAME%` reaches beside environment
+        """`folder_names` names what `%NAME%` and `shell:` reach beside environment
         variables, such as the Windows known folders; the platform layer supplies them."""
         self.store = store
-        self.folder_shortcuts = folder_shortcuts
+        self.folder_names = folder_names
 
     def search(
         self, query: SearchQuery, settings: Settings, *, cancel: threading.Event | None = None
@@ -165,7 +165,7 @@ class SearchService:
         if query.navigation is not None:
             logger.info("Search started: engine=path_navigation")
             return _hide_fallbacks_unless_needed(
-                search_paths(query, settings, cancel, self.store, self.folder_shortcuts()), query
+                search_paths(query, settings, cancel, self.store, self.folder_names()), query
             )
         if query.explorer and query.scope is not None:
             return self._search_explorer_folder(query, query.scope, settings, cancel)

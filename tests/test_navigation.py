@@ -14,6 +14,7 @@ from winlauncher.catalog import storage
 from winlauncher.catalog.model import ItemKind
 from winlauncher.catalog.priority import NamePriority
 from winlauncher.catalog.store import CatalogStore
+from winlauncher.search.navigation import FolderNames
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.service import SearchService
 from winlauncher.settings import DEFAULT_EXCLUDED_PATTERNS, RESULT_LIMIT_RANGE, Settings
@@ -155,9 +156,8 @@ class PathNavigationTest(unittest.TestCase):
         zulu_target = self.home / "Alpha folder"
         alpha_target.mkdir()
         zulu_target.mkdir()
-        self.service = SearchService(
-            self.service.store, lambda: {"NAV_ALPHA": zulu_target, "NAV_EXTRA": self.toolbox}
-        )
+        variables = {"NAV_ALPHA": zulu_target, "NAV_EXTRA": self.toolbox}
+        self.service = SearchService(self.service.store, lambda: FolderNames(variables))
         with patch.dict(
             os.environ,
             NAV_ALPHA=str(alpha_target),
@@ -180,7 +180,8 @@ class PathNavigationTest(unittest.TestCase):
         downloads = self.home / "Downloads"
         downloads.mkdir()
         (downloads / "setup.exe").write_text("fixture")
-        self.service = SearchService(self.service.store, lambda: {"DOWNLOADS": downloads})
+        folders = FolderNames({"DOWNLOADS": downloads})
+        self.service = SearchService(self.service.store, lambda: folders)
 
         def names(text):
             return [hit.label for hit in self.service.search(parse_query(text), self.settings)]
@@ -197,6 +198,63 @@ class PathNavigationTest(unittest.TestCase):
         self.assertEqual(self.paths("%Downloads%\\"), [downloads / "setup.exe"])
         with self.assertRaisesRegex(ValueError, "Unknown"):
             self.service.search(parse_query("%NOWHERE%\\"), self.settings)
+
+    def test_folder_names_keep_their_order_so_familiar_names_win(self):
+        documents = self.home / "Documents"
+        documents.mkdir()
+        # The registry calls Documents `Personal`; the curated name comes first.
+        names = FolderNames({"DOCUMENTS": documents, "PERSONAL": documents})
+        self.service = SearchService(self.service.store, lambda: names)
+        labels = [hit.label for hit in self.service.search(parse_query("%"), self.settings)]
+        self.assertIn("%DOCUMENTS%", labels)
+        self.assertNotIn("%PERSONAL%", labels)
+        self.assertEqual(self.paths("%personal%"), [documents])
+
+    def test_shell_folders_complete_by_name_and_browse_like_paths(self):
+        startup = self.home / "Startup"
+        startup.mkdir()
+        (startup / "tool.txt").write_text("fixture")
+        recycle_bin = self.home / "Shell folders" / "Recycle Bin (RecycleBinFolder).lnk"
+        recycle_bin.parent.mkdir()
+        recycle_bin.write_text("fixture")
+        shell = {
+            "Startup": startup,
+            "Start Menu": self.toolbox,
+            "RecycleBinFolder": recycle_bin,
+            "OneDrive": self.home / "missing",
+        }
+        self.service = SearchService(self.service.store, lambda: FolderNames(shell=shell))
+
+        def labels(text):
+            return [hit.label for hit in self.service.search(parse_query(text), self.settings)]
+
+        # Like Explorer's address bar: any case, spaces and filter-like text included.
+        self.assertEqual(
+            parse_query(" Shell:Common Startup t:app ").navigation, "Shell:Common Startup t:app"
+        )
+        self.assertIsNone(parse_query("shellfish").navigation)
+        self.assertEqual(labels("shell:sta"), ["shell:Start Menu", "shell:Startup"])
+        self.assertEqual(labels("SHELL:Startup"), ["shell:Startup"])
+        # A virtual folder opens through its shortcut; a missing folder is left out.
+        self.assertEqual(
+            labels("shell:"), ["shell:RecycleBinFolder", "shell:Start Menu", "shell:Startup"]
+        )
+        hit = self.service.search(parse_query("shell:recycle"), self.settings)[0]
+        self.assertEqual(hit.item.path, recycle_bin)
+        self.assertTrue(hit.reason.startswith("Windows shell folder"))
+        self.assertEqual(self.paths("shell:startup\\"), [startup / "tool.txt"])
+        self.assertEqual(self.paths("shell:Startup/to"), [startup / "tool.txt"])
+        self.assertEqual(self.paths("shell:Start Menu\\"), [])
+        with self.assertRaisesRegex(ValueError, "Unknown shell folder: shell:Nowhere"):
+            self.paths("shell:Nowhere\\")
+        # Like other results, what was opened recently comes first; favorites lead.
+        self.service.store.record_launch(startup, "")
+        self.assertEqual(labels("shell:sta"), ["shell:Startup", "shell:Start Menu"])
+        self.service.store.set_favorite(self.toolbox, True)
+        self.assertEqual(labels("shell:sta"), ["shell:Start Menu", "shell:Startup"])
+        # Without names from the platform, a shell folder is simply not suggested.
+        self.service = SearchService(self.service.store)
+        self.assertEqual(self.paths("shell:sta"), [])
 
     def test_navigation_honors_exclusions_markers_priorities_and_type(self):
         (self.home / "Report.LNK").touch()
@@ -268,6 +326,9 @@ class PathNavigationTest(unittest.TestCase):
         self.assertEqual(self.paths(str(self.toolbox)), [])
         self.assertNotIn(self.toolbox, self.paths(str(self.home) + os.sep))
         self.assertEqual(self.paths("%DEVTOOLS%\\"), [])
+        # Asked for by name, the excluded folder itself still shows; its contents do not.
+        self.assertEqual(self.paths("%DEVTOOLS%"), [self.toolbox])
+        self.assertEqual(self.paths("%devtool"), [self.toolbox])
         ignored = replace(
             self.settings, name_priorities=(NamePriority("notes", search_priority="ignored"),)
         )

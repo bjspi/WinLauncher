@@ -66,7 +66,8 @@ flowchart TD
 | `platform/` | Win32 bindings, keyboard hook, Explorer COM, directory watching, shell, autostart |
 | `platform/launcher.py`, `loader/` | Branded Windows process, its per-installation resources, PATH migration and application commands |
 | `platform/shortcuts.py` | Folders of generated shortcuts the catalog indexes; `store_apps.py` and `windows_tools.py` fill them |
-| `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles and system programs, named by Windows |
+| `platform/windows_tools.py` | Control Panel tasks, Settings app pages, consoles, system programs and virtual shell folders, named by Windows |
+| `platform/known_folders.py` | Windows known folders: registered `shell:` names, their locations and the `%NAME%` folders |
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `ui/preview.py` | Alt+P's preview: bounded loading of images, PDF pages, Markdown, code colored by Pygments, text and folders off the GUI thread, plugin items' own previews, and its pane |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
@@ -254,8 +255,10 @@ not answer, because Windows reports a dead server's files as not found. Windows'
 own context menu has to open on the GUI thread, so an `ACTION` job asks the drive
 first and the menu opens when it answers. The Exclude dialog takes a result's kind
 from the catalog instead of the disk.
-`SearchHit.label` carries the `%NAME%` title of variable targets to
-`ui/result_rows.py`; identity and actions use the real target.
+`SearchHit.label` carries the `%NAME%` or `shell:Name` title of named targets to
+`ui/result_rows.py`; identity and actions use the real target. The names come from
+the platform layer as `navigation.FolderNames`, which the controller asks for on
+the navigation worker (`known_folders.variable_folders`, `shell.shell_folders`).
 
 `search/native_engine.py` imports the extension once (`native_availability`),
 checks `API_VERSION` and selects the Unicode tables of the running interpreter

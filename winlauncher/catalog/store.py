@@ -7,6 +7,7 @@ import sqlite3
 import time
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from winlauncher.catalog.model import (
@@ -184,6 +185,14 @@ def _staged_row(item: CatalogItem, source_id: str) -> tuple:
         item.modified,
         item.attributes,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Usage:
+    """How often an item was opened and when last (seconds since the epoch)."""
+
+    launches: int
+    last_used: float
 
 
 class CatalogStore:
@@ -425,6 +434,19 @@ class CatalogStore:
                 f"SELECT path_key FROM favorites WHERE path_key IN ({placeholders})", keys
             )
             return {row[0] for row in rows}
+
+    def usage(self, keys: Iterable[str]) -> dict[str, Usage]:
+        """How often and when these `path_key` identities were opened; unused ones are left out."""
+        keys = tuple(keys)
+        if not keys:
+            return {}
+        placeholders = ",".join("?" for _ in keys)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT path_key, launches, last_used FROM usage WHERE path_key IN ({placeholders})",
+                keys,
+            )
+            return {key: Usage(launches, last_used) for key, launches, last_used in rows}
 
     def clear_history(self) -> None:
         with self.connect() as connection:

@@ -80,6 +80,12 @@ class ItemActions:
     def reveal(self, path: Path) -> None:
         shell.show_in_folder(path)
 
+    def run_as_administrator(self, path: Path) -> None:
+        """Start an app elevated; it counts as a launch unless the prompt was declined."""
+        storage.require_drive(path)
+        if shell.run_as_administrator(path):
+            self.store.record_launch(path, "")
+
     def open_with(self, path: Path) -> None:
         """Windows' Open with dialog; the launch it makes is not WinLauncher's to count."""
         shell.open_with(path)

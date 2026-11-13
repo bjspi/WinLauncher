@@ -12,6 +12,9 @@ Windows display language:
   setting, each of its other entries, opening its page.
 - Tools: management consoles and system programs, named with their file name,
   so `services.msc` and `taskmgr` find them as well as *Dienste* or *Task-Manager*.
+- Shell folders: the virtual known folders, such as the Recycle Bin, named with
+  their `shell:` name, as in *Papierkorb (RecycleBinFolder)*. Navigation opens
+  them for `shell:RecycleBinFolder`, which has no path of its own.
 
 Every name comes from Windows, so nothing here is translated. Optionally the
 English names Windows has for them are added below `English`, because guides on
@@ -34,7 +37,9 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 
+from winlauncher.platform.known_folders import registered_folders
 from winlauncher.platform.shortcuts import (
+    SHORTCUT_SUFFIX,
     ShortcutWriter,
     shortcut_name,
     sync_shortcuts,
@@ -46,6 +51,12 @@ FOLDER = Path("WinLauncher") / "Windows settings"  # Below %LOCALAPPDATA%.
 CONTROL_PANEL = "Control Panel"
 SETTINGS = "Settings"
 TOOLS = "Tools"
+SHELL_FOLDERS = "Shell folders"
+SHELL_ADDRESS = "shell:"  # Explorer's parsing name for a known folder by its name.
+# A shell folder's shortcut file name ends with its `shell:` name in parentheses.
+_SHELL_FOLDER_NAME = re.compile(r".*\(([^()]+)\)" + re.escape(SHORTCUT_SUFFIX), re.IGNORECASE)
+# Display names of shell folders Windows cannot name start with their parsing name.
+_UNNAMED = "::"
 ENGLISH_FOLDER = "English"
 ENGLISH = "en-US"
 CONTROL_PANEL_ITEMS = "shell:::{21EC2020-3AEA-1069-A2DD-08002B30309D}"
@@ -142,6 +153,7 @@ def _sync_kinds(
         CONTROL_PANEL: lambda: _control_panel(every_setting),
         SETTINGS: lambda: _settings_pages(windows / SETTINGS_APP, every_setting),
         TOOLS: lambda: _tools(windows, languages),
+        SHELL_FOLDERS: _shell_folders,
     }
     names: dict[str, set[str]] = {}
     for kind, list_shortcuts in kinds.items():
@@ -321,3 +333,42 @@ def _file_description(program: Path) -> str | None:
     except Exception:
         return None
     return description.strip() if isinstance(description, str) and description.strip() else None
+
+
+# Shell folders ------------------------------------------------------------------
+
+
+def shell_folder_shortcuts(folder: Path) -> dict[str, Path]:
+    """The shortcut opening each virtual shell folder by its `shell:` name.
+
+    `folder` is `windows_tools_folder()`; the English copies are not needed.
+    """
+    try:
+        shortcuts = list((folder / SHELL_FOLDERS).glob("*" + SHORTCUT_SUFFIX))
+    except OSError:
+        return {}
+    named = {}
+    for path in sorted(shortcuts):
+        if (match := _SHELL_FOLDER_NAME.fullmatch(path.name)) is not None:
+            named.setdefault(match[1], path)
+    return named
+
+
+def _shell_folders() -> Shortcuts:
+    from win32comext.shell import shell, shellcon
+
+    shortcuts = []
+    for known in registered_folders():
+        if not known.virtual:
+            continue
+        try:
+            address = SHELL_ADDRESS + known.name
+            item = shell.SHCreateItemFromParsingName(address, None, shell.IID_IShellItem)
+            title = item.GetDisplayName(shellcon.SIGDN_NORMALDISPLAY)
+        except Exception:  # Not available on this computer, such as an absent Outlook.
+            continue
+        if title and not title.startswith(_UNNAMED):
+            shortcuts.append(
+                (f"{title} ({known.name})", lambda path, item=item: write_item_shortcut(path, item))
+            )
+    return shortcuts

@@ -56,6 +56,10 @@ nothing is translated by WinLauncher:
   the display language (`System32\<language>\*.msc`), and a fixed list of system
   programs titled with their file description. Both keep their file name in the
   title, as in *Dienste (services.msc)* or *Task-Manager (taskmgr)*.
+- `Shell folders`: one shortcut per virtual known folder that Windows can name,
+  titled with its display name and its `shell:` name, as in *Papierkorb
+  (RecycleBinFolder)*. Ordinary searches find them by either name, and `shell:`
+  navigation opens them through these shortcuts.
 
 *Settings detail* chooses between every setting (the default) and pages only.
 Pages only keeps the Control Panel items without the God Mode tasks, and only the
@@ -318,11 +322,12 @@ Alt+2 and Alt+3. Clicking the active toggle again or using Alt+0 restores All.
 Typed kind filters update toggle/menu state. Selecting a toggle removes typed
 `type:`/`t:` overrides while preserving other query tokens and quoted values.
 
-Leading absolute paths (drive paths and UNC shares), `%VARIABLE%` and
-`~`/`~/`/`~\` enter direct path navigation, even outside indexed roots. The whole
-trimmed input is one path, including spaces and any text that would otherwise be
-a filter; no quotes are required. One pair of quotes enclosing an absolute path,
-as Explorer's "Copy as path" produces, is removed. For a catalog search
+Leading absolute paths (drive paths and UNC shares), `%VARIABLE%`, `shell:` (in
+any case) and `~`/`~/`/`~\` enter direct path navigation, even outside indexed
+roots. The whole trimmed input is one path, including spaces and any text that
+would otherwise be a filter; no quotes are required. One pair of quotes enclosing
+an absolute path, as Explorer's "Copy as path" produces, is removed. For a
+catalog search
 with terms and filters, use `in:"D:\Work" report` instead of `D:\Work\ report`.
 Drive-relative paths (`C:Work`), root-relative paths (`\Work`), incomplete UNC
 server names and Win32 device paths (`\\.\…`, `\\?\…`) do not enter direct
@@ -333,26 +338,52 @@ completes names by prefix. A pasted file path can be opened directly or revealed
 with Show in containing folder / Ctrl+Enter, without a catalog entry. `%` and an
 incomplete name suggest every `%NAME%` that starts with the typed text and names an
 existing folder: environment variables whose value is a folder (so values such as
-tokens never appear) and Windows known folders without a variable, such as
-`%DESKTOP%`, `%DOWNLOADS%`, `%STARTUP%`, `%SENDTO%`, `%FONTS%` or `%SAVEDGAMES%`.
-The platform layer resolves known folders through Windows, so redirected folders
-are followed; names reaching the same folder appear once. Environment variables win
-over known-folder names. Suggestions and exact `%NAME%` references show the
-uppercase alias as their title and the full resolved target as their location,
-tooltip and accessible description. Suggestions sort by alias within their
-priority band. A trailing separator or subpath restores normal file/folder names.
-Actions and favorites always use the real target path, never the displayed alias.
-Their explanation reads "Windows folder variable"; other exact targets read
-"Direct path" and listed or completed entries "Path completion".
+tokens never appear) and Windows known folders without a variable. These are a
+curated list of familiar names first (`%DESKTOP%`, `%DOCUMENTS%`, `%DOWNLOADS%`,
+`%STARTUP%`, `%SENDTO%`, `%FONTS%`, `%SAVEDGAMES%` and others), then every known
+folder registered under
+`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions`, named
+without its spaces (`Common Desktop` as `%COMMONDESKTOP%`). The platform layer
+resolves known folders through Windows, so redirected folders are followed; names
+reaching the same folder appear once, environment variables (by name) first, then
+the curated names, so `%DOCUMENTS%` is shown rather than the registry's
+`%PERSONAL%`; every name still resolves when typed in full.
+
+`shell:` and an incomplete name suggest Explorer's shell folders, the registered
+known folders under the names the Run dialog and the Explorer address bar take,
+such as `shell:Startup` or `shell:Common Start Menu`. Names compare in any case
+and keep their registered spelling in the title. Folders on disk are suggested if
+they exist; virtual ones (Recycle Bin, Network Connections, Printers and so on)
+have no path and open through the shortcuts kept in `Shell folders` (see Windows
+tools), so they need Windows tools enabled and a full scan first.
+`shell:Name\` and `shell:Name\rest` browse and complete like paths; an unknown name reports "Unknown shell folder". If Windows
+cannot list its known folders, navigation keeps working with environment
+variables and paths only.
+
+Suggestions and exact `%NAME%` references show the alias (uppercase for
+variables) as their title and the full resolved target as their location,
+tooltip and accessible description. Within their priority band, suggestions are
+ranked like other results: favorites first, then the most recently opened, then
+by alias. Known folders are resolved without checking that they exist, so one
+redirected to a server that does not answer cannot block; navigation checks the
+target through its drive probe. A trailing separator or subpath restores
+normal file/folder names. Actions and favorites always use the real target path,
+never the displayed alias. Their explanation reads "Windows folder variable" or
+"Windows shell folder"; other exact targets read "Direct path" and listed or
+completed entries "Path completion". Exclusions never hide a named target
+(suggestions and exact `%NAME%` references, including a shell folder's shortcut):
+the user asked for it by name, so `shell:startup` shows even if its Start-menu
+folder is excluded. Browsing or completing inside it obeys exclusions as usual.
 Unknown completed names and relative expansion values report an error, and so
 does a folder that cannot be read (for example, access denied). Entries that
 vanish or deny access during listing and dangling links are left out.
 Resolution and enumeration run on a dedicated navigation worker pool, obey
 type, priority and exclusion rules, support cancellation and the result limit,
 and do not recursively scan or add entries to the catalog. Filesystem reads are
-skipped for excluded subtrees, including exact targets inside them. Before
-reading, the drive or share root is checked on a separate thread for at most two
-seconds; a root that does not answer reports an error, and folder variables on
+skipped for excluded subtrees, including exact targets inside them, except
+named targets. Before reading, the drive or share root is checked on a separate
+thread for at most two seconds; a root that does not answer reports an error,
+and folder variables on
 such a root are not suggested. Catalog searches never wait for navigation.
 `in:` also expands environment/home variables.
 
@@ -662,6 +693,13 @@ A file's menu has **Open with…** below Open: Windows' own dialog
 (`SHOpenWithDialog`, on a thread of its own so no launch waits for it) lets the
 user pick a program, and offers to always use it for the file type. Folders and
 applications have no such entry.
+
+An application's menu has **Run as administrator** below Open, also
+Ctrl+Shift+Enter as in the Start menu: the shell's `runas` verb starts the program,
+shortcut or console (such as `services.msc`) after Windows' consent prompt.
+Declining the prompt is no error; an elevated start counts as a launch. Like
+Enter, the key refers to the typed query: if its results are not shown yet, it
+waits for them, and it does nothing on a row that is no application.
 
 A plugin item's menu has Open in its program, the plugin's own entries
 (`Plugin.actions(item)`, asked on the GUI thread when the menu opens; entries that
