@@ -13,10 +13,10 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QAbstractItemView, QApplication
 
 from winlauncher.actions import ItemActions
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand, shortcut_clash
@@ -422,6 +422,16 @@ class MenuCommandUiTest(unittest.TestCase):
         reopened = SettingsDialog(saved, website_icons=self.icons)
         self.addCleanup(reopened.deleteLater)
         self.assertTrue(reopened.explorer_tools_fuzzy.isChecked())
+
+    def test_dragging_a_command_changes_the_menu_order(self):
+        editor = CommandList((TERMINAL, EDITOR))
+        self.addCleanup(editor.deleteLater)
+        self.assertEqual(editor.list.dragDropMode(), QAbstractItemView.DragDropMode.InternalMove)
+        # An internal drop moves the row in the model, keeping the entry's data.
+        editor.list.model().moveRow(QModelIndex(), 1, QModelIndex(), 0)
+        self.assertEqual(editor.commands(), (EDITOR, TERMINAL))
+        editor.list.setCurrentRow(0)
+        self.assertEqual(editor.title.text(), EDITOR.title)
 
     def test_visible_command_switching_keeps_search_toggle_and_editability_in_sync(self):
         enabled = replace(TERMINAL, explorer_search=True)

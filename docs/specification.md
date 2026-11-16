@@ -733,7 +733,8 @@ program its reparse data names. Icons load when the menu first shows them and ar
 kept until the commands change; a command without one shows none. In a menu with
 icons, every title starts in the same column. **Duplicate** in the settings copies
 the selected command below it, for variants such as Claude Code and Codex.
-**Remove selected** asks for confirmation first.
+**Remove selected** asks for confirmation first. The menu shows the commands in
+the list's order; dragging one in the list moves it.
 
 A command may have a shortcut modifier: Alt, Shift or Alt+Shift (stored as
 `"shortcut"`, empty for none). Modifier+Enter runs it on the selected result,

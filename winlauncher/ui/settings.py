@@ -662,7 +662,8 @@ class SettingsDialog(QDialog):
             _PageSpec(
                 "terminal",
                 "Context menu",
-                "Your own entries in a result's right-click menu, such as Open in Terminal.",
+                "Your own entries in a result's right-click menu, such as Open in Terminal. "
+                "Drag them to change their order.",
                 self._menu_commands_page,
                 lambda settings: replace(settings, menu_commands=self.menu_commands.commands()),
             ),

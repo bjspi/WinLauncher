@@ -9,6 +9,7 @@ from typing import NamedTuple
 from PySide6.QtCore import QFileInfo, QSize, Qt
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFileIconProvider,
     QFormLayout,
@@ -106,6 +107,9 @@ class CommandList(QWidget):
         # Long command lines are cut off; the form shows them in full.
         self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # The list order is the menu order; dragging an entry moves it.
+        self.list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.title, self.command, self.icon = QLineEdit(), QLineEdit(), QLineEdit()
         self.title.setPlaceholderText("Open in Windows Terminal")
         self.command.setPlaceholderText('wt.exe -d "{folder}"')
