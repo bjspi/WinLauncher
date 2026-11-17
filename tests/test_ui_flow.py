@@ -119,7 +119,11 @@ class UiFlowTest(unittest.TestCase):
         cls.app.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="winlauncher-flow-")
+        # A virus scanner or the search indexer may still hold the fresh catalog for a
+        # moment; a folder left in %TEMP% then is no failure of the test.
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="winlauncher-flow-", ignore_cleanup_errors=True
+        )
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "library"
         self.root.mkdir()
