@@ -703,7 +703,8 @@ waits for them, and it does nothing on a row that is no application.
 
 A plugin item's menu has Open in its program, the plugin's own entries
 (`Plugin.actions(item)`, asked on the GUI thread when the menu opens; entries that
-are not usable `PluginAction` values are dropped), Copy, then **Exclude…** if the
+are not usable `PluginAction` values are dropped; an entry's `icon` names a line icon
+of WinLauncher or the full path of an image file, anything else shows none), Copy, then **Exclude…** if the
 plugin defines `exclude`, and Settings…. An entry or Exclude… runs on the plugin
 pool with the dialogs of a settings button; the bar's search stays open
 meanwhile and runs again afterwards. When `exclude` returns true the item leaves
@@ -821,7 +822,9 @@ of the enabled plugins must differ from website keywords and from each other,
 ignoring case and accents; a route the plugin no longer declares claims no word.
 
 An enabled plugin refreshes 4 s after start (or after it is enabled) if its cached
-list is older than its interval or the last refresh failed, then at its interval.
+list is older than its interval, was listed by another version of the plugin (its
+`plugin.toml` version, so an update's new chips or data appear) or the last refresh
+failed, then at its interval. Until then the cached list stays searchable.
 Saving changed options of an enabled plugin refreshes it at once, so its list follows
 them, such as an exclusion list; a refresh already running is followed by another
 one with the new options. Changed keywords, routes, boost or **In every search**

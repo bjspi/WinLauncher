@@ -22,6 +22,7 @@ from winlauncher.calculator import Calculation
 from winlauncher.catalog.model import CatalogItem, ItemKind
 from winlauncher.connectivity import OFFLINE_VARIABLE, InternetState, InternetStatus
 from winlauncher.plugins.api import (
+    FEATURES,
     MAX_CHIPS,
     Answer,
     Chip,
@@ -59,7 +60,7 @@ from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.syntax_help import SyntaxTip
 from winlauncher.settings import Settings, SettingsFile, settings_from_json
-from winlauncher.ui.result_rows import result_row, shortened_breadcrumbs
+from winlauncher.ui.result_rows import result_row, shortened_breadcrumbs, wrapped_tooltip
 from winlauncher.ui.updater import ReleaseUpdater
 from winlauncher.websites import WebsiteShortcut
 
@@ -98,6 +99,14 @@ class FakePlugin(Plugin):
 
 def query(text: str):
     return parse_query(text)
+
+
+class PluginFeaturesTest(unittest.TestCase):
+    def test_every_feature_is_documented_for_plugin_authors(self):
+        guide = Path(__file__).parents[1].joinpath("docs", "plugins.md").read_text(encoding="utf-8")
+        documented = set(re.findall(r"^\| `([a-z_]+)` \| [0-9.]+ \|", guide, re.MULTILINE))
+        self.assertEqual(documented, set(FEATURES))
+        self.assertIn("action_icons", FEATURES)
 
 
 class PluginRankingTest(unittest.TestCase):
@@ -463,6 +472,21 @@ class PluginHostTest(unittest.TestCase):
         self.assertEqual([hit.item for hit in fuzzy], [BERND])
         self.assertFalse(PluginHost(Discovery([FakePlugin()]), self.data / "none").load_cached())
 
+    def test_items_cached_by_another_plugin_version_are_shown_but_outdated(self):
+        def started(version: str) -> PluginHost:
+            found = Discovery([FakePlugin()], sources={"fake": PluginSource("fake", None, version)})
+            host = PluginHost(found, self.data)
+            host.load_cached()
+            return host
+
+        started("1.5.0").refresh("fake", self.config)
+        self.assertFalse(started("1.5.0").state("fake").outdated)
+        updated = started("1.6.0")
+        self.assertEqual(updated.state("fake").items, (ANNA, BERND, TEAM))
+        self.assertTrue(updated.state("fake").outdated)
+        self.assertFalse(updated.refresh("fake", self.config).outdated)
+        self.assertFalse(started("1.6.0").state("fake").outdated)
+
     def test_failures_keep_the_last_items_but_setup_problems_drop_them(self):
         self.host.refresh("fake", self.config)
         self.plugin.items = PluginError("Offline")
@@ -778,7 +802,8 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
                 self.answer, self.asked = answer, []
 
             def actions(self, item):
-                return (PluginAction("Copy name", lambda item, context: item.name), "junk")
+                copy = PluginAction("Copy name", lambda item, context: item.name, icon="file")
+                return (copy, "junk", PluginAction("Bad icon", lambda item, context: None, icon=5))
 
             def exclude(self, item, context):
                 self.asked.append(context.choose("Exclude", "", [Choice(item.key, item.name)]))
@@ -1395,6 +1420,16 @@ class BreadcrumbTest(unittest.TestCase):
         self.assertEqual(
             shortened_breadcrumbs(("Site", "Library"), lambda _text: False), "Site › Library"
         )
+
+    def test_long_tooltip_lines_break_after_separators(self):
+        url = "https://contoso.sharepoint.com/sites/Finance/Shared%20Documents/" + "x" * 60
+        lines = wrapped_tooltip(f"{url}\nRelevance: 64.8").split("\n")
+        self.assertEqual(
+            lines[0], "https://contoso.sharepoint.com/sites/Finance/Shared%20Documents/"
+        )
+        self.assertEqual(lines[1:], ["x" * 60, "Relevance: 64.8"])
+        self.assertEqual(wrapped_tooltip("y" * 100).split("\n"), ["y" * 90, "y" * 10])
+        self.assertEqual(wrapped_tooltip("short\ntext"), "short\ntext")
 
     def test_breadcrumbs_replace_the_subtitle_of_a_plugin_row(self):
         item = replace(TEAM, subtitle="https://contoso.sharepoint.com/sites/teams/annahme")

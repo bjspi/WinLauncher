@@ -91,7 +91,8 @@ class PluginItem:
     icon: str = ""  # An image file, such as a cached avatar; empty uses initials or the plugin's.
     title: str = ""  # Shown instead of "<label>: <name>" when set.
     routes: tuple[str, ...] = ()  # Ids of the plugin's routes that list this item, if any.
-    # Anything else `open` needs, as JSON values; kept in the item cache, never matched.
+    # What `open`, `preview` and `actions` need from the item, as JSON values; kept in
+    # the item cache, never matched.
     data: Mapping[str, object] = field(default_factory=dict, compare=False)
     # Where the item lives, outermost first, such as ("Contoso", "Finance", "Q3"). Shown
     # instead of `subtitle`; a narrow row drops whole middle parts, never the first.
@@ -314,6 +315,29 @@ class PluginCommand:
     forgets_items: bool = False  # Such as Sign out: the listed items go, too.
 
 
+# What this WinLauncher offers plugins, by name. A plugin that also runs on other
+# versions asks before using something recent:
+# `"action_icons" in getattr(api, "FEATURES", ())`; the set exists since 0.22.2.
+# Names are never removed; docs/plugins.md tells since when each exists.
+FEATURES: frozenset[str] = frozenset(
+    {
+        "literal_terms",
+        "routes",
+        "multiline_options",
+        "internet",
+        "breadcrumbs",
+        "chips",
+        "dialogs",
+        "item_actions",
+        "exclude",
+        "answers",
+        "tips",
+        "previews",
+        "action_icons",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class PluginAction:
     """An entry in the menu of one of the plugin's items, such as Copy username.
@@ -325,6 +349,9 @@ class PluginAction:
     label: str
     run: Callable[[PluginItem, PluginContext], str | None]
     refreshes: bool = False  # The action changes what the plugin lists: refresh afterwards.
+    # Beside the label: a WinLauncher line icon by name, such as "folder", or the full
+    # path of an image file; anything else shows none.
+    icon: str = ""
 
 
 class Plugin:

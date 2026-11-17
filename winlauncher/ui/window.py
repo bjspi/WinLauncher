@@ -90,10 +90,16 @@ from winlauncher.ui.preview import (
     PreviewSubject,
 )
 from winlauncher.ui.query_syntax import QuerySyntax
-from winlauncher.ui.result_rows import LauncherHit, ResultRow, result_row, shortened_breadcrumbs
+from winlauncher.ui.result_rows import (
+    LauncherHit,
+    ResultRow,
+    result_row,
+    shortened_breadcrumbs,
+    wrapped_tooltip,
+)
 from winlauncher.ui.theme import app_icon, colors, theme
 from winlauncher.ui.website_icons import WebsiteIcons
-from winlauncher.ui.widgets import line_icon
+from winlauncher.ui.widgets import line_icon, line_icon_names
 from winlauncher.websites import WebsiteTarget
 
 EXPLORER_WIDTH = 396
@@ -463,6 +469,19 @@ def _menu_commands(commands: tuple[MenuCommand, ...], kind: ItemKind) -> list[Me
     if kind == ItemKind.FILE:
         return [command for command in commands if command.files]
     return []
+
+
+def _plugin_action_icon(icon: str) -> QIcon:
+    """The icon a plugin gave its menu entry: a line icon by name, or an image file.
+
+    Anything else, such as a relative path or a missing file, is a null icon, so
+    the entry shows its label alone.
+    """
+    if icon in line_icon_names():
+        return line_icon(icon, colors().muted)
+    if icon and Path(icon).is_absolute() and Path(icon).is_file():
+        return QIcon(icon)
+    return QIcon()
 
 
 def _preview_subject(row: ResultRow | None) -> PreviewSubject | None:
@@ -1220,7 +1239,7 @@ class LauncherWindow(QWidget):
             for index, row in enumerate(rows):
                 item = QListWidgetItem(row.accessible_text)
                 item.setData(Qt.ItemDataRole.UserRole, row)
-                item.setToolTip(row.tooltip)
+                item.setToolTip(wrapped_tooltip(row.tooltip))
                 self.results.addItem(item)
                 if previous is not None and row.identity == previous.identity:
                     selected_index = index
@@ -1876,7 +1895,12 @@ class LauncherWindow(QWidget):
         offered = self.plugin_menu(hit)
         menu.addAction(f"Open in {row.opens_in}", lambda: self.open_requested.emit(hit))
         for action in offered.actions:
-            menu.addAction(action.label, partial(self.plugin_action_requested.emit, hit, action))
+            entry = menu.addAction(
+                action.label, partial(self.plugin_action_requested.emit, hit, action)
+            )
+            if not (icon := _plugin_action_icon(action.icon)).isNull():
+                entry.setIcon(icon)
+                menu.setObjectName("withIcons")
         menu.addAction(f"Copy {row.target_noun}", lambda: self.copy_target(row))
         menu.addSeparator()
         if offered.can_exclude:

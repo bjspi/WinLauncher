@@ -28,6 +28,12 @@ WEBSITE_REASON = "Opens in your default browser"
 MISSING_LABEL = "Deleted"
 BREADCRUMB_SEPARATOR = " › "
 ELLIPSIS = "…"
+# Tooltips break their lines at this many characters: Qt never wraps a plain tooltip,
+# and a long URL or path would otherwise span the screen.
+TOOLTIP_LINE_CHARACTERS = 90
+# A long line breaks after the last of these within the limit, such as between a
+# URL's path parts; a line without one breaks at the limit itself.
+TOOLTIP_BREAKS = frozenset(" /\\?&=")
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,3 +270,29 @@ def format_modified(timestamp: float) -> str:
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
     except (OSError, OverflowError, ValueError):
         return "Unknown"  # Outside the range Windows can represent.
+
+
+def wrapped_tooltip(text: str) -> str:
+    """`text` with its long lines broken, preferably after a separator, for a tooltip."""
+    lines: list[str] = []
+    for line in text.split("\n"):
+        lines.extend(_wrapped_line(line, TOOLTIP_LINE_CHARACTERS))
+    return "\n".join(lines)
+
+
+def _wrapped_line(line: str, width: int) -> list[str]:
+    """`line` in parts of at most `width` characters.
+
+    A part ends after the last separator in its second half, so a URL breaks between
+    its path parts; without one it ends at `width`. A break at a space drops it.
+    """
+    parts = []
+    while len(line) > width:
+        last_separator = max(
+            line.rfind(separator, width // 2, width) for separator in TOOLTIP_BREAKS
+        )
+        cut = last_separator + 1 if last_separator >= 0 else width
+        parts.append(line[:cut].rstrip(" "))
+        line = line[cut:]
+    parts.append(line)
+    return parts

@@ -412,6 +412,9 @@ QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }
 QScrollBar::handle:vertical { background: $scrollbar; border-radius: 3px; min-height: 24px; }
 QScrollBar::handle:vertical:hover { background: $scrollbar_hover; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QListWidget#itemList QScrollBar:vertical { background: $nav_hover; width: 10px; border-radius: 4px; }
+QListWidget#itemList QScrollBar::handle:vertical { background: $scrollbar_hover; border-radius: 3px; }
+QListWidget#itemList QScrollBar::handle:vertical:hover { background: $subtle; }
 """)
 
 

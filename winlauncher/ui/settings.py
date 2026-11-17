@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut, QWheelEvent
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -198,6 +199,31 @@ def _button(text: str, slot: Callable[[], None]) -> QPushButton:
     return button
 
 
+class _PageScroll(QScrollArea):
+    """A settings page's scroll area that leaves the wheel to a scrolling list below it.
+
+    Qt hands the wheel to the page once a list reached its end, so one turn of the
+    wheel would scroll the list and then the page. Over a list or text box that
+    scrolls itself, the page therefore stays put.
+    """
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - Qt override.
+        under = self.viewport().childAt(event.position().toPoint())
+        if _inside_scrolling_box(under, self.viewport()):
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
+def _inside_scrolling_box(widget: QWidget | None, page: QWidget) -> bool:
+    """Whether `widget` lies in a list or text box of `page` that has more to scroll."""
+    while widget is not None and widget is not page:
+        if isinstance(widget, QAbstractScrollArea) and widget.verticalScrollBar().maximum() > 0:
+            return True
+        widget = widget.parentWidget()
+    return False
+
+
 def _page(title: str, subtitle: str, sections: list[QWidget]) -> QScrollArea:
     """A scrolling settings page: its header, then its cards and notes."""
     content = QWidget()
@@ -209,7 +235,7 @@ def _page(title: str, subtitle: str, sections: list[QWidget]) -> QScrollArea:
     for section in sections:
         layout.addWidget(section)
     layout.addStretch(1)
-    scroll = QScrollArea()
+    scroll = _PageScroll()
     scroll.setObjectName("pageScroll")
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)

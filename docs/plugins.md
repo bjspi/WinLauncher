@@ -188,6 +188,49 @@ kill a thread. Two plugins stuck in `refresh` occupy both plugin workers, and no
 plugin refreshes again until they return. Network calls and subprocesses therefore
 need explicit timeouts, and a long refresh must honor `context.cancel`.
 
+## Older and newer WinLauncher versions
+
+A plugin may meet an older WinLauncher than the one it was written for, and an old
+plugin a newer one. Newer versions keep what plugins use: new fields and arguments
+are optional, so an old plugin needs no change. A new plugin asks what the running
+WinLauncher offers before using something recent:
+
+```python
+from winlauncher.plugins import api
+
+FEATURES = frozenset(getattr(api, "FEATURES", ()))  # Empty before WinLauncher 0.22.2.
+
+def menu_entry(label, run, icon):
+    if "action_icons" in FEATURES:
+        return api.PluginAction(label, run, icon=icon)
+    return api.PluginAction(label, run)
+```
+
+`api.FEATURES` names everything below. A name is never removed or renamed. It
+exists since 0.22.2; before, `winlauncher.__version__` tells the version, and the
+sections on each feature show the usual guard.
+
+| Feature | Since | What it offers |
+| --- | --- | --- |
+| `literal_terms` | 0.12 | `Plugin.literal_terms` |
+| `routes` | 0.14 | `PluginRoute`, `PluginItem.routes` |
+| `multiline_options` | 0.15.2 | `PluginOption(multiline=True)` |
+| `internet` | 0.15.3 | `context.internet` |
+| `breadcrumbs` | 0.15.8 | `PluginItem.breadcrumbs` |
+| `chips` | 0.15.10 | `Chip`, `PluginItem.chips` |
+| `dialogs` | 0.17 | `context.ask`, `context.choose`, `context.form`, `Choice` |
+| `item_actions` | 0.17 | `Plugin.actions`, `PluginAction` |
+| `exclude` | 0.17 | `Plugin.exclude` |
+| `answers` | 0.17 | `Plugin.answer`, `Answer` |
+| `tips` | 0.18.1 | `Plugin.tips`, `PluginTip` |
+| `previews` | 0.20 | `Plugin.preview`, `PluginPreview`, `PluginItem.modified` |
+| `action_icons` | 0.22.2 | `PluginAction.icon` |
+
+What an older WinLauncher does not know fails gracefully: an import of a missing
+name lists the plugin as a problem at start, and an exception in `actions` loses
+only that menu's entries. So import recent names guardedly and check `FEATURES`
+before passing a recent argument.
+
 ## Internet status and offline pauses
 
 WinLauncher checks Windows' Network List Manager and requests
@@ -276,7 +319,7 @@ class Notes(Plugin):
     name matches.
   - `icon` is an image file, such as a cached avatar.
   - `routes` names the plugin's routes that list the item (see below).
-  - `data` holds JSON values for `open`; it is never matched.
+  - `data` holds JSON values for `open`, `preview` and `actions`; it is never matched.
   - `chips` are short colored labels, such as a ticket's status (see below).
   - `modified` says when the item last changed, as a `datetime` or a POSIX
     timestamp, such as a chat's last message (see below).
@@ -308,17 +351,45 @@ class Notes(Plugin):
   of its own, possibly while a refresh runs: keep it quick, thread-safe and off
   the network, and answer only text whose whole shape you recognize. Return `None`
   otherwise. Arithmetic answers first, without plugins.
-- `actions(item)` returns `PluginAction(label, run, refreshes=False)` entries for
-  the item's right-click menu. It is called while the menu opens, so it must only
-  look at `item`; `run(item, context)` runs on a worker, may show the same dialogs
-  as a command and returns a message or `None`.
+- `actions(item)` returns `PluginAction(label, run, refreshes=False, icon="")` entries for
+  the item's right-click menu, or `()` when none fits the item. It is called while
+  the menu opens, so it must be quick and only look at `item`. `run(item, context)`
+  runs on a worker: it may read files and the plugin's caches, look things up, show
+  the same dialogs as a command, and returns a message or `None`. So nothing an
+  action needs has to be prepared at refresh: `item.data` only holds what is cheap
+  anyway or needed while the menu opens, such as whether an entry appears at all.
+  `icon` shows beside the label: one of WinLauncher's line icons by name, tinted
+  for the theme like its own entries (`activity`, `alert`, `ban`, `chart`, `check`,
+  `code`, `download`, `eye-off`, `file`, `folder`, `gear`, `globe`, `help`, `info`,
+  `keyboard`, `pin`, `plug`, `power`, `refresh`, `search`, `sliders`, `terminal`,
+  `trash`, `window`), or the full path of an image file. Anything else shows no
+  icon. Icons exist since 0.22.2 (feature `"action_icons"`, see below).
+
+  ```python
+  def actions(self, item):
+      return (PluginAction("Open parent folder", self.open_parent, icon="folder"),)
+
+  def open_parent(self, item, context):
+      os.startfile(self.parent_url(item.target, context.data_dir))  # Looked up on the worker.
+      return None
+  ```
 - `exclude(item, context)`, when a plugin defines it, puts **Exclude…** into every
   item's menu. The plugin decides what to leave out — the item, its folder, a
   pattern — usually after a short `context.choose` or `context.form`, keeps that in
   its data folder and returns `True`, or `False` when cancelled. WinLauncher drops
   the item at once and refreshes the plugin. The dialogs, actions and Exclude… exist
-  since WinLauncher 0.17: a plugin that also runs on older versions checks
-  `getattr(context, "choose", None)` first.
+  since WinLauncher 0.17. A plugin that also runs on older versions imports
+  `PluginAction` guardedly, or it does not load there at all, and checks
+  `getattr(context, "choose", None)` before a dialog:
+
+  ```python
+  try:
+      from winlauncher.plugins.api import PluginAction
+  except ImportError:  # WinLauncher before 0.17: no item actions.
+      PluginAction = None
+  ```
+
+  `actions` then returns `()` while `PluginAction` is `None`.
 - `context.data_dir` is the plugin's own folder for caches, sessions and pictures.
   `context.options` holds the validated values of `options`. A long refresh
   should stop when `context.cancel` is set. `context.log` writes to

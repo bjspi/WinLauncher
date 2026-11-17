@@ -157,7 +157,7 @@ class PluginScheduler(QObject):
                 timer.start(interval)
                 state = self.host.state(plugin.id)
                 stale = state.refreshed is None or time.time() - state.refreshed > interval / 1000
-                if stale or state.error:
+                if stale or state.outdated or state.error:
                     QTimer.singleShot(
                         FIRST_REFRESH_DELAY_MS,
                         self,

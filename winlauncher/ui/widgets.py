@@ -66,6 +66,7 @@ HEADER_ICON_SIZE = 28  # The icon before a foldable card's title.
 FOLD_ICON_SIZE = QSize(16, 16)
 ENTRY_ROW_HEIGHT = 44  # Two lines, such as a name and its state.
 ENTRY_VISIBLE_ROWS = 5  # More entries scroll.
+ENTRY_PEEK_ROW = 0.5  # The part of the next entry a scrolling list shows below them.
 
 
 def pick_path(parent: QWidget, title: str, filters: str | None = None) -> Path | None:
@@ -127,6 +128,12 @@ def line_icon(name: str, color: str | None = None, selected_color: str | None = 
     """
     color = color or colors().faint
     return _tinted_icon(name, color, selected_color or color)
+
+
+@cache
+def line_icon_names() -> frozenset[str]:
+    """The names `line_icon` knows, such as "folder"."""
+    return frozenset(path.stem for path in ICONS.glob("*.svg"))
 
 
 @cache
@@ -382,12 +389,15 @@ class EntryList(QListWidget):
     def fit_height(self) -> None:
         """Room for every entry up to the limit, so a short list never scrolls.
 
-        The frame comes from the style sheet, which applies only once the list is
-        shown; `showEvent` therefore measures again.
+        A longer list also shows half of the next entry, so it is plain that more
+        follow. The frame comes from the style sheet, which applies only once the
+        list is shown; `showEvent` therefore measures again.
         """
-        rows = min(max(1, self.count()), ENTRY_VISIBLE_ROWS)
+        rows: float = max(1, self.count())
+        if rows > ENTRY_VISIBLE_ROWS:
+            rows = ENTRY_VISIBLE_ROWS + ENTRY_PEEK_ROW
         row = ENTRY_ROW_HEIGHT + 2 * self.spacing()
-        self.setFixedHeight(rows * row + 2 * self.frameWidth())
+        self.setFixedHeight(round(rows * row) + 2 * self.frameWidth())
 
     def showEvent(self, event: QShowEvent) -> None:
         self.fit_height()

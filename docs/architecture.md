@@ -376,7 +376,9 @@ path, and every refresh would invalidate the memory index.
 of items per plugin; a refresh replaces it whole, so a search on another thread
 never sees half a refresh. A per-plugin lock lets one refresh or command run at a
 time; a refresh that finds the plugin busy is skipped. Each successful refresh is
-written to `<data>/plugin-data/<id>/items.json` and read back at start. A
+written to `<data>/plugin-data/<id>/items.json` with the plugin's version and
+read back at start; items of another version are marked `outdated`, which the
+scheduler refreshes at once. A
 `PluginError` keeps the previous items; `SetupRequired` drops them and the cache.
 
 `PluginScheduler` (`ui/plugins.py`) runs a `QTimer` per enabled plugin and submits

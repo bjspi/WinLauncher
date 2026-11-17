@@ -87,6 +87,9 @@ class PluginState:
     error: str = ""  # Why the last refresh failed; empty after a successful one.
     needs_setup: bool = False
     refreshing: bool = False
+    # The cached items come from another version of the plugin, which may list more
+    # (new chips or data); they are shown until a refresh replaces them soon.
+    outdated: bool = False
 
 
 @dataclass(slots=True)
@@ -251,10 +254,16 @@ class PluginHost:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 items = tuple(_item_from_json(value) for value in data["items"][:MAX_ITEMS])
                 refreshed = float(data["refreshed"])
+                listed_by = str(data.get("version", ""))
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 logger.warning("Cached items of plugin %s ignored: %s", plugin_id, exc)
                 continue
-            self._set(entry, replace(entry.state, items=items, refreshed=refreshed), prepare=False)
+            version = self.source(plugin_id).version
+            outdated = listed_by != version
+            if outdated:
+                logger.info("Plugin %s updated from %r to %r", plugin_id, listed_by, version)
+            cached = replace(entry.state, items=items, refreshed=refreshed, outdated=outdated)
+            self._set(entry, cached, prepare=False)
             loaded = loaded or bool(items)
             logger.info(
                 "Plugin %s cached items loaded: items=%d elapsed_ms=%.0f",
@@ -365,8 +374,13 @@ class PluginHost:
         return state
 
     def _write_cache(self, plugin_id: str, items: tuple[PluginItem, ...], refreshed: float) -> None:
+        """Keep the items for the next start, with the plugin version that listed them."""
         path = self.data_dir / plugin_id / CACHE_FILE
-        data = {"refreshed": refreshed, "items": [asdict(item) for item in items]}
+        data = {
+            "refreshed": refreshed,
+            "version": self.source(plugin_id).version,
+            "items": [asdict(item) for item in items],
+        }
         try:
             temporary = path.with_suffix(".tmp")
             temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -567,6 +581,7 @@ class PluginHost:
             and isinstance(action.label, str)
             and action.label.strip()
             and callable(action.run)
+            and isinstance(action.icon, str)
         )
         if len(usable) != len(declared):
             logger.warning("Plugin %s declared unusable item actions", hit.plugin_id)
