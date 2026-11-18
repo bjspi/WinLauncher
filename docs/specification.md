@@ -333,7 +333,8 @@ Drive-relative paths (`C:Work`), root-relative paths (`\Work`), incomplete UNC
 server names and Win32 device paths (`\\.\…`, `\\?\…`) do not enter direct
 navigation.
 An exact existing path returns the file/folder without enumerating its parent;
-a trailing separator lists its direct children, and an incomplete last component
+a trailing separator shows the folder itself first ("Direct path", whatever its
+name and priority band), then its direct children, and an incomplete last component
 completes names by prefix. A pasted file path can be opened directly or revealed
 with Show in containing folder / Ctrl+Enter, without a catalog entry. `%` and an
 incomplete name suggest every `%NAME%` that starts with the typed text and names an

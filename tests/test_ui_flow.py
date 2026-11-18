@@ -1475,6 +1475,8 @@ class UiFlowTest(unittest.TestCase):
             self.window.query.setText(alias + "\\")
             self.controller.search.run()
             self.tasks.finish(TaskCategory.NAVIGATION)
+            self.assertEqual(self.window.selected_hit().item.path, folder)  # The folder leads.
+            self.window.results.setCurrentRow(1)
             row = self.window.selected_row()
             self.assertEqual(row.name, document.name)
             self.assertEqual(row.location, str(folder))
@@ -1490,8 +1492,10 @@ class UiFlowTest(unittest.TestCase):
         self.window.query.setText(str(outside) + "\\")
         self.controller.search.run()
         self.tasks.finish(TaskCategory.NAVIGATION)
-        rows = [self.window.results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(2)]
-        self.assertEqual(rows[0].file_hit.item.path, nested)  # Folders first.
+        rows = [self.window.results.item(i).data(Qt.ItemDataRole.UserRole) for i in range(3)]
+        self.assertEqual(rows[0].file_hit.item.path, outside)  # The folder itself leads,
+        self.assertEqual(rows[1].file_hit.item.path, nested)  # then folders before files.
+        self.window.results.setCurrentRow(1)
         QTest.keyClick(self.window.query, Qt.Key.Key_Tab)
         self.assertEqual(self.window.scope, nested)
         self.assertEqual(self.window.query.text(), "")

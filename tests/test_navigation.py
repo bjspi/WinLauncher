@@ -122,6 +122,8 @@ class PathNavigationTest(unittest.TestCase):
         for separator in ("/", "\\"):
             with self.subTest(separator=separator):
                 root = str(self.home) + separator
+                # The folder itself leads, although `.toolbox` sorts before its name.
+                self.assertEqual(self.paths(root)[0], self.home)
                 self.assertIn(self.toolbox, self.paths(root))
                 self.assertIn(self.home / "notes.txt", self.paths(root))
                 self.assertNotIn(nested, self.paths(root))
@@ -195,7 +197,7 @@ class PathNavigationTest(unittest.TestCase):
         self.assertTrue(hit.reason.startswith("Windows folder variable"))
         # A variable whose value is no folder, such as a token, is never shown.
         self.assertEqual(names("%api"), [])
-        self.assertEqual(self.paths("%Downloads%\\"), [downloads / "setup.exe"])
+        self.assertEqual(self.paths("%Downloads%\\"), [downloads, downloads / "setup.exe"])
         with self.assertRaisesRegex(ValueError, "Unknown"):
             self.service.search(parse_query("%NOWHERE%\\"), self.settings)
 
@@ -242,9 +244,9 @@ class PathNavigationTest(unittest.TestCase):
         hit = self.service.search(parse_query("shell:recycle"), self.settings)[0]
         self.assertEqual(hit.item.path, recycle_bin)
         self.assertTrue(hit.reason.startswith("Windows shell folder"))
-        self.assertEqual(self.paths("shell:startup\\"), [startup / "tool.txt"])
+        self.assertEqual(self.paths("shell:startup\\"), [startup, startup / "tool.txt"])
         self.assertEqual(self.paths("shell:Startup/to"), [startup / "tool.txt"])
-        self.assertEqual(self.paths("shell:Start Menu\\"), [])
+        self.assertEqual(self.paths("shell:Start Menu\\"), [self.toolbox])
         with self.assertRaisesRegex(ValueError, "Unknown shell folder: shell:Nowhere"):
             self.paths("shell:Nowhere\\")
         # Like other results, what was opened recently comes first; favorites lead.

@@ -1,8 +1,8 @@
 """Direct navigation: absolute paths and `%NAME%`, `shell:` and `~` shortcuts.
 
 `SearchQuery.navigation` holds one typed path. It resolves to the exact target,
-to the direct entries of one folder (trailing separator) or to the entries whose
-names start with the last component. `%` plus a name prefix suggests folder
+to one folder followed by its direct entries (trailing separator) or to the
+entries whose names start with the last component. `%` plus a name prefix suggests folder
 variables instead, and `shell:` plus a name prefix the Windows shell folders.
 Nothing is indexed. Everything runs on a search worker and obeys the exclusion,
 priority, type and limit rules of catalog results. The catalog only contributes
@@ -101,7 +101,8 @@ def search_paths(
     ranker = Ranker(replace(query, navigation=None, scope=None))
     lists_names = _lists_folder_names(navigation)
 
-    def shown_hits() -> Iterator[SearchHit]:
+    def shown_hits() -> Iterator[tuple[bool, SearchHit]]:
+        """Each shown hit, after whether it is something other than the typed target."""
         matches = _navigation_matches(navigation, names or FolderNames(), exclusions, cancel)
         if lists_names:
             matches = _with_usage(list(matches), store)
@@ -109,13 +110,15 @@ def search_paths(
             if _cancelled(cancel):
                 return
             if (hit := _ranked_hit(match, ranker, priorities, exclusions)) is not None:
-                yield hit
+                yield match.reason != _DIRECT_PATH_REASON, hit
 
     order = _name_order if lists_names else _display_order
-    kept = heapq.nsmallest(settings.max_results, shown_hits(), key=order)
+    kept = heapq.nsmallest(
+        settings.max_results, shown_hits(), key=lambda shown: (shown[0], order(shown[1]))
+    )
     if _cancelled(cancel):
         return []
-    return _with_favorites(kept, store)
+    return _with_favorites([hit for _, hit in kept], store)
 
 
 def _ranked_hit(
@@ -204,8 +207,8 @@ def _navigation_matches(
     cancel: threading.Event | None,
 ) -> Iterator[_NavigationMatch]:
     """Folder variables for `%prefix`, shell folders for `shell:prefix`, else the
-    exact target, the folder's entries (trailing separator) or the entries
-    completing the last path component.
+    exact target, the folder and then its entries (trailing separator) or the
+    entries completing the last path component.
 
     An excluded folder is never read, and an exact target needs no enumeration.
     A named target, such as `%STARTUP%` in an excluded folder, is still shown.
@@ -225,6 +228,9 @@ def _navigation_matches(
         if (target := _exact_target(text, path)) is not None:
             yield target
         return
+    if browsing and os.path.isdir(long_paths.os_path(path)):
+        if (target := _exact_target(text, path)) is not None:
+            yield target
     folder = path if browsing else path.parent
     if not exclusions.allows_contents(folder):
         return
