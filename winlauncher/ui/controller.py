@@ -101,6 +101,7 @@ DETAILS_HEIGHT = 120  # Scan errors and problems in the index status dialog.
 # Explorer follows the result where arrow-key repeats stop, not every row passed.
 EXPLORER_SELECT_DELAY_MS = 120
 PLUGIN_CARDS_FILE = "plugin-cards.json"  # Which plugin settings cards show their details.
+SETTINGS_WINDOW_FILE = "settings-window.json"  # The Settings window's size.
 BAR_PLACEMENT_FILE = "launcher-bar.json"  # The launcher bar's widths and position.
 
 _Event = TypeVar("_Event")
@@ -875,6 +876,7 @@ class LauncherController(QObject):
             replace_all=self.replace_settings,
             catalog=self.store,
             tasks=self.tasks,
+            size_file=self.data_dir / SETTINGS_WINDOW_FILE,
         )
         if page:
             dialog.show_page(page)
@@ -928,7 +930,7 @@ class LauncherController(QObject):
 
     def _apply_window_settings(self, settings: Settings) -> None:
         theme().use(Appearance(settings.appearance))
-        self.window.set_auto_hide(settings.auto_hide, settings.auto_hide_seconds)
+        self.window.set_auto_hide(settings.auto_hide_seconds, settings.auto_hide_typed_seconds)
         self.window.set_menu_commands(settings.menu_commands)
         self.window.set_preview_enabled(settings.file_preview)
 

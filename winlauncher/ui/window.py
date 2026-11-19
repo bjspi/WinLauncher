@@ -670,12 +670,12 @@ class LauncherWindow(QWidget):
         self._bottom_anchor: int | None = None
         self._resize_pending = False
         self._refreshing_results = False
-        # Started when focus leaves the launcher; see `set_auto_hide` and `_hide_if_unused`.
+        # Started when focus leaves the launcher; see `set_auto_hide` and `_focus_left`.
         self.auto_hide = QTimer(self)
         self.auto_hide.setSingleShot(True)
-        self.auto_hide.timeout.connect(self._hide_if_unused)
-        self.auto_hide_enabled = False
-        self.auto_hide_ms = 0
+        self.auto_hide.timeout.connect(self._hide_unless_in_front)
+        self.auto_hide_ms = 0  # 0 keeps the bar open.
+        self.auto_hide_typed_ms = 0
         # Pinned, results open without closing the bar; see `set_pinned`.
         self.pinned = False
         self.menu_commands: tuple[MenuCommand, ...] = ()
@@ -1453,16 +1453,16 @@ class LauncherWindow(QWidget):
             label.ensurePolished()  # Their font comes from the style sheet.
             label.fontMetrics().horizontalAdvance(BAR_SYMBOLS)
 
-    def set_auto_hide(self, enabled: bool, seconds: int) -> None:
-        """Hide `seconds` after focus left WinLauncher, unless something was typed.
+    def set_auto_hide(self, seconds: float, typed_seconds: float) -> None:
+        """Hide `seconds` after focus left WinLauncher, or `typed_seconds` with a query.
 
-        Independent of this setting, the Explorer bar hides as soon as focus leaves
-        WinLauncher, typed or not: it serves only the search started in Explorer.
+        A delay of 0 keeps the bar open. Independent of these delays, the Explorer
+        bar hides as soon as focus leaves WinLauncher, typed or not: it serves only
+        the search started in Explorer.
         """
-        self.auto_hide_enabled = enabled
-        self.auto_hide_ms = seconds * 1000
-        if not enabled:
-            self.auto_hide.stop()
+        self.auto_hide_ms = round(seconds * 1000)
+        self.auto_hide_typed_ms = round(typed_seconds * 1000)
+        self.auto_hide.stop()
 
     def type_filter(self, text: str) -> None:
         """Replace the query with a filter from the syntax help, ready to complete."""
@@ -1492,12 +1492,13 @@ class LauncherWindow(QWidget):
         if self.explorer_mode:
             # On the next event loop pass, once the new foreground window is known.
             self.auto_hide.start(0)
-        elif self.auto_hide_enabled and not self.pinned:
-            self.auto_hide.start(self.auto_hide_ms)
+        elif not self.pinned:
+            delay = self.auto_hide_typed_ms if self.query.text() else self.auto_hide_ms
+            if delay:
+                self.auto_hide.start(delay)
 
-    def _hide_if_unused(self) -> None:
-        unused = self.explorer_mode or not self.query.text()
-        if unused and not self._winlauncher_in_front():
+    def _hide_unless_in_front(self) -> None:
+        if not self._winlauncher_in_front():
             self.hide()
 
     def _winlauncher_in_front(self) -> bool:

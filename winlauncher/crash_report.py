@@ -2,7 +2,10 @@
 
 A fault in a DLL or C extension, such as a package a plugin brought along, ends the
 process at once: no exception, no `except`, no log line. `faulthandler` writes the
-stacks of all threads into an already open file from inside the fault instead.
+faulting thread's stack into an already open file from inside the fault instead.
+Only that thread's: the other threads keep running meanwhile, and reading their
+changing frames printed garbage and could fault itself, which ended runs that a
+handled COM error would otherwise have left alive.
 
 Windows also reports exceptions that are handled later, such as a shell extension's
 COM error, so a run may write here and live on. A clean exit therefore removes the
@@ -38,7 +41,7 @@ class CrashRecorder:
         except OSError as exc:
             logger.warning("Native crashes will not be recorded: %s", exc)
             return
-        faulthandler.enable(file=self._file, all_threads=True)
+        faulthandler.enable(file=self._file, all_threads=False)
 
     def stop(self) -> None:
         """A clean exit: whatever this run recorded, it survived."""

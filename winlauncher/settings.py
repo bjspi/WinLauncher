@@ -32,8 +32,12 @@ from winlauncher.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
 DEFAULT_DOUBLE_CTRL_MS = 350
 DOUBLE_CTRL_RANGE_MS = (150, 800)
-DEFAULT_AUTO_HIDE_SECONDS = 3
-AUTO_HIDE_RANGE_SECONDS = (1, 60)
+# How long the launcher stays open without focus; 0 keeps it open. With a query
+# typed it waits longer: the search may still be of use.
+DEFAULT_AUTO_HIDE_SECONDS = 1.5
+AUTO_HIDE_RANGE_SECONDS = (0, 60)
+DEFAULT_AUTO_HIDE_TYPED_SECONDS = 30.0
+AUTO_HIDE_TYPED_RANGE_SECONDS = (0, 600)
 RESCAN_RANGE_SECONDS = (30, 86400)
 RESULT_LIMIT_RANGE = (10, 200)
 DEFAULT_CONTENT_SEARCH_THREADS = 4
@@ -180,9 +184,9 @@ class Settings:
     # Open and Save dialogs: typing searches their folder, Ctrl+G shows Explorer's folder.
     quick_switch: bool = True
     double_ctrl_ms: int = DEFAULT_DOUBLE_CTRL_MS
-    # Hide the launcher when it lost focus with nothing typed.
-    auto_hide: bool = True
-    auto_hide_seconds: int = DEFAULT_AUTO_HIDE_SECONDS
+    # Hide the launcher after it lost focus: empty after the first delay, else the second.
+    auto_hide_seconds: float = DEFAULT_AUTO_HIDE_SECONDS
+    auto_hide_typed_seconds: float = DEFAULT_AUTO_HIDE_TYPED_SECONDS
     # Alt+P (or F3) shows the selected file beside the results; off until the user wants it.
     file_preview: bool = False
     # Folder watching applies changes live; the full rescan only repairs missed events.
@@ -283,6 +287,11 @@ class Settings:
             self.auto_hide_seconds,
             AUTO_HIDE_RANGE_SECONDS,
             "Auto-close delay must be between {low} and {high} seconds.",
+        )
+        _require_range(
+            self.auto_hide_typed_seconds,
+            AUTO_HIDE_TYPED_RANGE_SECONDS,
+            "Auto-close delay with a query must be between {low} and {high} seconds.",
         )
         _require_range(
             self.rescan_seconds,
@@ -412,7 +421,7 @@ def settings_from_json(data: object) -> Settings:
     """Missing fields keep their defaults; present fields must have the default's type."""
     if not isinstance(data, dict):
         raise ValueError("The settings file must contain a JSON object.")
-    data = _with_plugin_sources(data)
+    data = _with_auto_hide_delays(_with_plugin_sources(data))
     values = {}
     for setting in fields(Settings):
         if setting.name in data:
@@ -435,6 +444,13 @@ def _with_plugin_sources(data: dict) -> dict:
             raise ValueError(f"{name} must be a list of strings.")
     active = [str(plugin.folder) for folder in folders for plugin in _offered(Path(folder))]
     return {**data, "plugin_sources": [*catalogs, *folders], "active_plugins": active}
+
+
+def _with_auto_hide_delays(data: dict) -> dict:
+    """Settings up to 0.22 turned auto-closing off by a switch; now delays of 0 do."""
+    if data.get("auto_hide") is not False:
+        return data
+    return {**data, "auto_hide_seconds": 0.0, "auto_hide_typed_seconds": 0.0}
 
 
 def _with_plugin_keywords(entry: dict) -> dict:
@@ -481,6 +497,8 @@ def _setting_value(name: str, value: object) -> object:
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             raise ValueError(f"{name} must be a list of strings.")
         return tuple(value)
+    if type(default) is float and type(value) is int:
+        value = float(value)  # Whole seconds, as earlier versions wrote them.
     if type(value) is not type(default):
         raise ValueError(f"{name} must be a {type(default).__name__}.")
     return value

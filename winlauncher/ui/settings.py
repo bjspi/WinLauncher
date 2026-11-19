@@ -8,6 +8,7 @@ the dialog open; closing discards only changes made since the last save.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -55,6 +56,7 @@ from winlauncher.search.native_engine import (
 )
 from winlauncher.settings import (
     AUTO_HIDE_RANGE_SECONDS,
+    AUTO_HIDE_TYPED_RANGE_SECONDS,
     CONTENT_SEARCH_THREADS_RANGE,
     DOUBLE_CTRL_RANGE_MS,
     RESCAN_RANGE_SECONDS,
@@ -93,6 +95,8 @@ from winlauncher.ui.widgets import (
 if TYPE_CHECKING:
     from winlauncher.ui.plugin_settings import PluginPages
 
+logger = logging.getLogger(__name__)
+
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
 SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
 FOUND_MS = 1600  # How long a setting chosen from search stays lit.
@@ -100,7 +104,8 @@ REVEAL_MARGIN = 60  # Room above and below a setting scrolled into view.
 EXPORT_FILE_NAME = "WinLauncher settings.json"
 SETTINGS_FILE_FILTER = "WinLauncher settings (*.json)"
 FOLDER_PRIORITY_FORMAT = "25 | D:\\Projects | high"
-# The opening size, lower on a small screen; longer pages scroll.
+# The opening size until the user resizes the window, lower on a small screen;
+# longer pages scroll.
 DIALOG_SIZE = QSize(920, 780)
 SCREEN_MARGIN = 40  # Kept free above and below the dialog.
 SIDEBAR_WIDTH = 228
@@ -366,6 +371,9 @@ class PathList(QWidget):
         self.list.setFixedHeight(PATH_LIST_HEIGHT)
         self.list.setAccessibleName(accessible_name)
         self.list.setToolTip("Drag folders here from Explorer, or use Add folder…")
+        # A long path is shortened in its middle, keeping its drive and the row's details.
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.list.folders_dropped.connect(self.add_folders)
         layout.addWidget(self.list)
         self.buttons = QHBoxLayout()
@@ -382,6 +390,7 @@ class PathList(QWidget):
     def _add_row(self, path: str) -> QListWidgetItem:
         item = QListWidgetItem(path)
         item.setData(Qt.ItemDataRole.UserRole, path)
+        item.setToolTip(path)
         self.list.addItem(item)
         return item
 
@@ -531,6 +540,23 @@ class _PageSpec(NamedTuple):
     read: Callable[[Settings], Settings] | None = None
 
 
+def _remembered_size(path: Path | None) -> QSize:
+    """The size the user last gave the Settings window; `DIALOG_SIZE` until then."""
+    if path is None or not path.is_file():
+        return DIALOG_SIZE
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("Settings window size could not be read: %s", exc)
+        return DIALOG_SIZE
+    if not isinstance(stored, dict):
+        return DIALOG_SIZE
+    width, height = stored.get("width"), stored.get("height")
+    if not all(type(value) is int and value > 0 for value in (width, height)):
+        return DIALOG_SIZE
+    return QSize(width, height)
+
+
 class SettingsDialog(QDialog):
     def __init__(
         self,
@@ -551,8 +577,12 @@ class SettingsDialog(QDialog):
         replace_all: Callable[[Settings], None] | None = None,
         catalog: CatalogStore | None = None,
         tasks: BackgroundTasks | None = None,
+        size_file: Path | None = None,
     ):
         super().__init__(parent)
+        # The window's size as the user left it, like the launcher bar's width: not
+        # a setting, so written on closing, apart from Save and Cancel. None forgets it.
+        self.size_file = size_file
         self.original = settings
         self.result_settings = settings
         self.persist = save
@@ -569,7 +599,7 @@ class SettingsDialog(QDialog):
         self.placement = placement
         self.setObjectName("settings")
         self.setWindowTitle("WinLauncher settings")
-        self.resize(DIALOG_SIZE)
+        self.resize(_remembered_size(size_file))
         self.startup_enabled = startup_enabled
         self.website_icons = website_icons
         # Built with the first plugin page shown; see `plugin_pages`.
@@ -626,6 +656,16 @@ class SettingsDialog(QDialog):
         # The pages, not the search field, take the focus: it would light up at once.
         self.nav.setFocus()
         self._fit_screen()
+        self._opened_size = self.size()
+
+    def done(self, result: int) -> None:
+        if self.size_file is not None and self.size() != self._opened_size:
+            size = {"width": self.width(), "height": self.height()}
+            try:
+                self.size_file.write_text(json.dumps(size), encoding="utf-8")
+            except OSError as exc:
+                logger.warning("Settings window size could not be saved: %s", exc)
+        super().done(result)
 
     # Pages ----------------------------------------------------------------------
 
@@ -802,10 +842,16 @@ class SettingsDialog(QDialog):
     # Frame ----------------------------------------------------------------------
 
     def _fit_screen(self) -> None:
-        """Open at `DIALOG_SIZE`, but never taller than the screen leaves room for."""
+        """Never larger than the screen leaves room for, as after a taller monitor.
+
+        The remembered size stays: it changes only when the user resizes the window.
+        """
         if (screen := self.screen()) is not None:
-            room = screen.availableGeometry().height() - SCREEN_MARGIN
-            self.resize(self.width(), min(DIALOG_SIZE.height(), room))
+            area = screen.availableGeometry()
+            self.resize(
+                min(self.width(), area.width() - SCREEN_MARGIN),
+                min(self.height(), area.height() - SCREEN_MARGIN),
+            )
 
     def _sidebar(self) -> QFrame:
         sidebar = QFrame()
@@ -871,17 +917,23 @@ class SettingsDialog(QDialog):
             NumberField(DOUBLE_CTRL_RANGE_MS, settings.double_ctrl_ms, "ms")
         )
         self.ctrl_interval.setAccessibleName("Double-Ctrl interval in milliseconds")
-        self.auto_hide = ToggleSwitch("Close the empty launcher when it loses focus")
-        self.auto_hide.setChecked(settings.auto_hide)
-        self.auto_hide.setToolTip(
-            "The search bar inside Explorer closes as soon as it loses focus."
-        )
         self.auto_hide_delay = sized_number(
-            NumberField(AUTO_HIDE_RANGE_SECONDS, settings.auto_hide_seconds, "seconds")
+            NumberField(AUTO_HIDE_RANGE_SECONDS, settings.auto_hide_seconds, "seconds", decimals=1)
         )
-        self.auto_hide_delay.setAccessibleName("Close the empty launcher after seconds")
-        self.auto_hide_delay.setEnabled(settings.auto_hide)
-        self.auto_hide.toggled.connect(self.auto_hide_delay.setEnabled)
+        self.auto_hide_delay.setAccessibleName(
+            "Seconds until the empty bar closes in another window; 0 never"
+        )
+        self.auto_hide_typed_delay = sized_number(
+            NumberField(
+                AUTO_HIDE_TYPED_RANGE_SECONDS,
+                settings.auto_hide_typed_seconds,
+                "seconds",
+                decimals=1,
+            )
+        )
+        self.auto_hide_typed_delay.setAccessibleName(
+            "Seconds until a bar with a search closes in another window; 0 never"
+        )
         self.limit = sized_number(NumberField(RESULT_LIMIT_RANGE, settings.max_results))
         self.limit.setAccessibleName("Maximum results")
         bar = Card()
@@ -891,14 +943,15 @@ class SettingsDialog(QDialog):
             _with_unit(self.ctrl_interval, "ms"),
         )
         bar.add_row(
-            "Close when unused",
-            "Hide the empty bar after you switch to another window.",
-            self.auto_hide,
+            "Close search bar after switching windows",
+            "Seconds the empty bar stays open once another window has the focus. 0 keeps it open.",
+            _with_unit(self.auto_hide_delay, "s"),
         )
         bar.add_row(
-            "Close after",
-            "Time without focus before it closes.",
-            _with_unit(self.auto_hide_delay, "s"),
+            "Close search bar with text after switching",
+            "The same with text typed in the bar, so a search you still need lasts longer. "
+            "0 keeps it open.",
+            _with_unit(self.auto_hide_typed_delay, "s"),
         )
         bar.add_row(
             "Maximum results", "How many results a search lists.", _with_unit(self.limit, "")
@@ -1376,9 +1429,9 @@ class SettingsDialog(QDialog):
         return replace(
             settings,
             double_ctrl_ms=self.ctrl_interval.value(),
-            auto_hide=self.auto_hide.isChecked(),
             file_preview=self.file_preview.isChecked(),
             auto_hide_seconds=self.auto_hide_delay.value(),
+            auto_hide_typed_seconds=self.auto_hide_typed_delay.value(),
             max_results=self.limit.value(),
             appearance=self.appearance.currentData(),
         )

@@ -586,6 +586,14 @@ while typing keeps its preview. A `PluginError` shows its message in the pane;
 another exception or a result that is no `PluginPreview` is logged and shows that
 the plugin failed.
 
+When another window takes the focus, the launcher bar closes after a delay set
+in Settings: 1.5 seconds by default while the query is empty, 30 seconds once text
+is typed, since that search may still be wanted. Both take tenths of a second, a
+point or a comma, and 0 keeps the bar open. Coming back before then keeps it open,
+and so does focus moving to one of WinLauncher's own menus or dialogs. Settings of
+0.22 and earlier with closing switched off load as two delays of 0. The Explorer
+bar always closes at once.
+
 A pin button between the settings button and the application icon (or Ctrl+P)
 keeps the launcher bar open: opening a result by Enter, click or Ctrl+1…9,
 Show in containing folder, the shell menu and custom commands then leave it
@@ -1138,7 +1146,11 @@ command. Opening Settings, or again, which brings the open window forward, hides
 bar: the bar stays on top of every window, so whatever opened last is in front, and
 the bar returns over Settings when called again. An exclusion added
 from a result's menu meanwhile is saved at once and also joins the open window's
-fields, so its next Save keeps it.
+fields, so its next Save keeps it. The window opens at the size it was last
+resized to, kept in `settings-window.json` beside the settings rather than in them;
+a smaller screen shrinks it for that time without forgetting the size. Folder
+lists never scroll sideways: a long row is shortened in the middle, and its
+tooltip shows the full path.
 
 Opening any modal dialog hides the bar, even when pinned, so the new prompt is
 in front. Dialogs opened from Settings or another dialog belong to that window

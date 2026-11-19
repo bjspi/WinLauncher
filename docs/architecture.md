@@ -522,8 +522,9 @@ the foreground executable/PID/class without window titles or query text.
 
 Plugins and native libraries share the process, so a fault in native code ends it
 without an exception. `CrashRecorder` keeps `crash.log` open for `faulthandler`, which
-writes all thread stacks from inside the fault. Windows also reports exceptions that
-are handled later, so a clean exit deletes the file; a report at the next start means
+writes the faulting thread's stack from inside the fault. Only that one: dumping the
+other, still running threads read changing frames and could crash the process
+itself. Windows also reports exceptions that are handled later, so a clean exit deletes the file; a report at the next start means
 the previous run never exited cleanly, and goes into `winlauncher.log`.
 
 Shell icon queries run on one daemon worker and return `QImage`s through a queued

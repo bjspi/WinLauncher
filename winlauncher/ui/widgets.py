@@ -17,11 +17,21 @@ from PySide6.QtCore import (
     QPointF,
     QPropertyAnimation,
     QRectF,
+    QRegularExpression,
     QSize,
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QIntValidator, QMouseEvent, QPainter, QPixmap, QShowEvent
+from PySide6.QtGui import (
+    QColor,
+    QIcon,
+    QIntValidator,
+    QMouseEvent,
+    QPainter,
+    QPixmap,
+    QRegularExpressionValidator,
+    QShowEvent,
+)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -427,32 +437,41 @@ def _texts(title: str, description: str) -> QVBoxLayout:
 
 
 class NumberField(QLineEdit):
-    """A whole number within `bounds`; arrow keys and the wheel step by one.
+    """A number within `bounds`; arrow keys and the wheel step by one.
 
+    Whole by default; with `decimals` a float, typed with a point or a comma.
     Not a `QSpinBox`: Qt 6.12 collapses the text area of style-sheet spin boxes
     without buttons, which leaves them empty and impossible to type into.
     """
 
-    def __init__(self, bounds: tuple[int, int], value: int, unit: str = ""):
+    def __init__(self, bounds: tuple[int, int], value: float, unit: str = "", *, decimals: int = 0):
         super().__init__()
         self.bounds = bounds
-        self._last_valid = value
-        self.setValidator(QIntValidator(*bounds, self))
+        self.decimals = decimals
+        if decimals:
+            pattern = QRegularExpression(rf"\d*([.,]\d{{0,{decimals}}})?")
+            self.setValidator(QRegularExpressionValidator(pattern, self))
+        else:
+            self.setValidator(QIntValidator(*bounds, self))
         self.setValue(value)
         unit_text = f" {unit}" if unit else ""
         self.setToolTip(f"{bounds[0]}–{bounds[1]}{unit_text}; type a value or use the arrow keys")
 
-    def value(self) -> int:
+    def value(self) -> float:
         """The typed number clamped to `bounds`; the last valid value while empty."""
         try:
-            number = int(self.text())
+            if self.decimals:
+                number = round(float(self.text().replace(",", ".")), self.decimals)
+            else:
+                number = int(self.text())
         except ValueError:
             return self._last_valid
         return min(max(number, self.bounds[0]), self.bounds[1])
 
-    def setValue(self, value: int) -> None:  # noqa: N802 - mirrors QSpinBox.
-        self._last_valid = min(max(value, self.bounds[0]), self.bounds[1])
-        self.setText(str(self._last_valid))
+    def setValue(self, value: float) -> None:  # noqa: N802 - mirrors QSpinBox.
+        value = min(max(value, self.bounds[0]), self.bounds[1])
+        self._last_valid = round(float(value), self.decimals) if self.decimals else value
+        self.setText(f"{self._last_valid:g}" if self.decimals else str(value))
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override.
         steps = {Qt.Key.Key_Up: 1, Qt.Key.Key_Down: -1}.get(event.key())

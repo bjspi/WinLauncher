@@ -51,8 +51,8 @@ class SettingsSearchTest(unittest.TestCase):
 
     def test_results_replace_the_pages_until_the_text_is_cleared(self):
         self.assertTrue(self.dialog.nav.isVisible())
-        results = self.type("close after")
-        self.assertEqual(results[0], "Close after\nGeneral")
+        results = self.type("close switching")
+        self.assertEqual(results[0], "Close search bar after switching windows\nGeneral")
         self.assertFalse(self.dialog.nav.isVisible())
         self.assertTrue(self.search.results.isVisible())
         self.assertEqual(len(self.dialog._built), self.dialog.nav.count())  # Searching builds all.

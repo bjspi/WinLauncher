@@ -54,7 +54,7 @@ from winlauncher.search.commands import CommandHit
 from winlauncher.search.query_parser import parse_query
 from winlauncher.search.ranking import SearchHit
 from winlauncher.search.syntax_help import SyntaxTip
-from winlauncher.settings import Settings, SettingsFile
+from winlauncher.settings import Settings, SettingsFile, settings_from_json
 from winlauncher.ui.bar_placement import COMPACT_WIDTH, EXPANDED_WIDTH, BarPlacement
 from winlauncher.ui.controller import BAR_PLACEMENT_FILE, LauncherController
 from winlauncher.ui.dialogs import bring_to_front, run_modal
@@ -64,7 +64,7 @@ from winlauncher.ui.indexing import IndexJobKind
 from winlauncher.ui.messages import MessageDialog, message
 from winlauncher.ui.plugins import ask_text
 from winlauncher.ui.search_session import PendingAction
-from winlauncher.ui.settings import SettingsDialog
+from winlauncher.ui.settings import SearchFolderList, SettingsDialog
 from winlauncher.ui.tasks import TaskCategory
 from winlauncher.ui.theme import colors
 from winlauncher.ui.widgets import NUMBER_FIELD_WIDTH, InfoDialog, pick_path
@@ -1367,7 +1367,7 @@ class UiFlowTest(unittest.TestCase):
         self.reveal.assert_called_once_with(hit.item.path)
         self.assertTrue(self.window.isVisible())
         # Focus moving to the opened program does not start the auto-hide timer either.
-        self.window.set_auto_hide(True, 1)
+        self.window.set_auto_hide(1, 1)
         self.window._focus_left()
         self.assertFalse(self.window.auto_hide.isActive())
         self.window.dismiss()  # Escape still closes.
@@ -2021,22 +2021,25 @@ class UiFlowTest(unittest.TestCase):
         self.window.query.setCursorPosition(0)
         self.assertFalse(shows_invalid_color())
 
-    def test_empty_launcher_hides_after_focus_left_winlauncher(self):
+    def test_launcher_hides_after_focus_left_winlauncher(self):
         def lose_focus() -> None:
             QApplication.sendEvent(self.window, QEvent(QEvent.Type.WindowDeactivate))
 
         with patch.object(QApplication, "activeWindow", return_value=None):
             lose_focus()
             self.assertTrue(self.window.auto_hide.isActive())
-            self.assertEqual(self.window.auto_hide.interval(), 3000)
+            self.assertEqual(self.window.auto_hide.interval(), 1500)
             QApplication.sendEvent(self.window, QEvent(QEvent.Type.WindowActivate))
             self.assertFalse(self.window.auto_hide.isActive())
             self.window.query.setText("report")
-            lose_focus()
+            lose_focus()  # A typed query waits longer, then closes too.
+            self.assertEqual(self.window.auto_hide.interval(), 30000)
             self.window.auto_hide.timeout.emit()
-            self.assertTrue(self.window.isVisible())
+            self.assertFalse(self.window.isVisible())
+            self.window.show()
             self.window.query.clear()
             lose_focus()
+            self.assertEqual(self.window.auto_hide.interval(), 1500)
             self.window.auto_hide.timeout.emit()
             self.assertFalse(self.window.isVisible())
         self.window.show()
@@ -2045,8 +2048,15 @@ class UiFlowTest(unittest.TestCase):
             self.window.auto_hide.timeout.emit()
             self.assertTrue(self.window.isVisible())
         settings = self.controller.settings
-        self.controller.apply_settings(replace(settings, auto_hide=False, auto_hide_seconds=7))
-        self.assertEqual(self.window.auto_hide_ms, 7000)
+        self.controller.apply_settings(replace(settings, auto_hide_seconds=2.5))
+        self.assertEqual(self.window.auto_hide_ms, 2500)
+        # A delay of 0 keeps the bar open, empty or with a query.
+        self.controller.apply_settings(
+            replace(settings, auto_hide_seconds=0.0, auto_hide_typed_seconds=0.0)
+        )
+        lose_focus()
+        self.assertFalse(self.window.auto_hide.isActive())
+        self.window.query.setText("report")
         lose_focus()
         self.assertFalse(self.window.auto_hide.isActive())
         # The Explorer bar closes right away, even with the option off and text typed.
@@ -2061,15 +2071,47 @@ class UiFlowTest(unittest.TestCase):
 
     def test_auto_hide_settings_are_read_from_the_dialog(self):
         dialog = self.settings_dialog(self.controller.settings)
-        self.assertTrue(dialog.auto_hide_delay.isEnabled())
-        dialog.auto_hide.setChecked(False)
-        dialog.auto_hide_delay.setValue(10)
-        self.assertFalse(dialog.auto_hide_delay.isEnabled())
+        self.assertEqual(dialog.auto_hide_delay.text(), "1.5")
+        dialog.auto_hide_delay.setText("2,5")  # A decimal comma counts as well.
+        dialog.auto_hide_typed_delay.setText("0")
         settings = dialog.read_settings()
-        self.assertEqual((settings.auto_hide, settings.auto_hide_seconds), (False, 10))
+        self.assertEqual((settings.auto_hide_seconds, settings.auto_hide_typed_seconds), (2.5, 0))
         with self.assertRaisesRegex(ValueError, "Auto-close"):
-            Settings(roots=(), auto_hide_seconds=0)
+            Settings(roots=(), auto_hide_seconds=-1.0)
+        with self.assertRaisesRegex(ValueError, "with a query"):
+            Settings(roots=(), auto_hide_typed_seconds=601.0)
+        # Earlier versions wrote whole seconds and switched closing off separately.
+        old = settings_from_json({"auto_hide": True, "auto_hide_seconds": 2})
+        self.assertEqual((old.auto_hide_seconds, old.auto_hide_typed_seconds), (2.0, 30.0))
+        off = settings_from_json({"auto_hide": False, "auto_hide_seconds": 2})
+        self.assertEqual((off.auto_hide_seconds, off.auto_hide_typed_seconds), (0.0, 0.0))
         dialog.deleteLater()
+
+    def test_settings_window_reopens_at_the_size_the_user_gave_it(self):
+        size_file = Path(self.temporary.name) / "settings-window.json"
+        dialog = self.settings_dialog(self.controller.settings, size_file=size_file)
+        dialog.reject()
+        self.assertFalse(size_file.exists())  # Unchanged: nothing to remember.
+        dialog = self.settings_dialog(self.controller.settings, size_file=size_file)
+        dialog.resize(700, 500)
+        dialog.reject()
+        dialog = self.settings_dialog(self.controller.settings, size_file=size_file)
+        self.assertEqual((dialog.width(), dialog.height()), (700, 500))
+        dialog.reject()
+        size_file.write_text("[]", encoding="utf-8")
+        dialog = self.settings_dialog(self.controller.settings, size_file=size_file)
+        self.assertNotEqual((dialog.width(), dialog.height()), (700, 500))
+        dialog.reject()
+
+    def test_long_folder_rows_shorten_in_the_middle_without_scrolling_sideways(self):
+        folder = r"D:\Projects\htdocs\TFB\DupProFiles\wp-content\themes\buddyboss-theme-child"
+        folders = SearchFolderList((folder,), ())
+        self.assertEqual(
+            folders.list.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.assertEqual(folders.list.textElideMode(), Qt.TextElideMode.ElideMiddle)
+        self.assertEqual(folders.list.item(0).toolTip(), folder)
+        folders.deleteLater()
 
     def test_settings_can_be_saved_repeatedly_without_closing(self):
         dialog = self.settings_dialog(self.controller.settings, save=self.controller.apply_settings)
