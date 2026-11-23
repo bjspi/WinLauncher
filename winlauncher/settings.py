@@ -148,8 +148,10 @@ class WindowsSettingsDetail(StrEnum):
     EVERY_SETTING = "every-setting"
 
 
-# Code projects' folders first, as `rank_code_projects` asks; scans mark them.
-PROJECT_RANKING = AttributePriority(PROJECT_ATTRIBUTE, 25, SearchPriority.HIGH)
+# Code projects' folders lifted, as `rank_code_projects` asks; scans mark them. Only
+# points, not the high class: its band would put every project whose path merely
+# contains the query above a better match, such as an exact name.
+PROJECT_RANKING = AttributePriority(PROJECT_ATTRIBUTE, 45)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +162,7 @@ class Settings:
     # Code projects (a folder with .git, pyproject.toml, package.json …) listed with
     # their top level only, wherever they lie; off by default.
     code_projects_top_level: bool = False
-    # Lift code projects' folders in the results, as a high priority rule would.
+    # Lift code projects' folders in the results by a numeric priority weight.
     rank_code_projects: bool = False
     excluded_paths: tuple[str, ...] = ()
     excluded_patterns: tuple[str, ...] = DEFAULT_EXCLUDED_PATTERNS

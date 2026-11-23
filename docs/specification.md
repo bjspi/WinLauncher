@@ -19,8 +19,10 @@ listed in full inside `D:\Projects` limited to 3 levels. With
 `go.mod`, `pom.xml`, `build.gradle[.kts]`, `settings.gradle[.kts]`, `*.sln`) lists its
 own entries but not the contents of its subfolders, also for file changes and
 rescans below it; a root that is a project is listed in full. Every scan marks such
-folders with attribute bit 2^40, and `rank_code_projects` adds a high priority rule
-(+25) for that bit, which both search engines apply. The Search folders page shows
+folders with attribute bit 2^40, and `rank_code_projects` adds a normal-class priority
+rule (+45) for that bit, which both search engines apply. It is not a high rule, so
+projects stay in the normal band and a better match, such as an exact name, still
+ranks above a project whose path merely contains the query. The Search folders page shows
 how many entries each root lists and, for a chosen depth, how many of them would go;
 **Analyze…** (`catalog/analysis.py`) suggests a depth for roots listed in full from
 2,000 entries, as deep as the deepest entry ever opened (3 to 6 levels) when it
@@ -196,6 +198,7 @@ extensions and exclusions ignore accents.
 | `report D:\Work\`, `"D:\Work Projects\" report` | An absolute folder token ending with a separator acts as `in:` within a search; a leading unquoted absolute path navigates directly |
 | `path:projects/reports` | Match parent folder components in that order; intervening components allowed |
 | `reports\ 2024`, `work\client\ proposal` | A relative token ending with `\` or `/` acts as `path:` |
+| `python/codex-lb`, `work\client\proposal` | An unquoted relative token with inner separators splits into `path:` parts and a name term, like `python/ codex-lb`; quoted tokens, wildcards and `.`/`..` parts stay text |
 | `name:annual` | Match the stem only, excluding the extension and parent path |
 | `!archive`, `-archive`, `-"old version"` | Reject a literal substring anywhere in the full path |
 | `!ext:tmp,bak`, `-ext:(tmp;bak)`, `!*.bak` | Reject these extensions/fnmatch patterns; `*.ext` only when `ext` has no wildcard, dot or separator |

@@ -282,6 +282,22 @@ def _is_folder_shorthand(token: str) -> bool:
     return token.endswith(FOLDER_SEPARATORS) and bool(token.strip("".join(FOLDER_SEPARATORS)))
 
 
+def _split_relative_path(token: str) -> tuple[list[str], str] | None:
+    """`python/codex-lb` as `path:python codex-lb`: ordered parent folders and a name.
+
+    None for absolute paths, wildcards and `.`/`..` parts, which keep their meaning.
+    """
+    if not any(separator in token for separator in FOLDER_SEPARATORS):
+        return None
+    if any(char in token for char in "*?[") or _expanded_path(token).is_absolute():
+        return None
+    *folders, name = token.replace("\\", "/").split("/")
+    parts = [*folders, name]
+    if not all(parts) or any(part in (".", "..") for part in parts):
+        return None
+    return [normalize(folder) for folder in folders], name
+
+
 def _check_raw_text(text: str) -> None:
     if len(text) > MAX_QUERY_LENGTH or any(ord(c) < 32 for c in text):
         raise ValueError(f"Use at most {MAX_QUERY_LENGTH} characters without control characters.")
@@ -356,6 +372,10 @@ class _QueryDraft:
             self.add_exclusion(token[1:])
         elif _is_folder_shorthand(token):
             self.add_folder(token)
+        elif not quoted and (split := _split_relative_path(token)):
+            folders, name = split
+            self.folder_parts.extend(folders)
+            self.add_term(name)
         else:
             term = self.add_term(token)
             if quoted:

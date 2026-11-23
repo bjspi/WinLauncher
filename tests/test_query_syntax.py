@@ -181,6 +181,18 @@ class FolderShorthandTest(unittest.TestCase):
             parse_query(r"work\client\ proposal"), parse_query("path:work/client proposal")
         )
 
+    def test_inner_separator_splits_ordered_parent_folders_from_the_name(self):
+        for text, parts, terms in (
+            ("python/codex-lb", ("python",), ("codex-lb",)),
+            (r"Projects\Python\win", ("projects", "python"), ("win",)),
+            ("a/b c", ("a",), ("b", "c")),
+        ):
+            with self.subTest(text=text):
+                query = parse_query(text)
+                self.assertEqual((query.folder_parts, query.terms), (parts, terms))
+                self.assertIsNone(query.scope)
+        self.assertEqual(parse_query("python/codex-lb"), parse_query("python/ codex-lb"))
+
     def test_absolute_folder_within_search_scopes_like_in(self):
         explorer = Path(r"C:\Explorer")
         for text, scope in (
@@ -203,7 +215,9 @@ class FolderShorthandTest(unittest.TestCase):
             (r"\\server", (r"\\server",)),
             ("\\", ("\\",)),
             ("//", ("//",)),
-            ("a/b", ("a/b",)),
+            ('"a/b"', ("a/b",)),
+            ("../b", ("../b",)),
+            ("*/b", ("*/b",)),
         ):
             with self.subTest(text=text):
                 query = parse_query(text)

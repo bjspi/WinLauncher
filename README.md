@@ -92,7 +92,7 @@ and replaces it, and your settings and catalog stay. You can
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.22.5"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.23.0"
 winlauncher --show
 ```
 
@@ -352,6 +352,7 @@ navigation as `~/`; spaces belong to the path, and the quotes of Explorer's
 | `ext:pdf,txt` · `ext:pdf;txt` · `ext:(jpg,png)` · `ext:doc*` | Extensions/patterns, combined with OR (repeatable) |
 | `in:"C:\Folder"` · `report C:\Folder\` | Search descendants of an absolute folder |
 | `path:a/b` · `a\b\` | Parent folders in this order (repeatable) |
+| `python/codex` | Name `codex` below a `python` folder, like `python/ codex` |
 | `name:text` | Match the file name without extension |
 | `!text` · `-text` | Reject paths containing `text` |
 | `!ext:tmp,bak` · `-ext:tmp` · `!*.bak` | Reject these extensions |

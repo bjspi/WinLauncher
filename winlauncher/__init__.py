@@ -1,3 +1,3 @@
 """WinLauncher: an independent, local Windows launcher."""
 
-__version__ = "0.22.5"
+__version__ = "0.23.0"
