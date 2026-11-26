@@ -11,7 +11,9 @@ from PySide6.QtCore import QUrl, qVersion
 from PySide6.QtGui import QDesktopServices
 
 from winlauncher import __version__
+from winlauncher.crash_report import LOG_FILE
 from winlauncher.platform.git import checkout_root, current_head, remote_url
+from winlauncher.platform.shell import show_in_folder
 from winlauncher.ui.theme import app_icon
 from winlauncher.ui.widgets import InfoDialog
 
@@ -51,7 +53,16 @@ class AboutDialog(InfoDialog):
             ]
         )
         self.add_helper("Open data folder", self.open_data_folder)
+        self.add_helper("Show log file", self.show_log_file)
         self.add_button("Close", self.accept, primary=True)
 
     def open_data_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))
+
+    def show_log_file(self) -> None:
+        """Explorer with the current log selected, ready to attach to a bug report."""
+        log = self.data_dir / LOG_FILE
+        if not log.exists():
+            self.open_data_folder()
+            return
+        show_in_folder(log)

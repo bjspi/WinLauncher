@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TextIO
 
 CRASH_FILE = "crash.log"
+LOG_FILE = "winlauncher.log"  # The running log, in the same data directory.
 MAX_REPORT_BYTES = 64_000  # The last fault is at the end; older handled ones matter less.
 logger = logging.getLogger(__name__)
 

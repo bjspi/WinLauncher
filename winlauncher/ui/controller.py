@@ -28,6 +28,7 @@ from winlauncher.catalog.model import ScanReport, is_within
 from winlauncher.catalog.sources import catalog_sources
 from winlauncher.catalog.store import CatalogStore
 from winlauncher.commands import MenuCommand
+from winlauncher.crash_report import LOG_FILE
 from winlauncher.install import mark_reinstall_pending
 from winlauncher.platform.changes import FileChange, FolderChange, WatchFailed, WatchRestored
 from winlauncher.platform.gesture import (
@@ -41,7 +42,7 @@ from winlauncher.platform.gesture import (
 from winlauncher.platform.git import release_changes
 from winlauncher.platform.known_folders import variable_folders
 from winlauncher.platform.launcher import PACKAGE_PARENT, application_command
-from winlauncher.platform.shell import indexed_application_roots, shell_folders
+from winlauncher.platform.shell import indexed_application_roots, open_path, shell_folders
 from winlauncher.platform.startup import StartupShortcut
 from winlauncher.platform.startup_timing import StartupTimings
 from winlauncher.platform.store_apps import store_app_folder
@@ -264,6 +265,7 @@ class LauncherController(QObject):
         tray.refresh_requested.connect(self.rescan)
         tray.settings_requested.connect(self.edit_settings)
         tray.status_requested.connect(self.show_index_status)
+        tray.log_requested.connect(self.open_log)
         tray.clear_history_requested.connect(self.clear_history)
         tray.quit_requested.connect(QApplication.instance().quit)
         tray.autostart_toggled.connect(self._toggle_autostart_from_tray)
@@ -967,6 +969,19 @@ class LauncherController(QObject):
             messages.message(self.window, "Autostart not changed", str(exc), messages.ERROR)
 
     # About, updates and restart ----------------------------------------------
+
+    def open_log(self) -> None:
+        """The current log in the editor Windows opens .log files with."""
+        log = self.data_dir / LOG_FILE
+        try:
+            open_path(log)
+        except OSError as exc:
+            messages.message(
+                self.window,
+                "Log file not opened",
+                f"{log} could not be opened: {exc}",
+                messages.WARNING,
+            )
 
     def show_about(self) -> None:
         dialog = AboutDialog(self.data_dir, self.window)

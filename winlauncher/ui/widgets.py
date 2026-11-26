@@ -20,14 +20,17 @@ from PySide6.QtCore import (
     QRegularExpression,
     QSize,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import (
     QColor,
+    QHideEvent,
     QIcon,
     QIntValidator,
     QMouseEvent,
     QPainter,
+    QPen,
     QPixmap,
     QRegularExpressionValidator,
     QShowEvent,
@@ -64,6 +67,12 @@ ICON_SIZES = (16, 18, 20, 24, 32)
 SWITCH_SIZE = QSize(38, 22)
 SWITCH_KNOB_MARGIN = 3  # Between the knob and the track's edge.
 SWITCH_ANIMATION_MS = 140
+SPINNER_SIZE = 16
+SPINNER_LINE_WIDTH = 2.0
+SPINNER_ARC_DEGREES = 270
+SPINNER_FRAME_MS = 16  # About 60 frames a second.
+SPINNER_STEP_DEGREES = 6  # One turn a second.
+QT_ARC_UNITS = 16  # QPainter measures arcs in sixteenths of a degree.
 CARD_PADDING = 16
 INFO_ICON_SIZE = 40
 INFO_DIALOG_WIDTH = 480
@@ -245,6 +254,40 @@ class ToggleSwitch(QCheckBox):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(colors().on_accent))
         painter.drawEllipse(center, knob / 2, knob / 2)
+
+
+class Spinner(QWidget):
+    """A small turning arc for work running in the background; it turns only while shown."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setFixedSize(SPINNER_SIZE, SPINNER_SIZE)
+        self._angle = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(SPINNER_FRAME_MS)
+        self._timer.timeout.connect(self._turn)
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override.
+        super().showEvent(event)
+        self._timer.start()
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802 - Qt override.
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _turn(self) -> None:
+        self._angle = (self._angle + SPINNER_STEP_DEGREES) % 360
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt override.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(colors().accent), SPINNER_LINE_WIDTH)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        inset = SPINNER_LINE_WIDTH
+        arc = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
+        painter.drawArc(arc, -self._angle * QT_ARC_UNITS, SPINNER_ARC_DEGREES * QT_ARC_UNITS)
 
 
 class PageHeader(QWidget):

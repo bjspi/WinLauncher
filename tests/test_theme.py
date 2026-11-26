@@ -100,6 +100,7 @@ class ThemeTest(unittest.TestCase):
         texts = [action.text() for action in tray.menu.actions() if action.text()]
         self.assertIn("Settings…	K", texts)
         self.assertIn("Quit WinLauncher	Q", texts)
+        self.assertIn("Log file	L", texts)
         letters = [text.rpartition("	")[2] for text in texts]
         self.assertEqual(len(letters), len(set(letters)))  # Every letter triggers one entry.
         tray.set_update_version("9.9.9")

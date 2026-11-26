@@ -25,6 +25,7 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -49,7 +50,48 @@ GIT_TIMEOUT_SECONDS = 120  # A stalled network or credential helper is given up 
 STAGING_PREFIX = f"{SKIPPED_PREFIX}installing-"
 REPLACED_PREFIX = f"{SKIPPED_PREFIX}replaced-"
 PARTIAL_SUFFIX = ".partial"  # A clone that has not finished yet.
+# A virus scanner opens the files of a fresh clone for a moment, and Windows does not
+# rename a folder while a file in it is open; the move into place waits that long.
+MOVE_ATTEMPTS = 20
+MOVE_PAUSE_SECONDS = 0.5
+GIT_MISSING = (
+    "Remote plugin sources need git, which was not found. Install Git for Windows "
+    "(https://git-scm.com/download/win), then restart WinLauncher."
+)
 CLONE_HASH_LENGTH = 10
+# What a failed git call most likely means, by the words of git's own message. git
+# never prompts here, so a login it has no saved credentials for, such as a company
+# sign-in page, shows up as a disabled prompt or a refused request.
+GIT_FAILURE_HINTS = (
+    (
+        (
+            "terminal prompts disabled",
+            "could not read username",
+            "authentication failed",
+            "error: 401",
+            "error: 403",
+            "error: 302",
+            "repository not found",
+            "permission denied (publickey)",
+            "could not read from remote repository",
+        ),
+        "The repository could not be opened with your saved git credentials: it needs a "
+        "sign-in, such as a company login, or the address is wrong. Clone it once in a "
+        "terminal so git can remember the sign-in, or open the address in a browser to "
+        "check your access.",
+    ),
+    (
+        ("ssl certificate problem", "certificate verify failed"),
+        "git does not trust the server's certificate, often because of a company proxy. "
+        "'git config --global http.sslBackend schannel' makes git use the certificates "
+        "Windows trusts.",
+    ),
+    (
+        ("could not resolve host", "failed to connect", "timed out", "connection refused"),
+        "The server cannot be reached; check the network or a proxy.",
+    ),
+)
+GIT_FATAL_PREFIX = "fatal:"
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 logger = logging.getLogger(__name__)
 
@@ -142,6 +184,9 @@ class PluginSources:
             return self.read(location)
         try:
             self._update_clone(location, self.clone(location))
+        except OSError as exc:
+            logger.warning("Plugin source %s could not be checked: %s", location, exc)
+            return replace(self.read(location), error=f"Could not be checked: {_reason(exc)}")
         except SourceError as exc:
             logger.info("Plugin source %s could not be checked: %s", location, exc)
             return replace(self.read(location), error=f"Could not be checked: {exc}")
@@ -252,7 +297,25 @@ class PluginSources:
         _git(
             ["clone", "--depth", "1", "--quiet", "--", location.strip(), str(partial)], self.clones
         )
+        _move_into_place(partial, clone)
+
+
+def _move_into_place(partial: Path, clone: Path) -> None:
+    """Rename a finished clone to its final name, waiting out programs that still
+    hold one of its files open."""
+    for _attempt in range(MOVE_ATTEMPTS - 1):
+        try:
+            partial.rename(clone)
+            return
+        except PermissionError:
+            time.sleep(MOVE_PAUSE_SECONDS)
+    try:
         partial.rename(clone)
+    except PermissionError as exc:
+        raise SourceError(
+            f"The downloaded copy could not be moved into place ({_reason(exc)}). Another "
+            "program, often a virus scanner, still had it open; check again in a moment."
+        ) from None
 
 
 def _came_from(location: str, target: Path) -> bool:
@@ -304,14 +367,25 @@ def _git(arguments: list[str], cwd: Path) -> None:
             creationflags=NO_CONSOLE,
         )
     except FileNotFoundError:
-        raise SourceError("Install git to use remote plugin sources.") from None
+        raise SourceError(GIT_MISSING) from None
     except subprocess.TimeoutExpired:
         raise SourceError(f"git gave no answer within {GIT_TIMEOUT_SECONDS} seconds.") from None
     except OSError as exc:
         raise SourceError(f"git could not run: {_reason(exc)}") from None
     if result.returncode != 0:
-        lines = [line for line in decode_text(result.stderr).splitlines() if line.strip()]
-        raise SourceError(lines[-1].strip() if lines else f"git {arguments[0]} failed.")
+        raise SourceError(_git_failure(arguments[0], decode_text(result.stderr)))
+
+
+def _git_failure(command: str, output: str) -> str:
+    """git's fatal error (else its last line), with what it likely means for the user."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    fatal = [line for line in lines if line.lower().startswith(GIT_FATAL_PREFIX)]
+    reason = (fatal or lines or [f"git {command} failed."])[-1]
+    lowered = output.lower()
+    for markers, hint in GIT_FAILURE_HINTS:
+        if any(marker in lowered for marker in markers):
+            return f"{hint} (git: {reason})"
+    return reason
 
 
 def _reason(exc: OSError) -> str:

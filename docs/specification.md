@@ -979,8 +979,16 @@ now**, which saves the settings first.
 Sources are read at start, then checked 60 s later, every 6 hours, on **Check
 now** and when a saved edit changes the list; git runs without a console and never
 prompts, giving up after 120 s, and package installations give up after 600 s. A
-remote source that cannot be checked keeps listing what its last clone offered,
-with the reason; an unreadable source, `catalog.toml` or manifest is named on the
+first clone is made beside its final folder and renamed into place; while another
+program (a virus scanner) still holds one of its files, the rename is retried for
+10 s. A remote source that cannot be checked keeps listing what its last clone
+offered, with the reason; git's message comes with a hint when it means a sign-in
+git has no credentials for (such as a company login page), an untrusted
+certificate or an unreachable server, and a missing git says to install it and
+restart. During a check, **Check now** reads Checking… beside a spinner; then a
+check mark and "Checked at HH:MM: N plugins offered", or a warning mark. After
+**Check now** every source that could not be checked, and a check that failed as
+a whole, is also shown in a warning dialog; an unreadable source, `catalog.toml` or manifest is named on the
 page. Clones of sources no longer listed are deleted. A new version of an
 installed plugin is announced once in a tray message.
 
@@ -1041,11 +1049,12 @@ kept. This shortcut remains when autostart is disabled. Unchanged links are not
 rewritten; unrelated or unreadable links are preserved, and failed saves leave the
 original intact.
 
-The tray menu offers Search, Refresh catalog, Settings, Start with Windows, Index
-status, Clear search history, Check for updates, About, Restart and Quit. A single
+The tray menu offers Search, Refresh catalog, Index status, Log file (opens the
+current `winlauncher.log` in the editor Windows uses for `.log` files), Settings,
+Start with Windows, Clear search history, Check for updates, About, Restart and Quit. A single
 click opens the launcher. Each entry shows a letter that triggers it while the menu
 is open, without Ctrl, Alt or the Windows key: S Search, R Refresh catalog, I Index
-status, K Settings, W Start with Windows, C Center search bar, H Clear search
+status, L Log file, K Settings, W Start with Windows, C Center search bar, H Clear search
 history, U updates, A About, N Restart and Q Quit. A click on an entry within 0.4 s
 after a menu opens is ignored: the tray menu opens upwards with Quit under the pointer,
 and a touchpad tap right after the right-click would otherwise quit. Restart starts a replacement process that waits for the
@@ -1188,7 +1197,9 @@ box: an icon badge tinted by kind (information, question, update, success,
 warning, error), a heading with the text below it, optional details behind a
 link that names what a click does, and buttons that name their action. Enter
 runs the filled main button; a destructive question (red button) has none, so
-Enter cancels. About, Index status and the update dialogs share this look. Changing roots, exclusions, markers, priority rules or
+Enter cancels. About, Index status and the update dialogs share this look. About
+names the data folder and offers **Open data folder** and **Show log file**,
+which opens Explorer with `winlauncher.log` selected. Changing roots, exclusions, markers, priority rules or
 application indexing restarts folder watching and rescans; changing only the result
 limit, interval or input settings does not rescan and keeps an Explorer scope.
 Input settings (double-Ctrl interval, Explorer typing, Quick Switch) restart the

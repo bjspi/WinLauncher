@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QApplication, QProgressDialog, QSystemTrayIcon
 
 from winlauncher import __version__
 from winlauncher.catalog.model import path_key
-from winlauncher.crash_report import CrashRecorder
+from winlauncher.crash_report import LOG_FILE, CrashRecorder
 from winlauncher.install import (
     REINSTALL_TIMEOUT_MS,
     finish_reinstall,
@@ -133,7 +133,7 @@ def _use_windows_tls() -> None:
 def _configure_logging(data_dir: Path) -> QueueListener:
     data_dir.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(
-        data_dir / "winlauncher.log", maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
+        data_dir / LOG_FILE, maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
     )
     messages = queue.SimpleQueue()
     handler.setFormatter(

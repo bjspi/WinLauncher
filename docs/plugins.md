@@ -95,7 +95,9 @@ settings**, one card per plugin with its icon; unfold a card to see them. A card
 that is off shows only its header. WinLauncher checks its sources every 6 hours and announces a new
 version of an installed plugin in a tray message.
 
-Repositories are fetched with git, so git must be installed. A private one works
+Repositories are fetched with git, so git must be installed (restart WinLauncher
+after installing it). **Check now** shows a spinner while it runs and a warning
+when a source cannot be reached, with a hint at the likely cause. A private one works
 once git can reach it with your saved credentials — clone it once in a terminal if
 git has to ask for a password; WinLauncher itself never prompts.
 

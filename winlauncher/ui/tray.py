@@ -38,6 +38,7 @@ ENTRIES = (
     _Entry("Search", "search_requested", "s", "search"),
     _Entry("Refresh catalog", "refresh_requested", "r", "refresh"),
     _Entry("Index status…", "status_requested", "i", "activity"),
+    _Entry("Log file", "log_requested", "l", "file"),
     None,
     _Entry("Settings…", "settings_requested", "k", "gear"),
     _Entry("Start with Windows", "autostart_toggled", "w", CHECK),
@@ -57,6 +58,7 @@ class TrayMenu(QObject):
     refresh_requested = Signal()
     settings_requested = Signal()
     status_requested = Signal()
+    log_requested = Signal()
     clear_history_requested = Signal()
     quit_requested = Signal()
     restart_requested = Signal()

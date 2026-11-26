@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
 from winlauncher.plugins.config import DEFAULT_SOURCES, source_key
@@ -288,6 +289,52 @@ class RemoteSourceTest(unittest.TestCase):
         self.assertIn("Could not be checked", never.error)
         self.assertEqual(never.offers, ())
 
+    def test_a_fresh_clone_held_open_for_a_moment_is_still_moved_into_place(self):
+        rename = Path.rename
+        refusals = iter([PermissionError(5, "Access is denied")] * 2)
+
+        def rename_once_free(path, target):
+            if refusal := next(refusals, None):
+                raise refusal
+            return rename(path, target)
+
+        with (
+            patch.object(Path, "rename", rename_once_free),
+            patch("winlauncher.plugins.sources.time.sleep") as sleep,
+        ):
+            source = self.library.fetch(self.repository.location)
+        self.assertEqual(source.error, "")
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual([offer.folder.name for offer in source.offers], ["chats", "records"])
+
+    def test_a_clone_that_stays_locked_is_named_on_the_source(self):
+        refused = PermissionError(5, "Access is denied")
+        with (
+            patch.object(Path, "rename", side_effect=refused),
+            patch("winlauncher.plugins.sources.time.sleep"),
+        ):
+            source = self.library.fetch(self.repository.location)
+        self.assertIn("could not be moved into place (Access is denied)", source.error)
+        self.assertIn("virus scanner", source.error)
+
+    def test_a_missing_git_says_how_to_get_it(self):
+        with patch("winlauncher.plugins.sources.subprocess.run", side_effect=FileNotFoundError):
+            source = self.library.fetch(self.repository.location)
+        self.assertIn("need git, which was not found", source.error)
+
+    def test_a_sign_in_git_cannot_answer_is_explained(self):
+        denied = subprocess.CompletedProcess(
+            [],
+            128,
+            b"",
+            b"fatal: could not read Username for 'https://git.example.com': "
+            b"terminal prompts disabled\n",
+        )
+        with patch("winlauncher.plugins.sources.subprocess.run", return_value=denied):
+            source = self.library.fetch(self.repository.location)
+        self.assertIn("could not be opened with your saved git credentials", source.error)
+        self.assertIn("(git: fatal: could not read Username", source.error)
+
     def test_clones_of_sources_no_longer_listed_are_deleted(self):
         self.library.fetch(self.repository.location)
         self.assertEqual(len(list(self.library.clones.iterdir())), 1)
@@ -516,6 +563,45 @@ class SourceWatcherTest(unittest.TestCase):
         self.assertEqual(section.source_locations(), (self.repository.location,))
         self.assertEqual(section.active_plugins(), ())
 
+    def test_check_now_spins_then_warns_about_a_source_it_could_not_check(self):
+        from winlauncher.ui.source_settings import CHECK_NOW, CHECKING, SourceSection
+
+        self.settings = Settings(roots=(), plugin_sources=((self.root / "missing").as_uri(),))
+        parent = QWidget()
+        self.addCleanup(parent.deleteLater)
+        section = SourceSection(
+            self.settings, self.watcher, set, lambda _folder: None, None, parent
+        )
+        with patch("winlauncher.ui.source_settings.message") as told:
+            section.check_now()
+            self.assertEqual(section.check_button.text(), CHECKING)
+            self.assertFalse(section.check_button.isEnabled())
+            self.assertFalse(section.spinner.isHidden())
+            self.finish()
+        self.assertEqual(section.check_button.text(), CHECK_NOW)
+        self.assertTrue(section.spinner.isHidden())
+        title, text = told.call_args.args[1:3]
+        self.assertEqual(title, "Plugin sources could not be checked")
+        self.assertIn("Could not be checked", text)
+
+    def test_a_failed_check_is_kept_and_a_good_one_says_what_it_found(self):
+        from winlauncher.ui.source_settings import SourceSection
+
+        parent = QWidget()
+        self.addCleanup(parent.deleteLater)
+        section = SourceSection(
+            self.settings, self.watcher, set, lambda _folder: None, None, parent
+        )
+        self.watcher.check()
+        self.watcher._check_failed("disk full")
+        self.assertIn("The check failed: disk full", section.status.text())
+        with patch("winlauncher.ui.source_settings.message") as told:
+            section.check_now()
+            self.finish()
+        told.assert_not_called()
+        self.assertEqual(self.watcher.check_error, "")
+        self.assertRegex(section.status.text(), r"^Checked at \d\d:\d\d: 2 plugins offered\.$")
+
 
 class EntryListTest(unittest.TestCase):
     def test_a_short_list_shows_every_entry_without_scrolling(self):
@@ -528,6 +614,7 @@ class EntryListTest(unittest.TestCase):
         self.addCleanup(entries.deleteLater)
         for name in ("Chats\nInstalled", "Tickets\nActive"):
             entries.add_entry(line_icon("plug"), name)
+        entries.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)  # Laid out, not seen.
         entries.show()
         QApplication.processEvents()
         self.assertEqual(entries.verticalScrollBar().maximum(), 0)

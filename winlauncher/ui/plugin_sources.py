@@ -72,6 +72,7 @@ class SourceWatcher(QObject):
         self.checking = False
         self.working = False  # An install, uninstall or activation is running.
         self.checked_at: float | None = None
+        self.check_error = ""  # Why the last check failed as a whole; empty when it ran.
         self._announced: set[tuple[str, str, str]] = set()
         self._closed = False
         self._timer = QTimer(self)
@@ -160,7 +161,7 @@ class SourceWatcher(QObject):
             self.changed.emit()
 
     def _checked(self, sources: tuple[Source, ...]) -> None:
-        self.checking = False
+        self.checking, self.check_error = False, ""
         self.sources, self.checked_at = sources, time.time()
         self.changed.emit()
         self._announce_updates()
@@ -169,7 +170,7 @@ class SourceWatcher(QObject):
 
     def _check_failed(self, message: str) -> None:
         logger.warning("Plugin source check failed: %s", message)
-        self.checking = False
+        self.checking, self.check_error = False, message
         self.changed.emit()
 
     def _shows(self, locations: Sequence[str]) -> bool:

@@ -30,7 +30,16 @@ from winlauncher.plugins.packages import install_command
 from winlauncher.plugins.sources import InstallState, Offer, Source, SourceKind, source_kind
 from winlauncher.releases import installation
 from winlauncher.settings import Settings
-from winlauncher.ui.messages import ERROR, PRIMARY, SECONDARY, SUCCESS, ask, message, show_message
+from winlauncher.ui.messages import (
+    ERROR,
+    PRIMARY,
+    SECONDARY,
+    SUCCESS,
+    WARNING,
+    ask,
+    message,
+    show_message,
+)
 from winlauncher.ui.plugin_sources import (
     CHECK_INTERVAL_HOURS,
     SourceAction,
@@ -38,7 +47,8 @@ from winlauncher.ui.plugin_sources import (
     SourceWatcher,
 )
 from winlauncher.ui.settings import _split_lines
-from winlauncher.ui.widgets import Card, EntryList, line_icon, pick_path
+from winlauncher.ui.theme import colors
+from winlauncher.ui.widgets import Card, EntryList, Spinner, line_icon, pick_path
 
 SOURCE_EDITOR_HEIGHT = 72
 RESTART_NOW = "Restart now"
@@ -51,6 +61,9 @@ INSTALL_TEXTS = {
     InstallState.TAKEN: "A plugin folder of this name exists",
 }
 NEXT_START = "from the next start"
+CHECK_NOW = "Check now"
+CHECKING = "Checking…"
+CHECK_RESULT_ICON_SIZE = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +98,7 @@ class SourceSection(QObject):
         self.plugin_changed, self.restart = plugin_changed, restart
         self.active = list(settings.active_plugins)  # Edited with the other settings.
         self.rows: list[_Row] = []
+        self.reporting = False  # Check now was pressed: its outcome is told when it ends.
         self.sections: list[QWidget] = [self._offers_card()]
         self.sources_card = self._sources_card(settings)
         watcher.changed.connect(self.show_sources)
@@ -120,20 +134,26 @@ class SourceSection(QObject):
         self.locations.setFixedHeight(SOURCE_EDITOR_HEIGHT)
         add_folder = QPushButton("Add folder…")
         add_folder.clicked.connect(self.add_folder)
-        self.check_button = QPushButton("Check now")
-        self.check_button.clicked.connect(self.watcher.check)
+        self.check_button = QPushButton(CHECK_NOW)
+        self.check_button.clicked.connect(self.check_now)
+        self.spinner = Spinner()
+        self.check_result = QLabel()
         self.status = QLabel()
         self.status.setObjectName("rowDescription")
         self.status.setWordWrap(True)
         card = Card()
         card.add_block(
             "Plugin sources",
-            "One per line. A git repository (https or SSH address) offers plugins to install; "
-            "private ones use your saved git credentials. A folder offers its plugins to "
+            "One per line. A git repository (https or SSH address; needs git) offers plugins "
+            "to install; private ones use your saved git credentials. A folder offers its plugins to "
             "activate where they lie: a plugin folder, a folder of them, or one with a "
             f"catalog.toml. Checked every {CHECK_INTERVAL_HOURS} hours; save to check an "
             "edited list.",
-            _stacked(self.locations, _row(add_folder, self.check_button), self.status),
+            _stacked(
+                self.locations,
+                _row(add_folder, self.check_button, self.spinner, self.check_result),
+                self.status,
+            ),
         )
         return card
 
@@ -148,6 +168,10 @@ class SourceSection(QObject):
             if source_kind(location) is SourceKind.LOCAL
         ]
         return tuple(folder for folder in self.active if _inside_any(path_key(folder), roots))
+
+    def check_now(self) -> None:
+        self.watcher.check()
+        self.reporting = self.watcher.checking
 
     def add_folder(self) -> None:
         if folder := pick_path(self.list.window(), "Choose a plugin source folder"):
@@ -169,9 +193,35 @@ class SourceSection(QObject):
         index = keys.index(selected.key) if selected is not None and selected.key in keys else 0
         self.list.setCurrentRow(index if self.rows else -1)
         self.list.blockSignals(False)
-        self.status.setText(self._status_text())
-        self.check_button.setEnabled(not self.watcher.checking)
+        self._show_check()
         self.show_selected()
+
+    def _show_check(self) -> None:
+        """The check's progress, its result as an icon, and after Check now its problems."""
+        checking = self.watcher.checking
+        self.status.setText(self._status_text())
+        self.check_button.setEnabled(not checking)
+        self.check_button.setText(CHECKING if checking else CHECK_NOW)
+        self.spinner.setVisible(checking)
+        checked = self.watcher.checked_at is not None or bool(self.watcher.check_error)
+        self.check_result.setVisible(checked and not checking)
+        failures = self._check_failures()
+        icon = (
+            line_icon("alert", colors().warning)
+            if failures
+            else line_icon("check", colors().success)
+        )
+        self.check_result.setPixmap(icon.pixmap(CHECK_RESULT_ICON_SIZE))
+        if checking or not self.reporting:
+            return
+        self.reporting = False
+        if failures:
+            message(
+                self.list.window(),
+                "Plugin sources could not be checked",
+                "\n\n".join(failures),
+                WARNING,
+            )
 
     def show_selected(self, _index: int = -1) -> None:
         row = self._selected()
@@ -216,20 +266,32 @@ class SourceSection(QObject):
         return text
 
     def _status_text(self) -> str:
-        if self.watcher.checking:
-            parts = ["Checking the sources…"]
-        elif self.watcher.checked_at is not None:
-            checked = datetime.fromtimestamp(self.watcher.checked_at).strftime("%H:%M")
-            parts = [f"Checked at {checked}."]
-        else:
-            parts = ["Not checked yet."]
+        parts = [self._check_text()]
         if not self.watcher.locations():
             parts.append("No plugin source is listed.")
+        parts.extend(self._check_failures())
         for source in self.watcher.sources:
-            if source.error:
-                parts.append(f"{source.title}: {source.error}")
             parts.extend(f"{source.title}: {problem}" for problem in source.problems)
         return " ".join(parts)
+
+    def _check_text(self) -> str:
+        if self.watcher.checking:
+            return "Checking the sources…"
+        if self.watcher.checked_at is None:
+            return "Not checked yet."
+        checked = datetime.fromtimestamp(self.watcher.checked_at).strftime("%H:%M")
+        offered = sum(len(source.offers) for source in self.watcher.sources)
+        return f"Checked at {checked}: {offered} plugin{'' if offered == 1 else 's'} offered."
+
+    def _check_failures(self) -> list[str]:
+        """Why the last check failed, as a whole or for single sources."""
+        failures = []
+        if self.watcher.check_error:
+            failures.append(f"The check failed: {self.watcher.check_error}")
+        failures.extend(
+            f"{source.title}: {source.error}" for source in self.watcher.sources if source.error
+        )
+        return failures
 
     def _selected(self) -> _Row | None:
         index = self.list.currentRow()
@@ -364,13 +426,13 @@ def _inside_any(folder_key: str, root_keys: list[str]) -> bool:
     )
 
 
-def _row(*buttons: QPushButton) -> QWidget:
+def _row(*widgets: QWidget) -> QWidget:
     row = QWidget()
     layout = QHBoxLayout(row)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(8)
-    for button in buttons:
-        layout.addWidget(button)
+    for widget in widgets:
+        layout.addWidget(widget)
     layout.addStretch()
     return row
 
