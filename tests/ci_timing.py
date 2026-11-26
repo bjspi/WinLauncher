@@ -7,3 +7,6 @@ catches no bug a generous one misses.
 """
 
 PROMPT_LIMIT_S = 5.0
+# A child WinLauncher process to start up or finish: it imports Qt and builds the
+# whole application, which a busy runner can stretch from seconds to far more.
+PROCESS_LIMIT_S = 60.0

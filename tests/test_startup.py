@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from ci_timing import PROCESS_LIMIT_S
+
 PROJECT = Path(__file__).resolve().parents[1]
 
 
@@ -40,7 +42,7 @@ def child(data: Path) -> None:
     ):
         if os.environ.get("WINLAUNCHER_TEST_START_BARRIER"):
             (data / f"waiting-{os.getpid()}").touch()
-            deadline = time.monotonic() + 8
+            deadline = time.monotonic() + PROCESS_LIMIT_S
             while not (data / "start").exists():
                 if time.monotonic() > deadline:
                     raise TimeoutError("Startup barrier not released")
@@ -82,7 +84,7 @@ class StartupTest(unittest.TestCase):
                 for _ in range(2)
             ]
             try:
-                deadline = time.monotonic() + 8
+                deadline = time.monotonic() + PROCESS_LIMIT_S
                 while len(list(data.glob("waiting-*"))) < 2:
                     self.assertLess(
                         time.monotonic(), deadline, "Startup children did not reach barrier"
@@ -90,7 +92,7 @@ class StartupTest(unittest.TestCase):
                     time.sleep(0.02)
                 (data / "start").touch()
                 for process in processes:
-                    stdout, stderr = process.communicate(timeout=12)
+                    stdout, stderr = process.communicate(timeout=PROCESS_LIMIT_S)
                     self.assertEqual(process.returncode, 0, stdout + stderr)
                     self.assertNotIn("Traceback", stderr)
                 self.assertTrue((data / "activated").exists())
@@ -119,7 +121,7 @@ class StartupTest(unittest.TestCase):
                 text=True,
             )
             try:
-                deadline = time.monotonic() + 8
+                deadline = time.monotonic() + PROCESS_LIMIT_S
                 while not (data / "ready").exists() and process.poll() is None:
                     self.assertLess(time.monotonic(), deadline, "First instance did not start")
                     time.sleep(0.05)
@@ -138,7 +140,7 @@ class StartupTest(unittest.TestCase):
                     env=env,
                     capture_output=True,
                     text=True,
-                    timeout=8,
+                    timeout=PROCESS_LIMIT_S,
                 )
                 self.assertEqual(background.returncode, 0, background.stderr)
                 time.sleep(0.5)
@@ -151,10 +153,10 @@ class StartupTest(unittest.TestCase):
                     env=env,
                     capture_output=True,
                     text=True,
-                    timeout=8,
+                    timeout=PROCESS_LIMIT_S,
                 )
                 self.assertEqual(second.returncode, 0, second.stderr)
-                stdout, stderr = process.communicate(timeout=8)
+                stdout, stderr = process.communicate(timeout=PROCESS_LIMIT_S)
                 self.assertEqual(process.returncode, 0, stdout + stderr)
                 self.assertTrue(
                     (data / "activated").exists(), "Second instance did not activate UI"

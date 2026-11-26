@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 import struct
@@ -60,6 +61,7 @@ from winlauncher.ui.controller import BAR_PLACEMENT_FILE, LauncherController
 from winlauncher.ui.dialogs import bring_to_front, run_modal
 from winlauncher.ui.exclude_dialog import ExcludeFolderDialog, FolderChoice, PatternDialog
 from winlauncher.ui.file_transfer import DROPEFFECT_COPY, DROPEFFECT_MOVE, PREFERRED_DROP_EFFECT
+from winlauncher.ui.garbage import GuiThreadCollector
 from winlauncher.ui.indexing import IndexJobKind
 from winlauncher.ui.messages import MessageDialog, message
 from winlauncher.ui.plugins import ask_text
@@ -117,8 +119,12 @@ class UiFlowTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
+        # As in the application: a controller left behind must never be freed on a
+        # worker thread, where destroying its widgets crashes Qt.
+        cls.collector = GuiThreadCollector(cls.app)
 
     def setUp(self):
+        self.addCleanup(gc.collect)  # Runs last: frees this test's Qt objects right here.
         # A virus scanner or the search indexer may still hold the fresh catalog for a
         # moment; a folder left in %TEMP% then is no failure of the test.
         self.temporary = tempfile.TemporaryDirectory(

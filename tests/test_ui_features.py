@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+import weakref
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -561,6 +563,34 @@ class StallTracerTest(unittest.TestCase):
         with self.assertLogs("winlauncher.ui.stall_tracer", "WARNING") as logged:
             time.sleep(0.5)  # The next stall is logged again.
         self.assertEqual(len(logged.records), 1)
+
+
+class GuiThreadCollectorTest(unittest.TestCase):
+    def test_cycles_are_collected_on_the_gui_thread_only(self):
+        from winlauncher.ui.garbage import GuiThreadCollector
+
+        app = QApplication.instance() or QApplication([])
+        was_enabled = gc.isenabled()
+        collector = GuiThreadCollector(app)
+        self.addCleanup(lambda: gc.enable() if was_enabled else None)
+        self.addCleanup(collector.deleteLater)
+        self.assertFalse(gc.isenabled())  # No worker thread collects anymore.
+
+        class Node:
+            pass
+
+        node = Node()
+        node.itself = node  # A cycle only the collector frees.
+        freed = weakref.ref(node)
+        del node
+        collector.thresholds = (0, 0, 0)  # Nothing is due: nothing is collected.
+        collector.collect_due()
+        self.assertIsNotNone(freed())
+        collector.thresholds = (1, 10**9, 10**9)
+        for _ in range(3):
+            [].append([])  # Allocations raise the youngest generation's count.
+        collector.collect_due()
+        self.assertIsNone(freed())
 
 
 if __name__ == "__main__":

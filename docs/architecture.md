@@ -74,6 +74,7 @@ flowchart TD
 | `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
 | `ui/answers.py` | Asks the plugins that answer typed text, on their own worker, for the calculator's row |
 | `ui/stall_tracer.py` | Logs the GUI thread's stack in the middle of an event-loop stall |
+| `ui/garbage.py` | Runs Python's cycle collector on the GUI thread only |
 | `ui/settings_search.py` | Settings' search field: pages and every titled card row, the result list that replaces the page list, opening a row |
 | `ui/welcome.py` | The first start's introduction: shortcuts, folders, tips, Start with Windows |
 | `ui/plugin_dialogs.py`, `ui/option_editors.py` | The checklist and form a plugin command shows; the option editors forms share with the settings cards |
@@ -526,6 +527,15 @@ writes the faulting thread's stack from inside the fault. Only that one: dumping
 other, still running threads read changing frames and could crash the process
 itself. Windows also reports exceptions that are handled later, so a clean exit deletes the file; a report at the next start means
 the previous run never exited cleanly, and goes into `winlauncher.log`.
+
+Python's cycle collector runs on whichever thread allocates when a threshold is
+reached. Freeing a Qt wrapper caught in a reference cycle on a worker destroys its
+widget or timer off the GUI thread and crashes the process later, at a random
+spot. `ui/garbage.py` therefore switches automatic collection off at startup and
+collects on a 500 ms GUI-thread timer with Python's own thresholds. The UI flow
+tests install it too and collect after every test: before, a controller left
+behind by one test was freed on the stall tracer's thread at random and ended
+CI runs without a traceback.
 
 Shell icon queries run on one daemon worker and return `QImage`s through a queued
 Qt signal; only the GUI thread creates pixmaps. Painting uses a generic icon until

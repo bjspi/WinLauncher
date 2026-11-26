@@ -45,6 +45,7 @@ from winlauncher.platform.startup import StartupShortcut, install_start_menu_sho
 from winlauncher.platform.startup_timing import StartupTimings
 from winlauncher.settings import Appearance
 from winlauncher.ui.controller import LauncherController
+from winlauncher.ui.garbage import GuiThreadCollector
 from winlauncher.ui.messages import ERROR, PRIMARY, WARNING, message, show_message
 from winlauncher.ui.theme import app_icon, theme
 
@@ -307,6 +308,7 @@ def main() -> int:
     timings = StartupTimings()
     args = _parse_arguments()
     app = _create_application()
+    GuiThreadCollector(app)  # Owned by the application; see its module.
     data_dir = args.data_dir.expanduser().resolve()
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
