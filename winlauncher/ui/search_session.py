@@ -39,6 +39,9 @@ from winlauncher.ui.window import LauncherWindow
 from winlauncher.websites import WebsiteQuery, website_query
 
 DEBOUNCE_MS = 40
+# While the bar is hidden, catalog changes renew its start list at most this often;
+# opening the bar confirms the list with a fresh search anyway.
+PREFETCH_INTERVAL_MS = 30_000
 # Words only: no filters, exclusions, quotes, wildcards, paths or navigation.
 _PLAIN_WORDS = re.compile(r"[^:!*?\[\]\"\\/%~]+")
 # What the typed text asks for: a file search, a website plus its file search, or
@@ -100,6 +103,10 @@ class SearchSession(QObject):
         self.debounce.setSingleShot(True)
         self.debounce.setInterval(DEBOUNCE_MS)
         self.debounce.timeout.connect(self.run)
+        self.prefetch_later = QTimer(self)
+        self.prefetch_later.setSingleShot(True)
+        self.prefetch_later.setInterval(PREFETCH_INTERVAL_MS)
+        self.prefetch_later.timeout.connect(self.prefetch_start_list)
 
     def current_query(self) -> LauncherQuery:
         """The query as typed, with the filter buttons applied unless `type:` was typed."""
@@ -157,12 +164,17 @@ class SearchSession(QObject):
         )
 
     def refresh(self) -> None:
-        """The catalog or personal signals changed; hidden windows search on next show."""
+        """The catalog or personal signals changed; hidden windows search on next show.
+
+        A busy folder changes the catalog every few seconds, so a hidden bar renews
+        its start list once per `PREFETCH_INTERVAL_MS` rather than for each change.
+        """
         if self.window.isVisible():
             self.run()
-        else:
-            self.displayed_query = None
-            self.prefetch_start_list()
+            return
+        self.displayed_query = None
+        if not self.prefetch_later.isActive():
+            self.prefetch_later.start()
 
     def _command_folder(self, query: LauncherQuery) -> Path | None:
         """Capture tool eligibility on the GUI thread, before submitting search work.
@@ -262,6 +274,7 @@ class SearchSession(QObject):
     def window_hidden(self) -> None:
         self.pending = None
         self.debounce.stop()
+        self.prefetch_later.stop()  # Renewed right below.
         self._abandon_running()
         self.prefetch_start_list()
 
@@ -269,6 +282,7 @@ class SearchSession(QObject):
         """Stop searching for good; hiding the bar while quitting starts nothing new."""
         self.closed = True
         self.debounce.stop()
+        self.prefetch_later.stop()
         self._abandon_running()
         if self.prefetching is not None:
             self.prefetching.set()

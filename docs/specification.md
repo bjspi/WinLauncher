@@ -458,8 +458,9 @@ Combined scoring adds:
 An empty query with default options shows only favorites and previously launched
 items, using these nontext signals; an optional type filter still restricts that
 learned set. This start list is computed ahead in a separate prefetch pool while
-the bar is hidden (after it closes and after catalog or personal changes), so the
-bar opens with it at once; a fresh search then confirms it without the typing delay. An explicit constraint such as `ext:pdf` can browse unlearned entries
+the bar is hidden (at once after it closes; after catalog or personal changes at
+most once per 30 s, since a busy folder changes the catalog every few seconds), so
+the bar opens with it at once; a fresh search then confirms it without the typing delay. An explicit constraint such as `ext:pdf` can browse unlearned entries
 without positive text. `score:match` removes all those bonuses.
 Ties use case-insensitive display name then absolute path. A favorite or explicit
 boost can outrank a stronger text match in combined mode. Score explanations are

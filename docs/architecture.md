@@ -528,6 +528,11 @@ other, still running threads read changing frames and could crash the process
 itself. Windows also reports exceptions that are handled later, so a clean exit deletes the file; a report at the next start means
 the previous run never exited cleanly, and goes into `winlauncher.log`.
 
+At startup `truststore` makes Python's `ssl` verify servers with Windows'
+certificate verification, for WinLauncher and every plugin: Python alone misses root
+certificates a company distributes by group policy, so HTTPS through an inspecting
+company proxy failed. Qt's own requests already use Schannel.
+
 Python's cycle collector runs on whichever thread allocates when a threshold is
 reached. Freeing a Qt wrapper caught in a reference cycle on a worker destroys its
 widget or timer off the GUI thread and crashes the process later, at a random

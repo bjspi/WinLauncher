@@ -1182,6 +1182,23 @@ class UiFlowTest(unittest.TestCase):
             self.tasks.finish(TaskCategory.SEARCH)
             self.assertEqual(self.window.selected_hit(), recent)
 
+    def test_catalog_changes_renew_a_hidden_start_list_at_most_once_per_interval(self):
+        search = self.controller.search
+        self.window.hide()
+        self.tasks.finish(TaskCategory.PREFETCH)
+        prefetches = self.tasks.count(TaskCategory.PREFETCH)
+        for _change in range(5):  # A busy folder: one catalog change after another.
+            search.refresh()
+        self.assertEqual(self.tasks.count(TaskCategory.PREFETCH), prefetches)
+        self.assertTrue(search.prefetch_later.isActive())
+        search.prefetch_later.timeout.emit()  # The interval is over.
+        self.assertEqual(self.tasks.count(TaskCategory.PREFETCH), prefetches + 1)
+        search.refresh()
+        self.window.present()
+        self.window.hide()  # Hiding renews it at once; the waiting renewal is dropped.
+        self.assertFalse(search.prefetch_later.isActive())
+        self.assertEqual(self.tasks.count(TaskCategory.PREFETCH), prefetches + 2)
+
     def test_hiding_while_quitting_prefetches_nothing(self):
         # Quitting closes the worker pools before it hides the bar.
         prefetches = self.tasks.count(TaskCategory.PREFETCH)

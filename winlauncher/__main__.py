@@ -18,6 +18,7 @@ import time
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
 
+import truststore
 from PySide6.QtCore import QEventLoop, QLockFile, QProcess, Qt, QTimer
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QSslSocket
 from PySide6.QtWidgets import QApplication, QProgressDialog, QSystemTrayIcon
@@ -129,6 +130,16 @@ def _use_windows_tls() -> None:
     """
     if not QSslSocket.setActiveBackend(WINDOWS_TLS_BACKEND):
         logging.warning("Windows TLS is unavailable; using %s", QSslSocket.activeBackend())
+
+
+def _use_windows_certificates() -> None:
+    """Let Python's HTTPS, in WinLauncher and its plugins, verify servers with Windows.
+
+    Python otherwise reads only part of Windows' certificate stores and misses root
+    certificates a company distributes by group policy, so every HTTPS request
+    through such a company's inspecting proxy fails certificate verification.
+    """
+    truststore.inject_into_ssl()
 
 
 def _configure_logging(data_dir: Path) -> QueueListener:
@@ -307,6 +318,7 @@ def _migrate_launcher(data_dir: Path) -> bool:
 def main() -> int:
     timings = StartupTimings()
     args = _parse_arguments()
+    _use_windows_certificates()
     app = _create_application()
     GuiThreadCollector(app)  # Owned by the application; see its module.
     data_dir = args.data_dir.expanduser().resolve()
