@@ -1498,6 +1498,9 @@ class PluginUiTest(unittest.TestCase):
         self.assertTrue(dialog.nav.item(row).isHidden())
         dialog.show_page(self.plugin.label)  # Opened from search, it lists them again.
         self.assertFalse(dialog.nav.item(row).isHidden())
+        self.assertTrue(dialog._plugin_on(self.plugin.id))
+        card.enabled.setChecked(False)  # Its entry fades until it is turned on again.
+        self.assertFalse(dialog._plugin_on(self.plugin.id))
 
 
 class PluginCopyPagesTest(unittest.TestCase):

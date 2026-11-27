@@ -816,7 +816,8 @@ Settings has two plugin pages. **Plugins** gets plugins: what the sources offer,
 the problems of the last start, the source list and the plugin folder. **Plugin
 settings** holds what all plugins share. Each loaded plugin has a page of its own
 with its card, listed indented below Plugin settings with the plugin's icon; these
-entries show only while Plugin settings or one of them is chosen. A card's header
+entries show only while Plugin settings or one of them is chosen, and the entry of
+a plugin whose switch is off is faded, as soon as it is switched. A card's header
 shows the plugin's icon (the manifest's `icon`, else the plugin's own, else a
 plug), its name and description and the on switch. A plugin that is off shows its
 header only.

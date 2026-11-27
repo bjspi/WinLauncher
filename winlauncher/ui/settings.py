@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QVBoxLayout,
@@ -557,16 +558,20 @@ class _PageSpec(NamedTuple):
 
 
 class _NavDelegate(QStyledItemDelegate):
-    """Indents the plugins' pages below Plugin settings."""
+    """Indents the plugins' pages below Plugin settings and fades those turned off."""
 
-    def __init__(self, specs: list[_PageSpec], parent: QWidget):
+    def __init__(self, specs: list[_PageSpec], plugin_on: Callable[[str], bool], parent: QWidget):
         super().__init__(parent)
         self.specs = specs
+        self.plugin_on = plugin_on
 
     def paint(self, painter, option: QStyleOptionViewItem, index) -> None:
-        if self.specs[index.row()].plugin_id:
+        if plugin_id := self.specs[index.row()].plugin_id:
             option = QStyleOptionViewItem(option)
             option.rect.adjust(NAV_INDENT, 0, 0, 0)
+            if not self.plugin_on(plugin_id):
+                # Drawn like a disabled entry, yet still chosen with a click.
+                option.state &= ~QStyle.StateFlag.State_Enabled
         super().paint(painter, option, index)
 
 
@@ -642,7 +647,7 @@ class SettingsDialog(QDialog):
         self.nav.setAccessibleName("Settings pages")
         self.nav.setIconSize(QSize(NAV_ICON_SIZE, NAV_ICON_SIZE))
         self._specs = self._page_specs()
-        self.nav.setItemDelegate(_NavDelegate(self._specs, self.nav))
+        self.nav.setItemDelegate(_NavDelegate(self._specs, self._plugin_on, self.nav))
         # A page is built when it is first shown: building all of them took most
         # of a second. Saving reads only built pages; the others keep `original`.
         self._built: set[int] = set()
@@ -818,6 +823,12 @@ class SettingsDialog(QDialog):
             for plugin in host.plugins
         ]
 
+    def _plugin_on(self, plugin_id: str) -> bool:
+        """Whether the plugin's switch is on, as shown, or as saved before its page is built."""
+        if self._plugin_pages is not None:
+            return self._plugin_pages.card(plugin_id).enabled.isChecked()
+        return self._plugin_arguments[0].host.config(plugin_id, self.original.plugins).enabled
+
     def _plugin_card(self, plugin_id: str) -> list[QWidget]:
         return [self.plugin_pages.card(plugin_id)]
 
@@ -941,6 +952,8 @@ class SettingsDialog(QDialog):
                 self.save_and_restart if restart is not None else None,
             )
             self._plugin_pages.copies_changed.connect(self._copies_changed)
+            for card in self._plugin_pages.cards:
+                card.enabled.toggled.connect(self.nav.viewport().update)
         return self._plugin_pages
 
     def _copies_changed(self) -> None:
