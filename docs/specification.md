@@ -1210,7 +1210,9 @@ Escape in a dialog closes only that dialog with one press.
 Settings saves itself: a switch, choice or list edit after 0.3 s, typed text once
 typing paused for a second, and whatever still waits when the window closes. Only
 changes are written, and each save applies like any other (`apply_settings`), so
-a new search folder rescans then. There is no Save or Cancel, only **Close**. Edits
+a new search folder rescans then. While a change waits, the footer shows a spinner
+with Saving…, then Settings saved., which fades out after 2.5 s. There is no Save
+or Cancel, only **Close**. Edits
 that are not valid yet, such as half-typed JSON rules, are not saved: the footer
 names the problem in red until they are, and closing then asks before it drops
 them. A file that cannot be written is named there too, without asking on close.

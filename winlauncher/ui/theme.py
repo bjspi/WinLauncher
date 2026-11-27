@@ -342,8 +342,9 @@ QListWidget#itemList::item:selected { background: $chosen; color: $text; }
 QLabel#rowTitle { font-weight: 600; color: $text; }
 QLabel#rowDescription { color: $subtle; font-size: 9pt; }
 QFrame#footer { background: $field; border: 0; border-top: 1px solid $card_border; }
-QLabel#savedMessage { color: $success; font-weight: 600; }
-QLabel#savedMessage[problem="true"] { color: $invalid; }
+QLabel#savedMessage { color: $secondary; }
+QLabel#savedMessage[state="saved"] { color: $success; font-weight: 600; }
+QLabel#savedMessage[state="problem"] { color: $invalid; }
 QDialog#settings QPushButton { padding: 7px 16px; border-radius: 8px; }
 QDialog#settings QLineEdit { border-radius: 8px; padding: 6px 9px; }
 QDialog#settings QLineEdit#settingsSearch { background: $nav_hover; border-color: $nav_hover; padding-left: 4px; }

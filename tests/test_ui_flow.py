@@ -2143,10 +2143,14 @@ class UiFlowTest(unittest.TestCase):
         for limit in (25, 30):
             dialog.limit.setValue(limit)
             self.assertTrue(dialog.save_timer.isActive())  # After a pause in typing.
+            self.assertEqual(dialog.save_status.text(), "Saving…")
+            self.assertTrue(dialog.save_status.spinner.isVisible())
             dialog.save_timer.timeout.emit()
             self.assertTrue(dialog.isVisible())
             self.assertEqual(self.controller.settings_file.load().max_results, limit)
-            self.assertEqual(dialog.saved_message.text(), "Settings saved.")
+            self.assertEqual(dialog.save_status.text(), "Settings saved.")
+            self.assertFalse(dialog.save_status.spinner.isVisible())
+            self.assertTrue(dialog.save_status.fade_timer.isActive())  # Then it fades out.
         dialog.limit.setValue(40)
         dialog.reject()  # What still waited is saved on closing.
         self.assertFalse(dialog.isVisible())
@@ -2162,14 +2166,14 @@ class UiFlowTest(unittest.TestCase):
         dialog.rule_json.setPlainText("{")
         dialog.save_timer.timeout.emit()
         self.assertEqual(saved, [])
-        self.assertIn("not valid JSON", dialog.saved_message.text())
+        self.assertIn("not valid JSON", dialog.save_status.text())
         with patch("winlauncher.ui.settings.ask", return_value=False) as asked:
             dialog.reject()
         asked.assert_called_once()
         self.assertTrue(dialog.isVisible())  # Kept open to fix the rules.
         dialog.rule_json.setPlainText(format_advanced_rules(self.controller.settings))
         dialog.save_timer.timeout.emit()
-        self.assertEqual(dialog.saved_message.text(), "")  # Nothing changed, nothing saved.
+        self.assertEqual(dialog.save_status.text(), "")  # Nothing changed, nothing saved.
         self.assertEqual(saved, [])
         dialog.reject()
         self.assertFalse(dialog.isVisible())

@@ -16,7 +16,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QMimeData, QPropertyAnimation, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QWheelEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -91,6 +92,7 @@ from winlauncher.ui.widgets import (
     FlowLayout,
     NumberField,
     PageHeader,
+    Spinner,
     ToggleSwitch,
     key_caps,
     line_icon,
@@ -106,7 +108,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
-SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
+SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save before it fades.
+SAVED_FADE_MS = 500  # How long the confirmation takes to fade out.
 CHANGE_SAVE_MS = 300  # A switch, choice or list edit is saved this soon.
 TYPING_SAVE_MS = 1000  # Typed text is saved once typing paused this long.
 FOUND_MS = 1600  # How long a setting chosen from search stays lit.
@@ -575,6 +578,63 @@ class _NavDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
 
 
+class SaveStatus(QWidget):
+    """The footer's word on saving: a spinner while edits wait, then a fading confirmation.
+
+    A problem stays until it is cleared.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.spinner = Spinner()
+        self.spinner.hide()
+        self.label = QLabel()
+        self.label.setObjectName("savedMessage")
+        self.label.setWordWrap(True)
+        layout.addWidget(self.spinner, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.label, 1)
+        self.opacity = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity)
+        self.fade = QPropertyAnimation(self.opacity, b"opacity", self)
+        self.fade.setDuration(SAVED_FADE_MS)
+        self.fade.setStartValue(1.0)
+        self.fade.setEndValue(0.0)
+        self.fade.finished.connect(self.clear)
+        self.fade_timer = QTimer(self)
+        self.fade_timer.setSingleShot(True)
+        self.fade_timer.setInterval(SAVED_MESSAGE_MS)
+        self.fade_timer.timeout.connect(self.fade.start)
+
+    def text(self) -> str:
+        return self.label.text()
+
+    def saving(self) -> None:
+        self._show("Saving…", "saving", spinning=True)
+
+    def saved(self) -> None:
+        self._show("Settings saved.", "saved")
+        self.fade_timer.start()
+
+    def problem(self, text: str) -> None:
+        self._show(text, "problem")
+
+    def clear(self) -> None:
+        self._show("", "")
+
+    def _show(self, text: str, state: str, *, spinning: bool = False) -> None:
+        self.fade_timer.stop()
+        self.fade.stop()
+        self.opacity.setOpacity(1.0)
+        self.spinner.setVisible(spinning)
+        self.label.setText(text)
+        self.label.setProperty("state", state)
+        self.label.style().unpolish(self.label)
+        self.label.style().polish(self.label)
+
+
 def _remembered_size(path: Path | None) -> QSize:
     """The size the user last gave the Settings window; `DIALOG_SIZE` until then."""
     if path is None or not path.is_file():
@@ -673,12 +733,7 @@ class SettingsDialog(QDialog):
         QShortcut(QKeySequence.StandardKey.Find, self, self.search.focus)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.buttons.rejected.connect(self.reject)
-        self.saved_message = QLabel()
-        self.saved_message.setObjectName("savedMessage")
-        self.saved_message_timer = QTimer(self)
-        self.saved_message_timer.setSingleShot(True)
-        self.saved_message_timer.setInterval(SAVED_MESSAGE_MS)
-        self.saved_message_timer.timeout.connect(self.saved_message.clear)
+        self.save_status = SaveStatus()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1019,7 +1074,7 @@ class SettingsDialog(QDialog):
         footer.setObjectName("footer")
         layout = QHBoxLayout(footer)
         layout.setContentsMargins(24, 12, 20, 12)
-        layout.addWidget(self.saved_message, 1)
+        layout.addWidget(self.save_status, 1)
         layout.addWidget(self.buttons)
         return footer
 
@@ -1622,8 +1677,18 @@ class SettingsDialog(QDialog):
 
     def _save_soon(self, delay_ms: int) -> None:
         """Save the edits after `delay_ms`, unless another edit comes first."""
-        if isValid(self.save_timer):  # Fields still report while the closed window is deleted.
-            self.save_timer.start(delay_ms)
+        if not isValid(self.save_timer):  # Fields still report while the window is deleted.
+            return
+        self.save_timer.start(delay_ms)
+        if self._has_edits():
+            self.save_status.saving()
+
+    def _has_edits(self) -> bool:
+        """Whether the fields differ from what is saved; edits not valid yet count."""
+        try:
+            return self.read_settings() != self.original
+        except ValueError:
+            return True
 
     def _save_edits(self) -> None:
         """Save the edits if they changed anything; the footer tells what came of it."""
@@ -1662,9 +1727,8 @@ class SettingsDialog(QDialog):
             self.persist(settings)
         self.result_settings = settings
         self.original = settings
-        self._show_problem("")
-        self.saved_message.setText("Settings saved.")
-        self.saved_message_timer.start()
+        self.invalid_edits = ""
+        self.save_status.saved()
         if self._plugin_pages is not None:
             self._plugin_pages.show_status()  # Refresh now follows the saved switch.
 
@@ -1674,11 +1738,10 @@ class SettingsDialog(QDialog):
         Only `invalid` edits make closing ask: typing fixes them, not a full disk.
         """
         self.invalid_edits = problem if invalid else ""
-        self.saved_message_timer.stop()
-        self.saved_message.setText(problem)
-        self.saved_message.setProperty("problem", bool(problem))
-        self.saved_message.style().unpolish(self.saved_message)
-        self.saved_message.style().polish(self.saved_message)
+        if problem:
+            self.save_status.problem(problem)
+        else:
+            self.save_status.clear()
 
     def save_and_restart(self) -> None:
         """Keep the edits, then restart WinLauncher, such as to load a new plugin."""
