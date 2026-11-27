@@ -397,7 +397,19 @@ refreshes a running plugin whose options changed; while a refresh runs, one more
 follows it. Commands such as Sign in run there too; their dialogs (a line of
 text, a checklist, a form, bundled as `CommandDialogs`) cross to the GUI thread
 through `Questions`, a queued signal plus a `threading.Event` the worker waits on
-(released at shutdown). A plugin item's own menu entries and Exclude… travel the same
+(released at shutdown). The card asks `PluginHost.command_shown` on the GUI thread
+which commands fit now (`PluginCommand.shown`, such as Sign in or Sign out),
+whenever it shows its status.
+
+The plugin API grows only by optional additions, so both generations of plugins
+keep working: a new field or hook has a default that behaves as before it existed
+(`PluginCommand.shown` absent shows the button always; `Plugin.search` is asked
+only with `live_search` set), and `api.FEATURES` names each addition, so a new
+plugin checks for it before relying on it and falls back to the older way on an
+older WinLauncher. Names in `FEATURES` are never removed. `docs/plugins.md` lists
+since when each exists.
+
+A plugin item's own menu entries and Exclude… travel the same
 way: the window asks the host for the item's `ItemMenu` when the menu opens, and the
 scheduler runs the chosen entry on the plugin pool. `SearchSession`
 asks the host: a plugin keyword makes a `PluginQuery` that only that plugin
@@ -560,7 +572,8 @@ The file preview follows the same rules: `PreviewPane` asks for the selected ite
 once the selection rests, the controller runs `load_preview` on the single
 `PREVIEW` worker, and the pane drops anything that arrives for an earlier item.
 A plugin item becomes a `PluginPreviewRequest` instead: `load_plugin_preview`
-runs on the `PLUGIN_PREVIEW` pool (two workers), calls `PluginHost.preview`
+runs on the `PLUGIN_PREVIEW` pool (two workers; a live plugin's search runs
+likewise on the `LIVE_SEARCH` pool), calls `PluginHost.preview`
 without the plugin's lock, as answers do, and reads a file or picture the plugin
 names with the same bounded loaders. The pane sets the request's cancel event when
 the selection moves on and compares plugin hits by plugin and item, not score.

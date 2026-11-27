@@ -69,6 +69,7 @@ class KeywordTarget:
 
     plugin_id: str
     route: str | None = None
+    live: bool = False  # The plugin searches by itself (`Plugin.live_search`).
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,13 +80,16 @@ class PluginQuery:
     items in its own order; a route's keyword keeps to that route's items. `files`
     is the catalog search the same text also runs, so a keyword never takes a word
     away from the ordinary search; `@keyword` asks for that plugin alone and leaves
-    it None.
+    it None. A `live` plugin searches by itself, for `text`, and alone, so it
+    leaves `files` None as well.
     """
 
     plugin_id: str
     search: SearchQuery
     files: SearchQuery | None = None
     route: str | None = None
+    live: bool = False
+    text: str = ""  # For a live plugin: what was typed behind the keyword, trimmed.
 
 
 def plugin_query(text: str, keywords: dict[str, KeywordTarget]) -> PluginQuery | None:
@@ -96,8 +100,9 @@ def plugin_query(text: str, keywords: dict[str, KeywordTarget]) -> PluginQuery |
     target = keywords.get(normalize(keyword)) if keyword else None
     if target is None:
         return None
-    files = None if alone else _parsed(typed)
-    return PluginQuery(target.plugin_id, _parsed(rest), files, target.route)
+    files = None if alone or target.live else _parsed(typed)
+    text = rest.strip() if target.live else ""
+    return PluginQuery(target.plugin_id, _parsed(rest), files, target.route, target.live, text)
 
 
 def _parsed(text: str) -> SearchQuery:
@@ -178,7 +183,7 @@ def literal_patterns(patterns: Iterable[str]) -> tuple[re.Pattern[str], ...]:
     r"""Compile a plugin's `literal_terms`; raises `re.error` for an unusable one.
 
     Terms reach matching normalized, so the patterns ignore case to let a plugin
-    write them the way its identifiers look, such as `HCP-\w*`.
+    write them the way its identifiers look, such as `TKT-\w*`.
     """
     return tuple(re.compile(pattern, re.IGNORECASE) for pattern in patterns)
 

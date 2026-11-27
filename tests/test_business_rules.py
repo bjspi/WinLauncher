@@ -238,14 +238,14 @@ class BusinessRulesTest(unittest.TestCase):
     def test_fuzzy_scores_the_same_with_a_kept_layout_and_for_any_alphabet(self):
         """Plugin items keep each name's layout; ASCII names take a faster path."""
         names = (
-            "HCP5G1P-3074 KPM sleep mode",
+            "TKT5G1P-3074 sleep mode",
             "VisualStudioCode.exe",
             "a_b-c d",
             "Löhne Übersicht",
         )
         for name in names:
             layout = FuzzyLayout.of(name)
-            for term in ("sl", "hcp", "vsc", "abc", "cd", "lohne", "ub", "zz"):
+            for term in ("sl", "tkt", "vsc", "abc", "cd", "lohne", "ub", "zz"):
                 self.assertEqual(fuzzy_score(term, name, layout), fuzzy_score(term, name))
         for term, name, matches in (
             ("bdg", "Budget Report.txt", True),

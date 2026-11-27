@@ -671,6 +671,24 @@ query text changes from a Tab scope to an Explorer session. A tool's context men
 offers Run here, Copy command and Settings; clipboard and drag data contain its
 expanded command line as plain text. File-only actions do not apply.
 
+A live plugin (`Plugin.live_search`) searches by itself, such as a full-text
+index or a ticket server. Only its keyword or a route's keyword asks it, in the
+launcher bar; ordinary searches never do. The results then hold only its items,
+in its order, without files or other plugins, so `@` changes nothing. The session
+(`ui/search_session.py`) waits 300 ms after the last keystroke instead of 40 ms
+and, while the shown results belong to another query, replaces them with
+*Searching <label>…*. `PluginHost.live_search` runs on the `LIVE_SEARCH` pool (two
+workers), never on the search workers, with a `SearchRequest` of the trimmed text
+behind the keyword, the route's id and the result limit. Typing on sets
+`context.cancel`; so does `search_timeout_ms` (default 5000), after which the
+results say the plugin did not answer within that time and a late answer is
+dropped. A `PluginError` shows its message instead of results; another exception is
+logged and shown as the plugin failing to search. Items are validated like listed
+ones, ranked by their position and drawn, opened, previewed and offered actions
+like any plugin item. A live plugin without `refresh` (`Plugin.lists`) is never
+refreshed, and its settings card leaves out In every search, Refresh every and
+Refresh now; its keyword description says it searches by itself.
+
 Plugins answer in the same row when arithmetic does not (`Plugin.answer`,
 `ui/answers.py`): 60 ms after typing pauses, the trimmed text goes to each enabled
 plugin that defines `answer`, in settings order, on the answer worker of its own;
@@ -816,11 +834,22 @@ Settings has two plugin pages. **Plugins** gets plugins: what the sources offer,
 the problems of the last start, the source list and the plugin folder. **Plugin
 settings** holds what all plugins share. Each loaded plugin has a page of its own
 with its card, listed indented below Plugin settings with the plugin's icon; these
-entries show only while Plugin settings or one of them is chosen, and the entry of
+entries show only while Plugin settings or one of them is chosen (a click on a page
+below them folds them away once the button is released, so the clicked page stays
+selected), and the entry of
 a plugin whose switch is off is faded, as soon as it is switched. A card's header
 shows the plugin's icon (the manifest's `icon`, else the plugin's own, else a
 plug), its name and description and the on switch. A plugin that is off shows its
 header only.
+
+A card's buttons are the plugin's commands (`Plugin.commands`), in its order,
+then Refresh now, then Add copy or Remove copy. A command with `shown` appears only
+while `shown(context)` is true; it is asked on the GUI thread whenever the card's
+status is shown: when the card is built, after each of its commands and at the
+start and end of each refresh. A command without `shown` always appears, as
+before `shown` existed, and a `shown` that raises is logged and shows the button.
+Refresh now is disabled while the plugin refreshes and while its last refresh
+raised `SetupRequired`; a successful command refreshes the plugin anyway.
 
 **Add copy** on a card adds a further instance of that plugin to `plugin_copies`
 (`id` `<plugin>~<number>`, the lowest number from 2 that is neither configured nor
@@ -1218,6 +1247,12 @@ names the problem in red until they are, and closing then asks before it drops
 them. A file that cannot be written is named there too, without asking on close.
 Quitting WinLauncher closes Settings first, saving its valid edits and dropping
 others unasked. Autostart and Center search bar are no settings and apply at once.
+No button in Settings becomes the dialog's default: Enter in a field neither presses
+a clicked button nor closes the window, and a clicked button keeps its look and
+width. Below the page list, **Open settings folder** opens the data folder and
+**Show log file** selects `winlauncher.log` in Explorer, as in About. A plugin card
+turns a spinner beside its status while the plugin refreshes; Refresh now is
+disabled meanwhile without handing its focus to the next button.
 
 Messages and questions use WinLauncher's own dialog instead of a stock message
 box: an icon badge tinted by kind (information, question, update, success,

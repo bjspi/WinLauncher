@@ -880,6 +880,7 @@ class LauncherController(QObject):
             catalog=self.store,
             tasks=self.tasks,
             size_file=self.data_dir / SETTINGS_WINDOW_FILE,
+            data_dir=self.data_dir,
         )
         if page:
             dialog.show_page(page)

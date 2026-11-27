@@ -3,6 +3,10 @@
 Enter must open a result of the query the user currently sees typed. If that
 query's results are not displayed yet, opening waits for them; so does running an
 app as administrator.
+
+A live plugin's keyword (`Plugin.live_search`) hands the text to the plugin's own
+search: after a longer pause in typing, on workers of their own, cancelled when
+the text changes or the plugin's time is up.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from winlauncher.catalog import long_paths, storage
 from winlauncher.catalog.model import ItemKind
 from winlauncher.platform.gesture import ViewKind
+from winlauncher.plugins.api import Plugin, PluginError
 from winlauncher.plugins.host import PluginHost, PluginSearch
 from winlauncher.plugins.search import PluginQuery, merge_hits, plugin_query
 from winlauncher.search.commands import CommandHit, search_commands
@@ -39,6 +44,8 @@ from winlauncher.ui.window import LauncherWindow
 from winlauncher.websites import WebsiteQuery, website_query
 
 DEBOUNCE_MS = 40
+# A live plugin may ask a server for each search: wait until typing really paused.
+LIVE_DEBOUNCE_MS = 300
 # While the bar is hidden, catalog changes renew its start list at most this often;
 # opening the bar confirms the list with a fresh search anyway.
 PREFETCH_INTERVAL_MS = 30_000
@@ -58,6 +65,7 @@ class SearchResults:
     # Catalog hits whose file is gone; the catalog has not noticed yet.
     missing: frozenset[Path] = field(default_factory=frozenset)
     command_folder: Path | None = None
+    problem: str = ""  # Why a live plugin found nothing, such as being signed out.
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +111,10 @@ class SearchSession(QObject):
         self.debounce.setSingleShot(True)
         self.debounce.setInterval(DEBOUNCE_MS)
         self.debounce.timeout.connect(self.run)
+        # Ends a live plugin's search that takes longer than it allows itself.
+        self.live_timeout = QTimer(self)
+        self.live_timeout.setSingleShot(True)
+        self.live_timeout.timeout.connect(self._live_timed_out)
         self.prefetch_later = QTimer(self)
         self.prefetch_later.setSingleShot(True)
         self.prefetch_later.setInterval(PREFETCH_INTERVAL_MS)
@@ -142,9 +154,25 @@ class SearchSession(QObject):
             self._show(start.query, start.results)
             self.run()
             return
+        live = self._live_plugin()
+        if live is not None:
+            if self._shows_other_query():  # Older results would pass for its answer.
+                self.window.show_live_searching(live.label)
+            self.debounce.start(LIVE_DEBOUNCE_MS)
+            return
         if self._shows_other_query():
             self.window.show_searching()
-        self.debounce.start()
+        self.debounce.start(DEBOUNCE_MS)
+
+    def _live_plugin(self) -> Plugin | None:
+        """The live plugin whose keyword is typed, if one is."""
+        try:
+            query = self.current_query()
+        except ValueError:
+            return None
+        if not isinstance(query, PluginQuery) or not query.live or self.plugins is None:
+            return None
+        return self.plugins.plugin(query.plugin_id)
 
     def run(self) -> None:
         self.debounce.stop()
@@ -162,15 +190,28 @@ class SearchSession(QObject):
             partial(self._completed, cancel, query),
             partial(self._failed, cancel),
         )
+        if (live := self._live_plugin()) is not None:
+            self.live_timeout.start(live.search_timeout_ms)
+
+    def _live_timed_out(self) -> None:
+        if self.running is None or (live := self._live_plugin()) is None:
+            return
+        self._abandon_running()  # Tells the plugin to stop.
+        self.displayed_query = None
+        self.pending = None
+        seconds = live.search_timeout_ms / 1000
+        self.window.show_search_error(f"{live.label} did not answer within {seconds:g} s.")
 
     def refresh(self) -> None:
         """The catalog or personal signals changed; hidden windows search on next show.
 
         A busy folder changes the catalog every few seconds, so a hidden bar renews
         its start list once per `PREFETCH_INTERVAL_MS` rather than for each change.
+        A live plugin's results do not come from the catalog: it is not asked again.
         """
         if self.window.isVisible():
-            self.run()
+            if self._live_plugin() is None:
+                self.run()
             return
         self.displayed_query = None
         if not self.prefetch_later.isActive():
@@ -294,6 +335,7 @@ class SearchSession(QObject):
             return True
 
     def _abandon_running(self) -> None:
+        self.live_timeout.stop()
         if self.running is not None:
             self.running.set()
             self.running = None
@@ -321,6 +363,13 @@ class SearchSession(QObject):
             plugin_tips = self.plugins.tips(settings.plugins) if self.plugins is not None else []
             keywords = self._plugin_keywords(settings)
             hits.extend(syntax_tips(query, settings.websites, keywords, plugin_tips))
+        elif isinstance(query, PluginQuery) and query.live and self.plugins is not None:
+            try:
+                plugins = self.plugins.live_search(query, settings.plugins, limit, cancel)
+            except PluginError as exc:
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                return SearchResults([], elapsed_ms, problem=str(exc))
+            hits.extend(plugins.hits)
         elif isinstance(query, PluginQuery):
             plugins = self._search_plugins(query, settings, cancel)
             hits.extend(plugins.hits)
@@ -381,6 +430,12 @@ class SearchSession(QObject):
         if cancel is not self.running:
             return
         self.running = None
+        self.live_timeout.stop()
+        if result.problem:
+            self.displayed_query = query
+            self.pending = None
+            self.window.show_search_error(result.problem)
+            return
         if self.start_list is not None and query == self.start_list.query:
             self.start_list = StartList(query, result)
         if not self.window.isVisible():
@@ -419,6 +474,7 @@ class SearchSession(QObject):
         if cancel is not self.running:
             return
         self.running = None
+        self.live_timeout.stop()
         self.displayed_query = None
         self.pending = None
         self.window.show_search_error(message)
@@ -434,7 +490,10 @@ def _file_query(query: LauncherQuery) -> SearchQuery | None:
 
 
 def _task_category(query: LauncherQuery) -> TaskCategory:
-    """Direct navigation may wait for a network share, so it has its own workers."""
+    """Direct navigation may wait for a network share, and a live plugin for its
+    server, so each has its own workers."""
+    if isinstance(query, PluginQuery) and query.live:
+        return TaskCategory.LIVE_SEARCH
     files = _file_query(query)
     navigates = files is not None and files.navigation is not None
     return TaskCategory.NAVIGATION if navigates else TaskCategory.SEARCH

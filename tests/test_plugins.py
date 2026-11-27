@@ -16,7 +16,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
 from winlauncher.calculator import Calculation
@@ -37,6 +39,7 @@ from winlauncher.plugins.api import (
     PluginOption,
     PluginRoute,
     PluginTip,
+    SearchRequest,
     SetupRequired,
 )
 from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
@@ -392,16 +395,16 @@ class CandidatePrePassTest(unittest.TestCase):
                     sleep.assert_called_once_with(CHECKPOINT_PAUSE_S)
 
     def test_a_plugin_declares_which_terms_name_its_items(self):
-        """`HCP` has no digit, so only the plugin knows it is a ticket prefix."""
+        """`TKT` has no digit, so only the plugin knows it is a ticket prefix."""
         tickets = [
-            PluginItem("1", "HCP-1234 Sensor calibration drifts"),
-            PluginItem("2", "Hardware Check Procedure for the gateway"),
+            PluginItem("1", "TKT-1234 Sensor calibration drifts"),
+            PluginItem("2", "Test Kit Tracker for the gateway"),
         ]
         prepared = searchable_items(tickets)
-        loosely = rank_items("p", "P", prepared, query("hcp"), limit=10)
+        loosely = rank_items("p", "P", prepared, query("tkt"), limit=10)
         self.assertEqual([hit.item.key for hit in loosely], ["1", "2"])  # Also the initials.
         literally = rank_items(
-            "p", "P", prepared, query("hcp"), limit=10, literal=literal_patterns((r"HCP-?\w*",))
+            "p", "P", prepared, query("tkt"), limit=10, literal=literal_patterns((r"TKT-?\w*",))
         )
         self.assertEqual([hit.item.key for hit in literally], ["1"])
         # Only terms the pattern describes entirely; the others stay loose.
@@ -409,9 +412,9 @@ class CandidatePrePassTest(unittest.TestCase):
             "p",
             "P",
             prepared,
-            query("hcp gatewy"),
+            query("tkt gatewy"),
             limit=10,
-            literal=literal_patterns((r"HCP-?\w*",)),
+            literal=literal_patterns((r"TKT-?\w*",)),
         )
         self.assertEqual([hit.item.key for hit in both], [])
         self.assertEqual(
@@ -421,9 +424,9 @@ class CandidatePrePassTest(unittest.TestCase):
                     "p",
                     "P",
                     prepared,
-                    query("hcp calibratio"),
+                    query("tkt calibratio"),
                     limit=10,
-                    literal=literal_patterns((r"HCP-?\w*",)),
+                    literal=literal_patterns((r"TKT-?\w*",)),
                 )
             ],
             ["1"],
@@ -694,8 +697,8 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             ({"options": (PluginOption("a", "A", 1, multiline=True),)}, "text default"),
             ({"options": (PluginOption("a", "A", False, multiline=True),)}, "text default"),
             ({"options": (PluginOption("a", "A", 1), PluginOption("a", "B", 2))}, "twice"),
-            ({"literal_terms": [r"HCP-\w*"]}, "tuple of regular expressions"),
-            ({"literal_terms": (r"HCP-[",)}, "unterminated character set"),
+            ({"literal_terms": [r"TKT-\w*"]}, "tuple of regular expressions"),
+            ({"literal_terms": (r"TKT-[",)}, "unterminated character set"),
         ):
             declaration = dict(attributes)
             if declaration.get("refresh") is None and "refresh" in declaration:
@@ -1310,7 +1313,7 @@ class PluginUiTest(unittest.TestCase):
         )
 
     def test_a_narrow_settings_window_cuts_no_button_and_wraps_instead(self):
-        from PySide6.QtWidgets import QAbstractButton
+        from PySide6.QtWidgets import QAbstractButton, QPushButton
 
         from winlauncher.ui.settings import SettingsDialog
 
@@ -1340,6 +1343,9 @@ class PluginUiTest(unittest.TestCase):
                     for button in page.findChildren(QAbstractButton):
                         if button.isVisibleTo(dialog) and button.text():
                             self.assertGreaterEqual(button.width(), button.sizeHint().width())
+                            if isinstance(button, QPushButton):
+                                # Clicked, it never turns bold and wider than its room.
+                                self.assertFalse(button.autoDefault(), button.text())
 
     def test_the_card_names_a_skipped_copy(self):
         from winlauncher.ui.settings import SettingsDialog
@@ -1388,6 +1394,13 @@ class PluginUiTest(unittest.TestCase):
         self.addCleanup(dialog.deleteLater)
         card = dialog.plugin_pages.cards[0]
         self.assertIn("3 items", card.status.text())
+        self.assertFalse(card.spinner.isVisibleTo(card))
+        self.controller.plugin_refresh.refresh("fake")  # Refresh now turns the spinner.
+        self.assertTrue(card.spinner.isVisibleTo(card))
+        self.assertFalse(card.refresh_button.isEnabled())
+        self.tasks.finish(self._category("PLUGIN"))
+        self.assertFalse(card.spinner.isVisibleTo(card))
+        self.assertTrue(card.refresh_button.isEnabled())
         self.assertTrue(card.keywords.isVisibleTo(card))
         card.enabled.setChecked(False)  # Turned off, the card shows its header only.
         self.assertFalse(card.keywords.isVisibleTo(card))
@@ -1407,6 +1420,67 @@ class PluginUiTest(unittest.TestCase):
         self.assertEqual(
             (config.keywords, config.boost, config.options), (("ff", "fff"), 20, {"count": 3})
         )
+
+    def test_the_card_shows_sign_in_or_sign_out_as_the_plugin_tells(self):
+        from PySide6.QtWidgets import QPushButton
+
+        from winlauncher.ui.settings import SettingsDialog
+
+        session = self.root.parent / "session"
+
+        def sign_in(context):
+            session.write_text("x", encoding="utf-8")
+            return "Signed in."
+
+        def broken(context):
+            raise RuntimeError("bug")
+
+        self.plugin.commands = lambda: (
+            PluginCommand("Sign in…", sign_in, shown=lambda context: not session.exists()),
+            PluginCommand("Sign out", lambda context: None, shown=lambda context: session.exists()),
+            PluginCommand("Help", lambda context: None),  # Without `shown`: always, as before.
+            PluginCommand("Broken", lambda context: None, shown=broken),
+        )
+        dialog = SettingsDialog(
+            self.controller.settings,
+            website_icons=self.controller.website_icons,
+            plugins=self.controller.plugin_refresh,
+        )
+        self.addCleanup(dialog.deleteLater)
+        with self.assertLogs("winlauncher.plugins.host", "ERROR"):  # Broken shows anyway.
+            card = dialog.plugin_pages.cards[0]
+
+        def shown() -> list[str]:
+            return [
+                button.text()
+                for button in card.findChildren(QPushButton)
+                if button.isVisibleTo(card)
+            ]
+
+        # The plugin's own buttons come first, then Refresh now and Add copy.
+        self.assertEqual(shown(), ["Sign in…", "Help", "Broken", "Refresh now", "Add copy"])
+        with (
+            patch("winlauncher.ui.plugin_settings.message"),
+            self.assertLogs("winlauncher.plugins.host", "ERROR"),
+        ):
+            card._run(card.commands[0][0])
+            self.tasks.finish(self._category("PLUGIN"))
+        self.assertEqual(shown(), ["Sign out", "Help", "Broken", "Refresh now", "Add copy"])
+
+    def test_refresh_now_waits_while_the_plugin_must_be_set_up(self):
+        from winlauncher.ui.settings import SettingsDialog
+
+        self.plugin.items = SetupRequired("Sign in first.")
+        self.controller.plugins.refresh("fake", self.controller.settings.plugins[0])
+        dialog = SettingsDialog(
+            self.controller.settings,
+            website_icons=self.controller.website_icons,
+            plugins=self.controller.plugin_refresh,
+        )
+        self.addCleanup(dialog.deleteLater)
+        card = dialog.plugin_pages.cards[0]
+        self.assertIn("Sign in first.", card.status.text())
+        self.assertFalse(card.refresh_button.isEnabled())
 
     def test_multiline_options_keep_line_breaks_through_settings_and_plugin_context(self):
         from PySide6.QtWidgets import QLineEdit, QPlainTextEdit
@@ -1498,6 +1572,14 @@ class PluginUiTest(unittest.TestCase):
         self.assertTrue(dialog.nav.item(row).isHidden())
         dialog.show_page(self.plugin.label)  # Opened from search, it lists them again.
         self.assertFalse(dialog.nav.item(row).isHidden())
+        # A click below them selects its own row, though the plugin rows fold away.
+        dialog.show()
+        self.addCleanup(dialog.hide)
+        ranking = titles.index("Ranking")
+        center = dialog.nav.visualItemRect(dialog.nav.item(ranking)).center()
+        QTest.mouseClick(dialog.nav.viewport(), Qt.MouseButton.LeftButton, pos=center)
+        self.assertEqual([item.text() for item in dialog.nav.selectedItems()], ["Ranking"])
+        self.assertTrue(dialog.nav.item(row).isHidden())
         self.assertTrue(dialog._plugin_on(self.plugin.id))
         card.enabled.setChecked(False)  # Its entry fades until it is turned on again.
         self.assertFalse(dialog._plugin_on(self.plugin.id))
@@ -1618,6 +1700,188 @@ class BreadcrumbTest(unittest.TestCase):
         self.assertEqual(row.chips, chips[:MAX_CHIPS])
         self.assertIn("Fake, Label 0, Label 1, Label 2\n", row.accessible_text)
         self.assertNotIn(f"Label {MAX_CHIPS}", row.accessible_text)
+
+
+class LivePlugin(Plugin):
+    """Searches by itself, as a full-text index or a ticket server would; lists nothing."""
+
+    id = "live"
+    label = "Live"
+    keyword = "lv"
+    live_search = True
+    search_timeout_ms = 2000
+    routes = (PluginRoute("bugs", "Bugs only", ("lvbug",)),)
+
+    def __init__(self):
+        self.requests: list[SearchRequest] = []
+        self.found: list[PluginItem] | BaseException = [
+            PluginItem("d2", "Second best", target="https://example.invalid/2"),
+            PluginItem("d1", "Anna's minutes", target="https://example.invalid/1"),
+        ]
+
+    def search(self, request, context):
+        self.requests.append(request)
+        if isinstance(self.found, BaseException):
+            raise self.found
+        return self.found
+
+
+class LiveSearchTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="winlauncher-live-")
+        self.addCleanup(self.temporary.cleanup)
+        self.plugin = LivePlugin()
+        self.host = PluginHost(Discovery([FakePlugin(), self.plugin]), Path(self.temporary.name))
+        self.configs = (
+            PluginConfig("fake", enabled=True, keywords=("fk",)),
+            PluginConfig("live", enabled=True, keywords=("lv",), routes={"bugs": ("lvbug",)}),
+        )
+
+    def query(self, text: str) -> PluginQuery:
+        return plugin_query(text, self.host.keywords(self.configs))
+
+    def test_its_keyword_asks_the_plugin_alone_and_keeps_its_order(self):
+        live = self.query("lv  anna minutes ")
+        self.assertTrue(live.live)
+        self.assertIsNone(live.files)  # Only that source, never files as well.
+        self.assertEqual(live.text, "anna minutes")
+        self.assertFalse(self.query("fk anna").live)
+        found = self.host.live_search(live, self.configs, 5, threading.Event())
+        self.assertEqual([hit.item.key for hit in found.hits], ["d2", "d1"])
+        self.assertGreater(found.hits[0].score, found.hits[1].score)
+        self.assertEqual(self.plugin.requests, [SearchRequest("anna minutes", "", 5)])
+        self.host.live_search(self.query("lvbug crash"), self.configs, 5, threading.Event())
+        self.assertEqual(self.plugin.requests[-1], SearchRequest("crash", "bugs", 5))
+
+    def test_ordinary_searches_and_refreshes_never_ask_it(self):
+        self.host.refresh("fake", self.configs[0])
+        state = self.host.refresh("live", self.configs[1])
+        self.assertEqual(state.items, ())
+        self.assertFalse(self.plugin.lists())
+        self.assertTrue(FakePlugin.lists())
+        hits = self.host.search(query("anna"), self.configs, 10).hits
+        self.assertEqual({hit.plugin_id for hit in hits}, {"fake"})
+        self.assertEqual(self.plugin.requests, [])
+
+    def test_a_failing_or_cancelled_search_shows_no_hits(self):
+        self.plugin.found = RuntimeError("index locked")
+        with (
+            self.assertLogs("winlauncher.plugins.host", "ERROR"),
+            self.assertRaisesRegex(PluginError, "Live failed to search: index locked"),
+        ):
+            self.host.live_search(self.query("lv x"), self.configs, 5, threading.Event())
+        self.plugin.found = PluginError("Sign in first.")
+        with self.assertRaisesRegex(PluginError, "Sign in first."):
+            self.host.live_search(self.query("lv x"), self.configs, 5, threading.Event())
+        self.plugin.found = [PluginItem("d1", "One")]
+        cancelled = threading.Event()
+        cancelled.set()
+        found = self.host.live_search(self.query("lv x"), self.configs, 5, cancelled)
+        self.assertEqual(found.hits, [])
+
+
+class LiveSearchUiTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        cls.app.setQuitOnLastWindowClosed(False)
+
+    def setUp(self):
+        from test_ui_flow import DeferredTasks
+
+        from winlauncher.ui.controller import LauncherController
+        from winlauncher.ui.tasks import TaskCategory
+
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="winlauncher-live-ui-", ignore_cleanup_errors=True
+        )
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name) / "library"
+        root.mkdir()
+        (root / "Anna notes.txt").write_text("x", encoding="utf-8")
+        data = root.parent / "state"
+        configs = (PluginConfig("live", enabled=True, keywords=("lv",)),)
+        SettingsFile(data / "settings.json").save(
+            Settings(
+                roots=(str(root),), index_apps=False, index_windows_tools=False, plugins=configs
+            )
+        )
+        self.plugin = LivePlugin()
+        with (
+            patch("winlauncher.ui.controller.BackgroundTasks", DeferredTasks),
+            patch(
+                "winlauncher.ui.controller.discover_plugins",
+                return_value=Discovery([self.plugin]),
+            ),
+            patch.object(LauncherController, "_start_monitor"),
+            patch("winlauncher.ui.tray.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
+        ):
+            self.controller = LauncherController(data, hooks=False)
+        self.addCleanup(self.controller.close)
+        self.controller.keyboard_timer.stop()
+        self.controller.watch_timer.stop()
+        self.app.processEvents()
+        self.tasks = self.controller.tasks
+        self.tasks.finish(TaskCategory.INDEX)
+        self.live = TaskCategory.LIVE_SEARCH
+        self.window = self.controller.window
+        self.window.show()
+
+    def type(self, text: str) -> None:
+        self.window.query.setText(text)
+        self.controller.search.run()
+
+    def rows(self) -> list[str]:
+        results = self.window.results
+        return [results.item(i).data(256).name for i in range(results.count())]
+
+    def test_its_keyword_lists_only_what_the_plugin_found_from_a_worker_of_its_own(self):
+        from winlauncher.ui.search_session import LIVE_DEBOUNCE_MS
+
+        self.window.query.setText("lv anna")
+        self.assertEqual(self.controller.search.debounce.interval(), LIVE_DEBOUNCE_MS)
+        self.assertEqual(self.window.empty.text(), "Searching Live…")
+        self.type("lv anna")
+        self.assertTrue(self.controller.search.live_timeout.isActive())
+        self.tasks.finish(self.live)
+        self.assertEqual(self.rows(), ["Live: Second best", "Live: Anna's minutes"])
+        self.assertFalse(self.controller.search.live_timeout.isActive())
+        self.controller.search.refresh()  # The catalog changed: no reason to ask again.
+        self.assertEqual(self.tasks.count(self.live), 1)
+        self.type("anna")  # An ordinary search never asks it.
+        self.assertEqual(self.tasks.count(self.live), 1)
+
+    def test_a_problem_or_a_timeout_is_shown_instead_of_results(self):
+        self.plugin.found = PluginError("Sign in to Live first.")
+        self.type("lv anna")
+        self.tasks.finish(self.live)
+        self.assertIn("Sign in to Live first.", self.window.empty.text())
+        self.type("lv bernd")
+        self.controller.search.live_timeout.timeout.emit()
+        self.assertIn("Live did not answer within 2 s.", self.window.empty.text())
+        self.tasks.finish(self.live)  # Too late: it changes nothing.
+        self.assertEqual(self.rows(), [])
+
+    def test_its_card_offers_no_refresh_or_every_search_switch(self):
+        from winlauncher.ui.settings import SettingsDialog
+
+        dialog = SettingsDialog(
+            self.controller.settings,
+            website_icons=self.controller.website_icons,
+            plugins=self.controller.plugin_refresh,
+        )
+        self.addCleanup(dialog.deleteLater)
+        card = dialog.plugin_pages.cards[0]
+        titles = [title for title, _, _ in card.rows]
+        self.assertNotIn("In every search", titles)
+        self.assertNotIn("Refresh every", titles)
+        self.assertFalse(card.refresh_button.isVisibleTo(card))
+        self.assertIn("Searches live", card.status.text())
+        config = dialog.read_settings().plugins[0]  # The hidden fields keep their values.
+        saved = self.controller.settings.plugins[0]
+        self.assertEqual(
+            (config.in_search, config.refresh_minutes), (saved.in_search, saved.refresh_minutes)
+        )
 
 
 if __name__ == "__main__":

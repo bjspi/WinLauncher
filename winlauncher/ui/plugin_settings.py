@@ -9,9 +9,10 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -45,6 +46,7 @@ from winlauncher.ui.widgets import (
     ButtonRow,
     Card,
     NumberField,
+    Spinner,
     ToggleSwitch,
     breakable_path,
     line_icon,
@@ -108,13 +110,15 @@ class PluginCard(Card):
             )
         self.keywords = _keywords_field(config.keywords, f"{plugin.label} keywords")
         example = config.keywords[0] if config.keywords else "kw"
-        self.add_row(
-            "Keywords",
-            f"Typed first, one puts {plugin.label} on top, such as “{example} anna”; your "
+        explanation = (
+            f"Typed first, one has {plugin.label} search by itself, such as “{example} anna”, "
+            "and lists only what it finds. Separate several with commas."
+            if plugin.live_search
+            else f"Typed first, one puts {plugin.label} on top, such as “{example} anna”; your "
             f"files are still searched. “@{example} anna” answers from {plugin.label} alone, "
-            "and a keyword by itself lists the most recent items. Separate several with commas.",
-            self.keywords,
+            "and a keyword by itself lists the most recent items. Separate several with commas."
         )
+        self.add_row("Keywords", explanation, self.keywords)
         self.route_keywords: dict[str, QLineEdit] = {}
         for route in plugin.routes:
             words = config.routes.get(route.id, route.keywords)
@@ -124,18 +128,21 @@ class PluginCard(Card):
             self.add_row(f"Keywords for {route.label}", description, field)
         self.in_search = ToggleSwitch(f"{plugin.label} items in every search")
         self.in_search.setChecked(config.in_search)
-        self.add_row(
-            "In every search", "Matching items also appear among files and apps.", self.in_search
-        )
         self.refresh_minutes = sized_number(
             NumberField(REFRESH_RANGE_MINUTES, config.refresh_minutes, "minutes")
         )
         self.refresh_minutes.setAccessibleName(f"{plugin.label} refresh interval in minutes")
-        self.add_row(
-            "Refresh every",
-            "Runs in the background; searches use the last list meanwhile.",
-            _with_unit(self.refresh_minutes, "min"),
-        )
+        if plugin.lists():  # A plugin that only searches, behind its keyword, lists nothing.
+            self.add_row(
+                "In every search",
+                "Matching items also appear among files and apps.",
+                self.in_search,
+            )
+            self.add_row(
+                "Refresh every",
+                "Runs in the background; searches use the last list meanwhile.",
+                _with_unit(self.refresh_minutes, "min"),
+            )
         self.boost = sized_number(NumberField(BOOST_RANGE, config.boost))
         self.boost.setAccessibleName(f"{plugin.label} ranking boost")
         self.add_row("Boost", "Lifts (up to 100) or lowers its items against files.", self.boost)
@@ -145,16 +152,18 @@ class PluginCard(Card):
         self.status = QLabel()
         self.status.setObjectName("rowDescription")
         self.status.setWordWrap(True)
-        # They wrap, so a plugin with many commands fits a narrow window.
+        # They wrap, so a plugin with many commands fits a narrow window. The plugin's
+        # own come first, such as Sign in, then what WinLauncher adds.
         buttons = ButtonRow()
-        self.refresh_button = buttons.add(QPushButton("Refresh now"))
-        self.refresh_button.clicked.connect(lambda: scheduler.refresh(plugin.id))
-        self.command_buttons: list[QPushButton] = []
+        self.commands: list[tuple[PluginCommand, QPushButton]] = []
         for command in scheduler.host.commands(plugin.id):
             button = QPushButton(command.label)
             button.clicked.connect(partial(self._run, command))
             buttons.add(button)
-            self.command_buttons.append(button)
+            self.commands.append((command, button))
+        self.refresh_button = buttons.add(QPushButton("Refresh now"))
+        self.refresh_button.clicked.connect(lambda: scheduler.refresh(plugin.id))
+        self.refresh_button.setVisible(plugin.lists())
         if self.copy is None:
             self.copy_button = QPushButton("Add copy")
             self.copy_button.setToolTip(
@@ -167,7 +176,14 @@ class PluginCard(Card):
             self.copy_button.clicked.connect(remove_copy)
         buttons.add(self.copy_button)
         self.add_block("Status", "", buttons)
-        self.add_block("", "", self.status)
+        self.spinner = Spinner()  # Turns while the plugin lists its items.
+        self.spinner.hide()
+        status = QWidget()
+        status_layout = QHBoxLayout(status)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.addWidget(self.spinner, 0, Qt.AlignmentFlag.AlignTop)
+        status_layout.addWidget(self.status, 1)
+        self.add_block("", "", status)
         self.enabled.toggled.connect(self._show_details)
         self._show_details()
         self.show_status()
@@ -214,7 +230,17 @@ class PluginCard(Card):
             options=options,
         )
 
+    def _show_commands(self) -> None:
+        """Show each of the plugin's buttons that fits now, such as Sign in or Sign out."""
+        config = self.scheduler.host.config(self.plugin.id, self.scheduler.settings().plugins)
+        for command, button in self.commands:
+            button.setVisible(self.scheduler.host.command_shown(self.plugin.id, command, config))
+
     def show_status(self) -> None:
+        self._show_commands()
+        if not self.plugin.lists():
+            self.status.setText("Searches live when one of its keywords is typed.")
+            return
         state = self.scheduler.host.state(self.plugin.id)
         refreshing = self.scheduler.is_refreshing(self.plugin.id)
         parts = []
@@ -236,8 +262,15 @@ class PluginCard(Card):
             parts.append("Not listed yet. Turn it on, then use Refresh now.")
         parts.extend(self._search_status())
         self.status.setText(" ".join(parts))
+        self.spinner.setVisible(refreshing)
         saved = self.scheduler.host.config(self.plugin.id, self.scheduler.settings().plugins)
-        self.refresh_button.setEnabled(not refreshing and saved.enabled)
+        # A plugin that must be set up first, such as signed in, has nothing to list.
+        enabled = not refreshing and saved.enabled and not state.needs_setup
+        if not enabled and self.refresh_button.hasFocus():
+            # A disabled button hands its focus to the next one, such as Sign in…,
+            # which would look as if the refresh had to do with it.
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.refresh_button.setEnabled(enabled)
 
     def _search_status(self) -> list[str]:
         """How long its last search took, and whether it is too slow for every search."""
@@ -258,14 +291,14 @@ class PluginCard(Card):
         except ValueError as exc:
             message(self.window(), "Check your settings", str(exc), ERROR)
             return
-        for button in self.command_buttons:
+        for _command, button in self.commands:
             button.setEnabled(False)
         self.scheduler.run_command(
             self.plugin.id, command, settings, self.window(), self._command_done
         )
 
     def _command_done(self, text: str | None, failed: bool) -> None:
-        for button in self.command_buttons:
+        for _command, button in self.commands:
             button.setEnabled(True)
         if text:
             title = "That did not work" if failed else self.plugin.label

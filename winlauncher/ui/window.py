@@ -1276,6 +1276,10 @@ class LauncherWindow(QWidget):
         if self.results.count() == 0:
             self._show_message("Searching…")
 
+    def show_live_searching(self, label: str) -> None:
+        """A plugin searches by itself, which may take a moment: no older results meanwhile."""
+        self._show_message(f"Searching {label}…")
+
     def show_query_error(self, message: str) -> None:
         self._show_message(message)
 

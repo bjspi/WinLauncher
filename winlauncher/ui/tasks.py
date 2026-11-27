@@ -38,6 +38,9 @@ class TaskCategory(StrEnum):
     PREVIEW = "preview"  # The selected file beside the results; a slow file delays nothing else.
     # A plugin item's preview may wait on the network: never in the way of a file's.
     PLUGIN_PREVIEW = "plugin-preview"
+    # A plugin's own search behind its keyword may wait on the network or another
+    # program: never in the way of a file search.
+    LIVE_SEARCH = "live-search"
 
 
 _POOL_SIZES = {
@@ -53,6 +56,7 @@ _POOL_SIZES = {
     TaskCategory.NETWORK: 1,
     TaskCategory.PREVIEW: 1,
     TaskCategory.PLUGIN_PREVIEW: 2,
+    TaskCategory.LIVE_SEARCH: 2,
 }
 _Job = tuple[Future, Callable[[], Any]]
 

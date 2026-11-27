@@ -30,7 +30,7 @@ Telegram: Team Annahme        Group  ·  3 unread
 - **Identifiers are taken literally.** A term with a digit in it names something — a
   ticket, a version, a phone number — and is matched in one piece: `12345` finds
   the ticket 12345, never 52314. A plugin adds its own shapes with
-  `literal_terms = (r"HCP-?\w*",)`, for identifiers that have no digit of their
+  `literal_terms = (r"TKT-?\w*",)`, for identifiers that have no digit of their
   own. Words in the same query still match loosely, so `12345 login` and
   `uC halted` both work.
 - **Words and dates.** A search with a filter such as `type:`, `ext:`, `in:`,
@@ -61,6 +61,9 @@ Telegram: Team Annahme        Group  ·  3 unread
   keywords are changed in the plugin's settings, too.
 - **`@` for that plugin alone.** `@tg anna` answers from Telegram only, without any
   file results. Useful for a plugin whose keyword is a common word.
+- **Live search.** A plugin with a full-text index or a server of its own may
+  search by itself instead of listing items. Only its keyword asks it, and the
+  results then hold only what it found (see *Live search* below).
 - **Open.** Enter, a click or Ctrl+1…9 calls the plugin's `open` on the action
   worker. Ctrl+C copies the item's link.
 
@@ -241,6 +244,8 @@ sections on each feature show the usual guard.
 | `tips` | 0.18.1 | `Plugin.tips`, `PluginTip` |
 | `previews` | 0.20 | `Plugin.preview`, `PluginPreview`, `PluginItem.modified` |
 | `action_icons` | 0.22.2 | `PluginAction.icon` |
+| `live_search` | 0.23.6 | `Plugin.live_search`, `Plugin.search`, `SearchRequest` |
+| `command_states` | 0.23.6 | `PluginCommand.shown` |
 
 What an older WinLauncher does not know fails gracefully: an import of a missing
 name lists the plugin as a problem at start, and an exception in `actions` loses
@@ -340,7 +345,10 @@ class Notes(Plugin):
   - `modified` says when the item last changed, as a `datetime` or a POSIX
     timestamp, such as a chat's last message (see below).
 - `refresh(context)` returns the items. Raise `PluginError` with a message for the
-  user, or `SetupRequired` when the user must set something up first.
+  user, or `SetupRequired` when the user must set something up first. A plugin
+  with `live_search` may leave it out (see *Live search* below).
+- `search(request, context)` returns the items for the text typed behind the
+  keyword, best first, when `live_search` is set (see *Live search* below).
 - `open(item, context)` opens the item; by default `os.startfile(item.target)`, so a
   URI such as `tg://…`, `msteams:/…`, `mailto:` or `https://…`, or a file path,
   opens in its registered program.
@@ -357,7 +365,9 @@ class Notes(Plugin):
     the settings card — switches, numbers, a line or a multiline text box — each
     starting at its `default`; it returns the values by key.
 
-  With `forgets_items=True`, the list is dropped afterwards.
+  With `forgets_items=True`, the list is dropped afterwards. With `shown=`, the
+  button shows only while it fits, such as *Sign in…* while signed out (see
+  *Buttons that follow the plugin's state* below).
 - `tips(context)` returns `PluginTip(example, meaning, insert="")` rows for the `?`
   help, such as the questions `answer` understands; choosing one types `insert`, or
   the example itself. Their meaning is shown after the plugin's label.
@@ -535,6 +545,131 @@ for links. `modified`, `preview` and `PluginPreview` exist since WinLauncher 0.2
 a plugin that also runs on older versions sets `modified` only when
 `"modified" in PluginItem.__dataclass_fields__`, and imports `PluginPreview`
 inside `preview`.
+
+### Buttons that follow the plugin's state
+
+A plugin's buttons appear first on its card, in the order `commands()` returns
+them, followed by WinLauncher's *Refresh now* and *Add copy*. By default every
+button always shows. A button can instead show only while it makes sense, such
+as *Sign in…* while signed out and *Sign out* while signed in: give it
+`shown=`, a function of the context that returns whether to show it.
+
+```python
+from winlauncher.plugins import api
+from winlauncher.plugins.api import PluginCommand
+
+FEATURES = frozenset(getattr(api, "FEATURES", ()))
+
+
+def signed_in(context):
+    return (context.data_dir / "session.json").exists()
+
+
+class Tickets(Plugin):
+    ...
+
+    def commands(self):
+        if "command_states" not in FEATURES:  # Older WinLauncher: every button, always.
+            return (
+                PluginCommand("Sign in…", self.sign_in),
+                PluginCommand("Sign out", self.sign_out, forgets_items=True),
+            )
+        return (
+            PluginCommand("Sign in…", self.sign_in, shown=lambda c: not signed_in(c)),
+            PluginCommand("Sign out", self.sign_out, forgets_items=True, shown=signed_in),
+        )
+```
+
+- `shown` is asked on the GUI thread when the card shows, after each of the
+  plugin's commands and after each refresh. Keep it to quick checks, such as
+  whether a file exists in `context.data_dir`; never the network.
+- A `shown` that raises is logged, and the button shows: a broken check never
+  hides how to set a plugin up.
+- While the last refresh raised `SetupRequired`, *Refresh now* is disabled; a
+  command such as *Sign in…* refreshes the plugin when it succeeds.
+
+Both ways stay supported. A plugin without `shown` keeps working unchanged on
+every WinLauncher, and a new plugin may still return a fixed list. `shown` exists
+since WinLauncher 0.23.6 (feature `"command_states"`): an older WinLauncher fails
+to create a `PluginCommand` with it, so pass it only after checking `FEATURES`,
+as above.
+
+### Live search: the plugin searches by itself
+
+Listing every item suits a few thousand chats or tickets. A full-text index, a
+document library or a ticket server holds far more, and already searches better
+than matching names could. Such a plugin sets `live_search = True` and answers
+`search(request, context)` instead of listing items:
+
+- Only its keyword asks it, never an ordinary search: `ft brake pressure` asks
+  the plugin, `brake pressure` alone does not. A route's keyword asks it, too,
+  with the route's id in `request.route`.
+- The results then hold only what it found, in its order, without files or other
+  plugins; `@` changes nothing.
+- It is asked 300 ms after typing pauses, on workers of its own, so a slow server
+  never holds up a file search. Meanwhile the results say *Searching <label>…*.
+- Typing on sets `context.cancel`. After `search_timeout_ms` (default 5000) it is
+  set as well and the results say the plugin did not answer. Stop when it is set,
+  for example by passing short timeouts to each request.
+- Raise `PluginError` with a message, such as *Sign in first*, to show it instead
+  of results. Other exceptions are logged, and the results say the plugin failed.
+- `request.text` is everything typed behind the keyword, trimmed, and empty for
+  the keyword alone; `request.limit` is how many items are shown. Filters such as
+  `date:` are not parsed for the plugin: it reads them from the text if it wants.
+- A plugin that searches only leaves out `refresh`: it is never refreshed, and its
+  settings card has no *Refresh every*, *Refresh now* or *In every search*.
+  `open`, `preview`, `actions`, chips, breadcrumbs and `modified` work as for
+  listed items. Put the found passage in `subtitle` or `breadcrumbs`, and the full
+  context in `preview`.
+
+A minimal example: a full-text search over a local SQLite FTS5 index that a
+separate indexing service keeps up to date. The plugin only reads it.
+
+```python
+import sqlite3
+from pathlib import Path
+
+from winlauncher.plugins.api import Plugin, PluginError, PluginItem, PluginOption
+
+
+class FullText(Plugin):
+    id = "fulltext"
+    label = "Full text"
+    description = "Documents from the local full-text index."
+    keywords = ("ft",)
+    live_search = True
+    search_timeout_ms = 2000
+    options = (PluginOption("index", "Index file", "C:\\Index\\fulltext.db"),)
+
+    def search(self, request, context):
+        if not request.text:
+            return []  # The keyword alone: nothing to look for yet.
+        index = Path(context.options["index"])
+        if not index.is_file():
+            raise PluginError(f"No index at {index}. Start the indexing service first.")
+        # Read only: the indexing service writes. One connection per search, because
+        # searches run on several worker threads.
+        with sqlite3.connect(f"{index.as_uri()}?mode=ro", uri=True, timeout=1) as db:
+            rows = db.execute(
+                "SELECT path, title, snippet(chunks, 2, '', '', ' … ', 12) "
+                "FROM chunks WHERE chunks MATCH ? ORDER BY rank LIMIT ?",
+                (request.text, request.limit),
+            ).fetchall()
+        return [
+            PluginItem(path, title, target=path, subtitle=passage)
+            for path, title, passage in rows
+        ]
+```
+
+An index or server only answers quickly when the plugin keeps the work small per
+request: never build an index inside `search`, and keep long indexing in a
+service of its own, so a crash there cannot end WinLauncher. A server's own
+search, such as Jira's JQL or Microsoft Graph's search, fits as well; use the
+network timeout of each request to stay within `search_timeout_ms`.
+
+`live_search`, `search` and `SearchRequest` exist since WinLauncher 0.23.6 (feature
+`"live_search"`). An older WinLauncher ignores them: there the plugin needs a
+`refresh`, or it lists nothing.
 
 ### Multiline text options
 

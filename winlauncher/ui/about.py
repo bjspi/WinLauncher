@@ -57,12 +57,21 @@ class AboutDialog(InfoDialog):
         self.add_button("Close", self.accept, primary=True)
 
     def open_data_folder(self) -> None:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))
+        open_data_folder(self.data_dir)
 
     def show_log_file(self) -> None:
-        """Explorer with the current log selected, ready to attach to a bug report."""
-        log = self.data_dir / LOG_FILE
-        if not log.exists():
-            self.open_data_folder()
-            return
-        show_in_folder(log)
+        show_log_file(self.data_dir)
+
+
+def open_data_folder(data_dir: Path) -> None:
+    """Explorer in the folder with the settings, the log and the catalog."""
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(data_dir)))
+
+
+def show_log_file(data_dir: Path) -> None:
+    """Explorer with the current log selected, ready to attach to a bug report."""
+    log = data_dir / LOG_FILE
+    if not log.exists():
+        open_data_folder(data_dir)
+        return
+    show_in_folder(log)

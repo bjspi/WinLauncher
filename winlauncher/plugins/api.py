@@ -286,6 +286,15 @@ def no_form(title: str, text: str, fields: Sequence[PluginOption]) -> dict[str, 
 
 
 @dataclass(frozen=True, slots=True)
+class SearchRequest:
+    """What `Plugin.search` is asked: the text typed behind the plugin's keyword."""
+
+    text: str  # Trimmed, without the keyword; empty when only the keyword is typed.
+    route: str = ""  # The id of the route whose keyword was typed; empty for the plugin's own.
+    limit: int = 60  # The results show at most this many items.
+
+
+@dataclass(frozen=True, slots=True)
 class PluginContext:
     """What one plugin call receives. Calls run on a worker thread, never the GUI's."""
 
@@ -307,12 +316,17 @@ class PluginCommand:
     """A button on the plugin's settings card, such as Sign in.
 
     `run` gets a context that may show dialogs (`ask`, `choose`, `form`) and returns
-    a message for the user.
+    a message for the user. `shown` is optional: without it the button always
+    shows, as before it existed; with it the card shows the button only while it
+    returns True, such as Sign in while signed out and Sign out while signed in.
     """
 
     label: str
     run: Callable[[PluginContext], str | None]
     forgets_items: bool = False  # Such as Sign out: the listed items go, too.
+    # Asked on the GUI thread when the card shows, after each of its commands and
+    # each refresh: only look at quick things, such as whether a session file exists.
+    shown: Callable[[PluginContext], bool] | None = None
 
 
 # What this WinLauncher offers plugins, by name. A plugin that also runs on other
@@ -334,6 +348,8 @@ FEATURES: frozenset[str] = frozenset(
         "tips",
         "previews",
         "action_icons",
+        "live_search",
+        "command_states",
     }
 )
 
@@ -369,11 +385,16 @@ class Plugin:
     icon: ClassVar[str] = ""  # Image file for items without an icon of their own.
     round_icons: ClassVar[bool] = False  # Avatars: crop icons to circles, initials without one.
     # Regular expressions for typed terms that name one of this plugin's items, such
-    # as (r"HCP-\w*",) for ticket keys. A term a pattern describes entirely is
+    # as (r"TKT-\w*",) for ticket keys. A term a pattern describes entirely is
     # matched in one piece instead of loosely; terms with a digit in them already
     # are. Case is ignored, and the other terms of the same query stay loose.
     literal_terms: ClassVar[tuple[str, ...]] = ()
     options: ClassVar[tuple[PluginOption, ...]] = ()
+    # True: typing the plugin's keyword asks `search` for its items, live, such as a
+    # full-text index or a server's own search. Ordinary searches never ask it, and
+    # the results then hold only its items, without files.
+    live_search: ClassVar[bool] = False
+    search_timeout_ms: ClassVar[int] = 5000  # A search taking longer is cancelled.
 
     @classmethod
     def suggested_keywords(cls) -> tuple[str, ...]:
@@ -387,6 +408,17 @@ class Plugin:
         Raise PluginError with a message for the user when it fails.
         """
         raise NotImplementedError
+
+    def search(self, request: SearchRequest, context: PluginContext) -> Iterable[PluginItem]:
+        """The items for the text typed behind the keyword, best first.
+
+        Asked only with `live_search` set, a moment after typing pauses, on a worker
+        of its own and while a refresh may be running, so it must be thread-safe.
+        It may ask the network; stop when `context.cancel` is set, because the user
+        typed on or `search_timeout_ms` passed. Raise PluginError with a message to
+        show it instead of results.
+        """
+        return ()
 
     def open(self, item: PluginItem, context: PluginContext) -> None:
         """Open `item`; by default its target, like a double-click in Explorer would."""
@@ -439,6 +471,14 @@ class Plugin:
         Asked when the help is shown, on a search worker: only look at the options.
         """
         return ()
+
+    @classmethod
+    def lists(cls) -> bool:
+        """Whether the plugin defines `refresh`, so its items are listed at intervals.
+
+        A plugin with `live_search` may list nothing and only search.
+        """
+        return cls.refresh is not Plugin.refresh
 
     @classmethod
     def answers(cls) -> bool:

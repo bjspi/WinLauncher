@@ -37,6 +37,7 @@ from winlauncher.plugins.api import (
     PluginItem,
     PluginPreview,
     PluginTip,
+    SearchRequest,
     SetupRequired,
     no_choices,
     no_form,
@@ -228,10 +229,11 @@ class PluginHost:
         """
         found: dict[str, KeywordTarget] = {}
         for config in self.enabled(configs):
-            declared = {route.id for route in self._entries[config.id].plugin.routes}
+            plugin = self._entries[config.id].plugin
+            declared = {route.id for route in plugin.routes}
             for keyword, route in config.keyword_routes().items():
                 if route is None or route in declared:
-                    found[normalize(keyword)] = KeywordTarget(config.id, route)
+                    found[normalize(keyword)] = KeywordTarget(config.id, route, plugin.live_search)
         return found
 
     def context(
@@ -312,8 +314,11 @@ class PluginHost:
         *,
         pause_when_offline: bool = False,
     ) -> PluginState:
-        """List the plugin's items now; runs on a worker. A busy plugin is skipped."""
+        """List the plugin's items now; runs on a worker. A busy plugin is skipped,
+        and one that only searches lists nothing."""
         entry = self._entries[plugin_id]
+        if not entry.plugin.lists():
+            return entry.state
         if pause_when_offline and self.internet.status == InternetStatus.OFFLINE:
             return entry.state
         if not entry.lock.acquire(blocking=False):
@@ -477,6 +482,43 @@ class PluginHost:
             timings.append(PluginTiming(config.id, elapsed_ms, len(items), len(ranked)))
             hits.extend(ranked)
         return PluginSearch(hits, tuple(timings))
+
+    def live_search(
+        self,
+        query: PluginQuery,
+        configs: Sequence[PluginConfig],
+        limit: int,
+        cancel: threading.Event,
+    ) -> PluginSearch:
+        """What a live plugin finds for the text behind its keyword; runs on a live worker.
+
+        The plugin's own order is kept. Every failure becomes a PluginError, whose
+        message the results show instead; a cancelled search keeps no hits.
+        """
+        config = self.config(query.plugin_id, configs)
+        if not config.enabled:
+            return PluginSearch()
+        plugin = self._entries[query.plugin_id].plugin
+        request = SearchRequest(query.text, query.route or "", limit)
+        started = time.perf_counter()
+        try:
+            found = plugin.search(request, self.context(query.plugin_id, config, cancel))
+            items = _validated(found)[:limit]
+        except PluginError:
+            raise
+        except PLUGIN_FAILURES as exc:
+            logger.exception("Plugin %s search failed", query.plugin_id)
+            raise PluginError(f"{plugin.label} failed to search: {exc}") from exc
+        if cancel.is_set():
+            return PluginSearch()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        reason = f"Found by {plugin.label}"
+        hits = [
+            PluginHit(query.plugin_id, plugin.label, item, float(len(items) - index), reason)
+            for index, item in enumerate(items)
+        ]
+        timing = PluginTiming(query.plugin_id, elapsed_ms, len(items), len(hits))
+        return PluginSearch(hits, (timing,))
 
     def _items(self, plugin_id: str, route: str | None) -> tuple[SearchableItem, ...]:
         """The plugin's items as prepared for matching; with a route, only its items."""
@@ -659,10 +701,27 @@ class PluginHost:
             and isinstance(command.label, str)
             and command.label.strip()
             and callable(command.run)
+            and (command.shown is None or callable(command.shown))
         )
         if len(usable) != len(declared):
             logger.warning("Plugin %s declared unusable settings buttons", plugin_id)
         return usable
+
+    def command_shown(self, plugin_id: str, command: PluginCommand, config: PluginConfig) -> bool:
+        """Whether the settings card shows `command` now; asked on the GUI thread.
+
+        A command without `shown` always shows. A check that fails is logged and
+        shows the button, so a broken plugin never hides how to set it up.
+        """
+        if command.shown is None:
+            return True
+        try:
+            return bool(command.shown(self.context(plugin_id, config)))
+        except PLUGIN_FAILURES:
+            logger.exception(
+                "Plugin %s could not tell whether to show %s", plugin_id, command.label
+            )
+            return True
 
     def run_command(
         self,

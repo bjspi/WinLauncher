@@ -136,6 +136,8 @@ class PluginScheduler(QObject):
         """
         configs = self.settings().plugins
         for plugin in self.host.plugins:
+            if not plugin.lists():
+                continue  # It only searches, behind its keyword.
             config = self.host.config(plugin.id, configs)
             timer = self._timers.get(plugin.id)
             previous = self._applied.get(plugin.id)
@@ -177,6 +179,8 @@ class PluginScheduler(QObject):
 
     def refresh(self, plugin_id: str, *, automatic: bool = False) -> None:
         if self._closed or plugin_id in self._running:
+            return
+        if (plugin := self.host.plugin(plugin_id)) is None or not plugin.lists():
             return
         if automatic and self.paused_offline:
             return

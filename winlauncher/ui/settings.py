@@ -17,11 +17,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from PySide6.QtCore import QMimeData, QPropertyAnimation, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QWheelEvent
+from PySide6.QtGui import QIcon, QKeySequence, QMouseEvent, QShortcut, QWheelEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
     QAbstractScrollArea,
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -76,6 +77,7 @@ from winlauncher.settings import (
     priority_rules,
     read_exported_settings,
 )
+from winlauncher.ui.about import open_data_folder, show_log_file
 from winlauncher.ui.bar_placement import BarPlacement
 from winlauncher.ui.commands import CommandList
 from winlauncher.ui.messages import ERROR, INFO, WARNING, ask, message
@@ -560,6 +562,16 @@ class _PageSpec(NamedTuple):
     plugin_id: str = ""
 
 
+class _PageList(QListWidget):
+    """The page list; it tells when a click ends, after it selected its row."""
+
+    released = Signal()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override.
+        super().mouseReleaseEvent(event)
+        self.released.emit()
+
+
 class _NavDelegate(QStyledItemDelegate):
     """Indents the plugins' pages below Plugin settings and fades those turned off."""
 
@@ -672,11 +684,13 @@ class SettingsDialog(QDialog):
         catalog: CatalogStore | None = None,
         tasks: BackgroundTasks | None = None,
         size_file: Path | None = None,
+        data_dir: Path | None = None,
     ):
         super().__init__(parent)
         # The window's size as the user left it, like the launcher bar's width: not
         # a setting, so written on closing. None forgets it.
         self.size_file = size_file
+        self.data_dir = data_dir  # Offers its folder and log file; None leaves them out.
         self.original = settings
         self.result_settings = settings
         self.persist = save
@@ -702,7 +716,9 @@ class SettingsDialog(QDialog):
             (plugins, plugin_folder, plugin_sources, restart) if plugins is not None else None
         )
         self.pages = QStackedWidget()
-        self.nav = QListWidget()
+        self.nav = _PageList()
+        self.nav.released.connect(self._click_ended)
+        self._plugin_rows_waiting = False
         self.nav.setObjectName("nav")
         self.nav.setAccessibleName("Settings pages")
         self.nav.setIconSize(QSize(NAV_ICON_SIZE, NAV_ICON_SIZE))
@@ -733,6 +749,10 @@ class SettingsDialog(QDialog):
         QShortcut(QKeySequence.StandardKey.Find, self, self.search.focus)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.buttons.rejected.connect(self.reject)
+        # Enter in a field must not close the window; Esc and the button do.
+        close = self.buttons.button(QDialogButtonBox.StandardButton.Close)
+        close.setAutoDefault(False)
+        close.setDefault(False)
         self.save_status = SaveStatus()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -884,6 +904,10 @@ class SettingsDialog(QDialog):
             return self._plugin_pages.card(plugin_id).enabled.isChecked()
         return self._plugin_arguments[0].host.config(plugin_id, self.original.plugins).enabled
 
+    def _click_ended(self) -> None:
+        if self._plugin_rows_waiting and (row := self.nav.currentRow()) >= 0:
+            self._show_plugin_rows(row)
+
     def _plugin_card(self, plugin_id: str) -> list[QWidget]:
         return [self.plugin_pages.card(plugin_id)]
 
@@ -894,7 +918,16 @@ class SettingsDialog(QDialog):
             self._show_plugin_rows(row)
 
     def _show_plugin_rows(self, row: int) -> None:
-        """List the plugins' pages while Plugin settings or one of them is shown."""
+        """List the plugins' pages while Plugin settings or one of them is shown.
+
+        During a click this waits until the button is released: rows hidden at
+        the press would move the clicked row away, and the release would select
+        the row that slid under the pointer instead.
+        """
+        if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+            self._plugin_rows_waiting = True
+            return
+        self._plugin_rows_waiting = False
         spec = self._specs[row]
         shown = bool(spec.plugin_id) or spec.title == PLUGIN_SETTINGS
         removed = self._plugin_pages.removed if self._plugin_pages is not None else set()
@@ -913,6 +946,10 @@ class SettingsDialog(QDialog):
         self.pages.insertWidget(row, page)
         self.pages.removeWidget(placeholder)
         placeholder.deleteLater()
+        for button in page.findChildren(QPushButton):
+            # A clicked button of a dialog would turn into its default one: bold and
+            # filled, wider than its row left room for, and Enter would press it.
+            button.setAutoDefault(False)
         self._watch(page)
 
     def _watch(self, page: QWidget) -> None:
@@ -1063,6 +1100,31 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.search.field)
         layout.addWidget(self.nav, 1)
         layout.addWidget(self.search.results, 1)
+        if self.data_dir is not None:
+            data_dir = self.data_dir
+            links = QVBoxLayout()
+            links.setSpacing(0)
+            for icon, text, tip, run in (
+                (
+                    "folder",
+                    "Open settings folder",
+                    "The settings, the log and the catalog.",
+                    open_data_folder,
+                ),
+                (
+                    "file",
+                    "Show log file",
+                    "The log in Explorer, to attach to a bug report.",
+                    show_log_file,
+                ),
+            ):
+                button = QPushButton(line_icon(icon), text)
+                button.setObjectName("sidebarLink")
+                button.setAutoDefault(False)  # Like the pages' buttons, see `_build_page`.
+                button.setToolTip(tip)
+                button.clicked.connect(partial(run, data_dir))
+                links.addWidget(button)
+            layout.addLayout(links)
         hint = QLabel("Changes are saved as you make them.")
         hint.setObjectName("sidebarHint")
         hint.setWordWrap(True)

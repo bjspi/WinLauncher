@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QPushButton,
 )
 
 import winlauncher
@@ -2140,6 +2141,8 @@ class UiFlowTest(unittest.TestCase):
         dialog = self.settings_dialog(self.controller.settings, save=self.controller.apply_settings)
         dialog.show()
         self.assertEqual(dialog.buttons.standardButtons(), QDialogButtonBox.StandardButton.Close)
+        close = dialog.buttons.button(QDialogButtonBox.StandardButton.Close)
+        self.assertFalse(close.isDefault() or close.autoDefault())  # Enter never closes.
         for limit in (25, 30):
             dialog.limit.setValue(limit)
             self.assertTrue(dialog.save_timer.isActive())  # After a pause in typing.
@@ -2157,6 +2160,29 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(self.controller.settings_file.load().max_results, 40)
         self.assertEqual(dialog.result_settings.max_results, 40)
         dialog.deleteLater()
+
+    def test_settings_open_their_folder_and_show_the_log_file(self):
+        folder = Path(r"C:\WinLauncher data")
+        with (
+            patch("winlauncher.ui.settings.open_data_folder") as opened,
+            patch("winlauncher.ui.settings.show_log_file") as shown,
+        ):
+            dialog = self.settings_dialog(self.controller.settings, data_dir=folder)
+            links = {
+                button.text(): button
+                for button in dialog.findChildren(QPushButton)
+                if button.objectName() == "sidebarLink"
+            }
+            links["Open settings folder"].click()
+            links["Show log file"].click()
+        opened.assert_called_once_with(folder)
+        shown.assert_called_once_with(folder)
+        dialog.deleteLater()
+        plain = self.settings_dialog(self.controller.settings)  # Without a folder: no links.
+        self.assertFalse(
+            [b for b in plain.findChildren(QPushButton) if b.objectName() == "sidebarLink"]
+        )
+        plain.deleteLater()
 
     def test_invalid_settings_are_not_saved_and_closing_asks_first(self):
         saved = []
