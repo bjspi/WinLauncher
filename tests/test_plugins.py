@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QLabel
 
 from winlauncher.calculator import Calculation
@@ -39,7 +40,7 @@ from winlauncher.plugins.api import (
     SetupRequired,
 )
 from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
-from winlauncher.plugins.config import PluginConfig
+from winlauncher.plugins.config import PluginConfig, PluginCopy
 from winlauncher.plugins.host import CACHE_FILE, CommandDialogs, ItemMenu, PluginHost
 from winlauncher.plugins.registry import Discovery, PluginSource, discover_plugins
 from winlauncher.plugins.search import (
@@ -721,6 +722,50 @@ class PluginLoaderRobustnessTest(unittest.TestCase):
             self.assertEqual((host.source("fake"), host.shadowed("fake")), (first, (second,)))
             self.assertEqual(host.shadowed("other"), ())
 
+    def test_a_copy_loads_as_a_plugin_of_its_own(self):
+        source = PluginSource("fake", Path("C:/mine/fake/plugin.py"), "1.0.0")
+
+        class Routed(FakePlugin):
+            routes = (PluginRoute("bugs", "Bugs", ("bug",)),)
+
+        found = Discovery()
+        found.add(Routed, source)
+        found.add_copy(PluginCopy("fake~2", "fake", "Fake Bosch"))
+        found.add_copy(PluginCopy("gone~2", "gone", "Gone 2"))
+        base, copy = found.plugins
+        self.assertEqual((copy.id, copy.label), ("fake~2", "Fake Bosch"))
+        self.assertIsInstance(copy, Routed)
+        # Its keywords carry its number, so it claims none of the original's words.
+        self.assertEqual(copy.suggested_keywords(), ("fk2",))
+        self.assertEqual(copy.routes[0].keywords, ("bug2",))
+        self.assertEqual(
+            (base.id, base.label, base.suggested_keywords()), ("fake", "Fake", ("fk",))
+        )
+        self.assertEqual(found.sources["fake~2"], source)
+        self.assertEqual(list(found.copies), ["fake~2"])
+        self.assertEqual(found.problems, ["Gone 2: a copy of gone, which is not loaded."])
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(found, Path(directory))
+            self.assertEqual(host.copy("fake~2").label, "Fake Bosch")
+            self.assertIsNone(host.copy("fake"))
+            host.refresh("fake~2", host.config("fake~2", ()))
+            self.assertEqual(copy.contexts[0].data_dir.name, "fake~2")
+            self.assertEqual(host.state("fake").items, ())  # The original lists on its own.
+
+    def test_the_data_of_removed_copies_is_deleted(self):
+        found = Discovery()
+        found.add(FakePlugin, PluginSource("fake.py"))
+        with tempfile.TemporaryDirectory() as directory:
+            host = PluginHost(found, Path(directory))
+            host.forget_removed_copies(())  # No plugin data yet.
+            for name in ("fake", "fake~2", "fake~3"):
+                (host.data_dir / name).mkdir(parents=True)
+            with self.assertLogs("winlauncher.plugins.host", "INFO"):
+                host.forget_removed_copies((PluginCopy("fake~3", "fake", "Fake 3"),))
+            self.assertEqual(
+                sorted(folder.name for folder in host.data_dir.iterdir()), ["fake", "fake~3"]
+            )
+
     def test_a_correct_declaration_is_accepted(self):
         found = Discovery()
         found.add(
@@ -976,6 +1021,25 @@ class PluginSettingsTest(unittest.TestCase):
         # A disabled plugin's keyword does not claim the word.
         Settings(roots=(), plugins=(PluginConfig("a", enabled=False, keywords=("g",)),))
         self.assertTrue(PluginConfig("x").enabled)  # A plugin without settings is on.
+
+    def test_plugin_copies_roundtrip_and_validate(self):
+        copy = PluginCopy("jira~2", "jira", "Jira Bosch")
+        settings = Settings(roots=(), plugin_copies=(copy,))
+        with tempfile.TemporaryDirectory() as directory:
+            file = SettingsFile(Path(directory) / "settings.json")
+            file.save(settings)
+            self.assertEqual(file.load().plugin_copies, (copy,))
+        for entry in (
+            {"id": "jira-2", "of": "jira", "label": "Jira 2"},
+            {"id": "jira~2", "of": "other", "label": "Jira 2"},
+            {"id": "jira~two", "of": "jira", "label": "Jira 2"},
+            {"id": "jira~2", "of": "jira", "label": " "},
+            {"id": "jira~2", "of": "jira"},
+        ):
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                settings_from_json({"roots": [], "plugin_copies": [entry]})
+        with self.assertRaisesRegex(ValueError, "twice"):
+            Settings(roots=(), plugin_copies=(copy, copy))
 
 
 class PluginUiTest(unittest.TestCase):
@@ -1245,6 +1309,40 @@ class PluginUiTest(unittest.TestCase):
             ["Fake: Anna Schmidt", "Fake: Team Annahme"],
         )
 
+    def test_a_narrow_settings_window_cuts_no_button_and_wraps_instead(self):
+        from PySide6.QtWidgets import QAbstractButton
+
+        from winlauncher.ui.settings import SettingsDialog
+
+        dialog = SettingsDialog(
+            self.controller.settings,
+            website_icons=self.controller.website_icons,
+            plugins=self.controller.plugin_refresh,
+            plugin_folder=str(self.root / "a folder whose path is rather long" / "plugins"),
+        )
+        self.addCleanup(dialog.deleteLater)
+        dialog.build_all_pages()
+        for card in dialog.plugin_pages.cards:
+            card.fold.setChecked(True)
+        dialog.show()
+        self.addCleanup(dialog.hide)
+        # The Websites page would ask the network for favicons.
+        no_favicons = patch.object(self.controller.website_icons, "icon_for", return_value=QIcon())
+        self.enterContext(no_favicons)
+        for width in (760, 640):
+            dialog.resize(width, 800)
+            for row in range(dialog.nav.count()):
+                dialog.nav.setCurrentRow(row)
+                self.app.processEvents()
+                page, name = dialog.pages.currentWidget(), dialog.nav.item(row).text()
+                with self.subTest(page=name, width=width):
+                    # Fonts differ between machines; the plugin pages have room to spare.
+                    if name.startswith("Plugin") and width == 760:
+                        self.assertEqual(page.horizontalScrollBar().maximum(), 0)
+                    for button in page.findChildren(QAbstractButton):
+                        if button.isVisibleTo(dialog) and button.text():
+                            self.assertGreaterEqual(button.width(), button.sizeHint().width())
+
     def test_the_card_names_a_skipped_copy(self):
         from winlauncher.ui.settings import SettingsDialog
 
@@ -1259,7 +1357,9 @@ class PluginUiTest(unittest.TestCase):
         texts = [label.text() for label in dialog.plugin_pages.cards[0].findChildren(QLabel)]
         self.assertIn("Skipped copy", texts)
         self.assertIn("Version 1.1.0", texts)
-        self.assertTrue(any(str(Path("D:/clone/fake")) in text for text in texts))
+        self.assertTrue(
+            any(str(Path("D:/clone/fake")) in text.replace("\u200b", "") for text in texts)
+        )
 
     def test_a_plugin_setting_found_by_search_names_its_plugin(self):
         from winlauncher.ui.settings import SettingsDialog
@@ -1403,6 +1503,73 @@ class PluginUiTest(unittest.TestCase):
         remembered.write_text("not json", encoding="utf-8")
         with self.assertLogs("winlauncher.ui.plugin_settings", "WARNING"):
             self.assertFalse(open_dialog().plugin_pages.cards[0].fold.isChecked())
+
+
+class PluginCopyPagesTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def pages(self, settings: Settings):
+        from test_ui_flow import DeferredTasks
+
+        from winlauncher.ui.plugin_settings import PluginPages
+        from winlauncher.ui.plugins import PluginScheduler
+
+        found = Discovery()
+        found.add(FakePlugin, PluginSource("fake.py"))
+        for copy in settings.plugin_copies:
+            found.add_copy(copy)
+        directory = tempfile.TemporaryDirectory(prefix="winlauncher-copies-")
+        self.addCleanup(directory.cleanup)
+        scheduler = PluginScheduler(
+            PluginHost(found, Path(directory.name)), DeferredTasks(), lambda: settings
+        )
+        self.addCleanup(scheduler.deleteLater)
+        return PluginPages(settings, scheduler, lambda: settings, "", scheduler)
+
+    def test_add_copy_adds_one_that_loads_from_the_next_start(self):
+        settings = Settings(roots=())
+        pages = self.pages(settings)
+        card = pages.cards[0]
+        with patch("winlauncher.ui.plugin_settings.message") as told:
+            card.copy_button.click()
+            card.copy_button.click()
+        self.assertIn("Fake 2 is added", told.call_args_list[0].args[2])
+        edited = pages.apply_to(settings)
+        self.assertEqual(
+            edited.plugin_copies,
+            (PluginCopy("fake~2", "fake", "Fake 2"), PluginCopy("fake~3", "fake", "Fake 3")),
+        )
+        self.assertEqual(card.pending_copies.text(), "Fake 2, Fake 3 load from the next start.")
+
+    def test_a_copy_has_a_card_of_its_own_that_renames_and_removes_it(self):
+        copy = PluginCopy("fake~2", "fake", "Fake 2")
+        settings = Settings(
+            roots=(),
+            plugin_copies=(copy,),
+            plugins=(PluginConfig("fake~2", keywords=("fk2",), boost=5),),
+        )
+        pages = self.pages(settings)
+        base, card = pages.cards
+        self.assertEqual(
+            (base.copy_button.text(), card.copy_button.text()), ("Add copy", "Remove copy")
+        )
+        self.assertEqual(card.heading, "Fake 2")
+        self.assertEqual(base.pending_copies.text(), "")  # Loaded already.
+        card.name.setText(" Fake Bosch ")
+        edited = pages.apply_to(settings)
+        self.assertEqual(edited.plugin_copies, (replace(copy, label="Fake Bosch"),))
+        self.assertEqual([config.id for config in edited.plugins], ["fake", "fake~2"])
+        with patch("winlauncher.ui.plugin_settings.ask", return_value=True):
+            card.copy_button.click()
+        edited = pages.apply_to(settings)
+        self.assertEqual(edited.plugin_copies, ())
+        self.assertEqual([config.id for config in edited.plugins], ["fake"])
+        # The next copy gets a new number: the removed one runs until the next start.
+        with patch("winlauncher.ui.plugin_settings.message"):
+            base.copy_button.click()
+        self.assertEqual([c.id for c in pages.apply_to(settings).plugin_copies], ["fake~3"])
 
 
 class BreadcrumbTest(unittest.TestCase):

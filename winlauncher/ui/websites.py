@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from winlauncher.ui.website_icons import WebsiteIcons
+from winlauncher.ui.widgets import FlowLayout
 from winlauncher.websites import WebsiteShortcut
 
 LIST_ICON_SIZE = QSize(24, 24)
@@ -82,10 +83,9 @@ class WebsiteList(QWidget):
         self.remove = QPushButton("Remove selected")
         add.clicked.connect(self.add_website)
         self.remove.clicked.connect(self.remove_selected)
-        buttons = QHBoxLayout()
+        buttons = FlowLayout()  # Wraps in a narrow window instead of cutting labels.
         buttons.addWidget(add)
         buttons.addWidget(self.remove)
-        buttons.addStretch()
         content = QHBoxLayout()
         content.setSpacing(FORM_SPACING)
         content.addWidget(self.list, 1)

@@ -152,9 +152,12 @@ class LauncherController(QObject):
 
         # Shared by the result list and the Websites settings.
         self.website_icons = WebsiteIcons(self)
+        copies = self.settings.plugin_copies
         self.plugins = PluginHost(
-            discover_plugins([self.own_plugin_folder], self.active_plugin_folders()), data_dir
+            discover_plugins([self.own_plugin_folder], self.active_plugin_folders(), copies=copies),
+            data_dir,
         )
+        self.plugins.forget_removed_copies(copies)
         timings.mark("plugins")
         # Shared by the bar's menu, the tray and the Settings dialog.
         self.placement = BarPlacement(data_dir / BAR_PLACEMENT_FILE, self)

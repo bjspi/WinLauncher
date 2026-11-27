@@ -26,7 +26,7 @@ from winlauncher.catalog.priority import (
     SearchPriority,
 )
 from winlauncher.commands import DEFAULT_MENU_COMMANDS, MenuCommand
-from winlauncher.plugins.config import DEFAULT_SOURCES, PluginConfig, source_key
+from winlauncher.plugins.config import DEFAULT_SOURCES, PluginConfig, PluginCopy, source_key
 from winlauncher.plugins.folders import OfferedPlugin, SourceError, read_source
 from winlauncher.websites import DEFAULT_WEBSITES, WebsiteShortcut
 
@@ -209,6 +209,8 @@ class Settings:
     plugin_sources: tuple[str, ...] = DEFAULT_SOURCES
     # Plugin folders of local sources, loaded from where they lie. Read once at start.
     active_plugins: tuple[str, ...] = ()
+    # Further instances of loaded plugins, such as a second Jira. Read once at start.
+    plugin_copies: tuple[PluginCopy, ...] = ()
 
     def __post_init__(self) -> None:
         if self.appearance not in tuple(Appearance):
@@ -347,6 +349,9 @@ class Settings:
             keywords.add(keyword)
 
     def _validate_plugins(self) -> None:
+        copies = [copy.id for copy in self.plugin_copies]
+        if len(set(copies)) != len(copies):
+            raise ValueError("A plugin copy is listed twice.")
         ids = set()
         keywords = {normalize(site.keyword) for site in self.websites}
         for plugin in self.plugins:
@@ -478,6 +483,7 @@ _RECORD_TYPES = {
     "websites": (WebsiteShortcut, "website"),
     "menu_commands": (MenuCommand, "command"),
     "plugins": (PluginConfig, "plugin"),
+    "plugin_copies": (PluginCopy, "plugin copy"),
 }
 
 

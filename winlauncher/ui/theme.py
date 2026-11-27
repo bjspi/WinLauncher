@@ -284,7 +284,7 @@ QLineEdit:focus { border-color: $accent; }
 QPlainTextEdit, QListWidget { background: $field; border: 1px solid $field_border; border-radius: 6px; padding: 4px; selection-background-color: $chosen; selection-color: $text; }
 QPlainTextEdit:focus, QListWidget:focus { border-color: $accent; }
 QTextBrowser#previewDocument { background: $field; border: 1px solid $field_border; border-radius: 6px; padding: 4px; }
-QPushButton { background: $field; border: 1px solid $button_border; border-radius: 8px; padding: 6px 16px; min-width: 64px; }
+QPushButton { background: $field; border: 1px solid $button_border; border-radius: 8px; padding: 6px 16px; }
 QPushButton:hover { background: $button_hover; }
 QPushButton:pressed { background: $button_pressed; }
 QPushButton:focus { border-color: $accent; }
@@ -391,7 +391,7 @@ QDialog#infoDialog QPlainTextEdit, QDialog#infoDialog QLineEdit#code {
 }
 QDialog#infoDialog QPushButton {
     background: $field; color: $text; border: 1px solid $button_border; border-radius: 7px;
-    padding: 7px 18px; min-width: 64px; font-size: 13px;
+    padding: 7px 18px; font-size: 13px;
 }
 QDialog#infoDialog QPushButton:hover { border-color: $accent; color: $accent; }
 QDialog#infoDialog QPushButton:default { font-weight: normal; }  /* Only #primary is bold. */
@@ -401,7 +401,7 @@ QDialog#infoDialog QPushButton#primary:hover { background: $accent_hover; border
 QDialog#infoDialog QPushButton#primary:pressed { background: $accent_pressed; }
 QDialog#infoDialog QPushButton#danger { color: $invalid; border-color: $invalid; }
 QDialog#infoDialog QPushButton#danger:hover { background: $invalid; color: $on_accent; }
-QDialog#infoDialog QPushButton#linkButton { background: transparent; border: none; color: $accent; padding: 7px 4px; min-width: 0; }
+QDialog#infoDialog QPushButton#linkButton { background: transparent; border: none; color: $accent; padding: 7px 4px; }
 QDialog#infoDialog QPushButton#linkButton:hover { color: $accent_hover; text-decoration: underline; }
 QLineEdit#code { font-family: 'Cascadia Mono', 'Consolas'; font-size: 9pt; }
 QLabel#kbdLarge { background: $field; border: 1px solid $button_border; border-bottom-width: 3px; border-radius: 7px; padding: 5px 13px; font-size: 12pt; font-weight: 600; color: $text; }

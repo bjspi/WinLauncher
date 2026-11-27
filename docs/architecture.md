@@ -349,6 +349,14 @@ loader of its own (`_PluginFileLoader`) that decodes them with `encoding.py`, so
 file saved as Windows-1252 runs instead of failing over an umlaut; it also writes
 no `__pycache__` into plugin folders.
 
+Copies of a plugin (`PluginCopy` in `Settings.plugin_copies`) are added
+last by `Discovery.add_copy`: `type()` derives a subclass of the loaded plugin's
+class that overrides `id`, `label` and the suggested keywords. Everything else
+already keys on the id — settings, data folder, cache, state, the settings card —
+so a copy needs no further support; `PluginHost.copy` tells the card what it
+copies, and `forget_removed_copies` deletes the data folders of removed ones at
+start. The id's `~` cannot occur in a plugin's own id.
+
 A plugin's keywords map to a `KeywordTarget`: the plugin, and for a route's keyword
 the route id. `PluginHost.keywords` builds that map from the settings, and a
 `PluginQuery` carries the route, which `_rank` applies as a filter on the

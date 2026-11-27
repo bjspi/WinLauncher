@@ -34,7 +34,7 @@ from winlauncher.plugins.api import (
     PluginOption,
     PluginRoute,
 )
-from winlauncher.plugins.config import KEYWORD, REFRESH_RANGE_MINUTES
+from winlauncher.plugins.config import COPY_MARK, KEYWORD, REFRESH_RANGE_MINUTES, PluginCopy
 from winlauncher.plugins.encoding import read_python_source
 from winlauncher.plugins.folders import (
     MANIFEST_FILE,
@@ -77,6 +77,7 @@ class Discovery:
     # Further copies of a loaded plugin, skipped because the loaded one came first;
     # its settings card names them, which a line among the problems would not.
     shadowed: dict[str, list[PluginSource]] = field(default_factory=dict)
+    copies: dict[str, PluginCopy] = field(default_factory=dict)  # The loaded copies, by id.
 
     def add(self, plugin_class: object, source: PluginSource) -> None:
         """Instantiate `plugin_class` unless it is no usable, unclaimed plugin."""
@@ -103,6 +104,44 @@ class Discovery:
             return
         self.plugins.append(plugin)
         self.sources[plugin_id] = source
+
+    def add_copy(self, copy: PluginCopy) -> None:
+        """Another instance of the loaded plugin `copy.of`, under the copy's id and name."""
+        base = next((plugin for plugin in self.plugins if plugin.id == copy.of), None)
+        if base is None:
+            self.problems.append(f"{copy.label}: a copy of {copy.of}, which is not loaded.")
+            return
+        try:
+            plugin = _copy_class(type(base), copy)()
+        except PLUGIN_FAILURES as exc:
+            self.problems.append(f"{copy.label}: {type(exc).__name__}: {exc}")
+            logger.exception("Plugin copy %s could not be created", copy.id)
+            return
+        self.plugins.append(plugin)
+        if copy.of in self.sources:
+            self.sources[copy.id] = self.sources[copy.of]
+        self.copies[copy.id] = copy
+
+
+def _copy_class(base: type[Plugin], copy: PluginCopy) -> type[Plugin]:
+    """A subclass of `base` that differs in id, label and the keywords it suggests.
+
+    Its suggested keywords carry the copy's number, `jira` becoming `jira2`, so the
+    copy never claims the words of the plugin it copies.
+    """
+    number = copy.id.rpartition(COPY_MARK)[2]
+    attributes = {
+        "id": copy.id,
+        "label": copy.label,
+        "keywords": tuple(f"{word}{number}" for word in base.suggested_keywords()),
+        "keyword": "",
+        "routes": tuple(
+            replace(route, keywords=tuple(f"{word}{number}" for word in route.keywords))
+            for route in base.routes
+        ),
+        "__module__": base.__module__,
+    }
+    return type(base.__name__, (base,), attributes)
 
 
 def _declaration_problem(plugin_class: type[Plugin]) -> str | None:
@@ -221,8 +260,9 @@ def discover_plugins(
     active: Sequence[Path] = (),
     *,
     built_in: Iterable[str] = BUILT_IN,
+    copies: Sequence[PluginCopy] = (),
 ) -> Discovery:
-    """Built-ins and packages, every plugin in `folders`, then each `active` plugin folder."""
+    """Built-ins, packages, `folders`, each `active` plugin folder, then the `copies`."""
     found = Discovery()
     started = time.perf_counter()
     for reference in built_in:
@@ -239,6 +279,8 @@ def discover_plugins(
             _add_plugin_subfolder(found, folder)
         else:
             found.problems.append(f"{folder}: the activated plugin folder is gone.")
+    for copy in copies:
+        found.add_copy(copy)
     logger.info(
         "Plugins found: %s; folders=%d active=%d problems=%d entry_points_ms=%.0f total_ms=%.0f",
         ", ".join(plugin.id for plugin in found.plugins) or "none",

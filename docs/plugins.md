@@ -151,6 +151,20 @@ plugin's card names each skipped copy with its place and version. Everything is
 loaded once at start, so installing, activating or removing a plugin takes effect
 after a restart.
 
+### Several instances of one plugin
+
+**Add copy** on a plugin's card (Settings → Plugin settings) adds another instance
+of it, such as for a second Jira server or account. It loads from the next start,
+which WinLauncher offers right away, and gets a card of its own: on, off,
+keywords, routes, boost, interval and the plugin's options are its own, and so are
+its items and its data folder (`plugin-data\<id>~<number>`), so it signs in
+separately. Its name, at first “Jira 2”, comes before each of its items and can be
+changed on its card. Its suggested keywords carry its number, `jira2` beside
+`jira`, so both work at once. **Remove copy** deletes it with its settings once
+saved; it stays loaded until the next start, which deletes its data folder. A copy
+runs the code of the plugin it copies, so it follows that plugin's updates, and
+it does not load when that plugin is gone.
+
 ## A plugin cannot break WinLauncher
 
 The loader is the one place that decides whether a plugin is usable, so the rest
@@ -577,6 +591,14 @@ Files that belong to the plugin itself, such as its icon, are addressed relative
 its module: `Path(__file__).with_name("assets") / "telegram.svg"`. Everything the
 plugin writes belongs under `context.data_dir`, never next to its code, so the
 plugin folder stays a clean checkout.
+
+The user may run several instances of a plugin (see “Several instances of one
+plugin”): each is a subclass WinLauncher creates with its own `id` and `label`,
+and each gets its own options and `context.data_dir`. Keep what belongs to one
+instance, such as a session or a client, on `self` or in that folder, not in
+module globals or class attributes, which the instances share, and read
+`self.id` and `self.label` instead of repeating your own, such as in a credential
+name.
 
 Refresh, commands and `open` run on different worker threads. A plugin that
 uses COM calls `pythoncom.CoInitialize()` at the start of each of them and

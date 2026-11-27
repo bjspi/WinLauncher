@@ -81,6 +81,7 @@ from winlauncher.ui.website_icons import WebsiteIcons
 from winlauncher.ui.websites import WebsiteList
 from winlauncher.ui.widgets import (
     Card,
+    FlowLayout,
     NumberField,
     PageHeader,
     ToggleSwitch,
@@ -376,13 +377,12 @@ class PathList(QWidget):
         self.list.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.list.folders_dropped.connect(self.add_folders)
         layout.addWidget(self.list)
-        self.buttons = QHBoxLayout()
+        self.buttons = FlowLayout()  # Wraps in a narrow window instead of cutting labels.
         add, remove = QPushButton("Add folder…"), QPushButton("Remove selected")
         add.clicked.connect(self.add_folder)
         remove.clicked.connect(self.remove_selected)
         self.buttons.addWidget(add)
         self.buttons.addWidget(remove)
-        self.buttons.addStretch()
         layout.addLayout(self.buttons)
         for path in paths:
             self._add_row(path)
@@ -444,8 +444,12 @@ class SearchFolderList(PathList):
             self.depth.addItem(_levels_text(levels), levels)
         label = QLabel("Depth")
         label.setObjectName("unit")
-        self.buttons.addWidget(label)
-        self.buttons.addWidget(self.depth)
+        depth = QWidget()  # The label stays with its list when the buttons wrap.
+        depth_layout = QHBoxLayout(depth)
+        depth_layout.setContentsMargins(0, 0, 0, 0)
+        depth_layout.addWidget(label)
+        depth_layout.addWidget(self.depth)
+        self.buttons.addWidget(depth)
         self.depth.activated.connect(self._depth_chosen)
         self.list.itemSelectionChanged.connect(self._show_selected_depth)
         self.effect = QLabel()  # What the selected folder's depth leaves out.

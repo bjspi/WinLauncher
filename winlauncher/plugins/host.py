@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import threading
 import time
 from collections.abc import Sequence
@@ -42,7 +43,7 @@ from winlauncher.plugins.api import (
     no_questions,
 )
 from winlauncher.plugins.budget import SearchBudget, SearchRecord
-from winlauncher.plugins.config import PluginConfig
+from winlauncher.plugins.config import COPY_MARK, PluginConfig, PluginCopy
 from winlauncher.plugins.registry import Discovery, PluginSource
 from winlauncher.plugins.search import (
     KeywordTarget,
@@ -138,6 +139,7 @@ class PluginHost:
         self.problems = tuple(found.problems)  # Plugins that failed to load.
         self._sources = dict(found.sources)
         self._shadowed = {key: tuple(copies) for key, copies in found.shadowed.items()}
+        self._copies = dict(found.copies)
         self._entries = {
             plugin.id: _Entry(plugin, literal=literal_patterns(plugin.literal_terms))
             for plugin in found.plugins
@@ -175,6 +177,26 @@ class PluginHost:
     def shadowed(self, plugin_id: str) -> tuple[PluginSource, ...]:
         """Other copies of the plugin that were skipped because this one came first."""
         return self._shadowed.get(plugin_id, ())
+
+    def copy(self, plugin_id: str) -> PluginCopy | None:
+        """What the plugin copies, when it is a copy of another plugin."""
+        return self._copies.get(plugin_id)
+
+    def forget_removed_copies(self, kept: Sequence[PluginCopy]) -> None:
+        """Delete the data folders of copies that are no longer configured.
+
+        A removed copy's sign-in and items would otherwise wait there for the next
+        copy of that number. Only copies have folders named with the copy mark.
+        """
+        kept_ids = {copy.id for copy in kept}
+        try:
+            folders = [folder for folder in self.data_dir.iterdir() if COPY_MARK in folder.name]
+        except OSError:
+            return  # No plugin has stored anything yet.
+        for folder in folders:
+            if folder.name not in kept_ids and folder.is_dir():
+                logger.info("Data of removed plugin copy %s deleted", folder.name)
+                shutil.rmtree(folder, ignore_errors=True)
 
     # Configuration ----------------------------------------------------------
 

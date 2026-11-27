@@ -14,7 +14,6 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -24,26 +23,39 @@ from PySide6.QtWidgets import (
 from winlauncher.catalog.model import path_key
 from winlauncher.plugins.api import OptionValue, Plugin, PluginCommand, PluginOption
 from winlauncher.plugins.budget import SLOW_SEARCHES_IN_A_ROW
-from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig
+from winlauncher.plugins.config import REFRESH_RANGE_MINUTES, PluginConfig, PluginCopy, copy_id
 from winlauncher.plugins.folders import ManifestError, OfferedPlugin, read_manifest
 from winlauncher.plugins.registry import PluginSource
 from winlauncher.settings import BOOST_RANGE, PLUGIN_TIME_LIMIT_RANGE_MS, Settings
-from winlauncher.ui.messages import ERROR, INFO, message
+from winlauncher.ui.messages import (
+    ERROR,
+    INFO,
+    PRIMARY,
+    SECONDARY,
+    SUCCESS,
+    WARNING,
+    ask,
+    message,
+    show_message,
+)
 from winlauncher.ui.option_editors import option_editor
 from winlauncher.ui.plugin_sources import SourceWatcher
 from winlauncher.ui.plugins import PluginScheduler
 from winlauncher.ui.settings import _note, _split_commas, _with_unit
 from winlauncher.ui.source_settings import SourceSection
 from winlauncher.ui.widgets import (
+    ButtonRow,
     Card,
     NumberField,
     ToggleSwitch,
+    breakable_path,
     line_icon,
     section_title,
     sized_number,
 )
 
 KEYWORD_FIELD_WIDTH = 160  # Room for a few keywords, separated by commas.
+RESTART_NOW = "Restart now"
 logger = logging.getLogger(__name__)
 
 
@@ -96,11 +108,15 @@ class PluginCard(Card):
         scheduler: PluginScheduler,
         edited_settings: Callable[[], Settings],
         unfolded: UnfoldedCards,
+        add_copy: Callable[[], None],
+        remove_copy: Callable[[], None],
     ):
+        """`add_copy` adds another instance of the plugin; `remove_copy` removes this copy."""
         super().__init__(plugin.label)
         self.plugin, self.scheduler = plugin, scheduler
         self.edited_settings = edited_settings  # Raises ValueError for invalid edits.
         self.original = config
+        self.copy = scheduler.host.copy(plugin.id)  # None unless it copies another plugin.
         self.enabled = ToggleSwitch(f"Use the {plugin.label} plugin")
         self.enabled.setChecked(config.enabled)
         source = scheduler.host.source(plugin.id)
@@ -112,6 +128,22 @@ class PluginCard(Card):
         version = QLabel(f"Version {source.version}" if source.version else "No version")
         version.setObjectName("unit")
         self.add_row("Installed from", _source_location(source), version)
+        self.name: QLineEdit | None = None
+        if self.copy is not None:
+            base = scheduler.host.plugin(self.copy.of)
+            self.name = QLineEdit(self.copy.label)
+            self.name.setFixedWidth(KEYWORD_FIELD_WIDTH)
+            self.name.setAccessibleName(f"Name of the copy {plugin.label}")
+            self.add_row(
+                "Name",
+                f"A copy of {base.label if base else self.copy.of} with settings and items of "
+                "its own. Its name shows before each item; a new one from the next start.",
+                self.name,
+            )
+        self.pending_copies = QLabel()
+        self.pending_copies.setObjectName("rowDescription")
+        self.pending_copies.setWordWrap(True)
+        self.pending_row = self.add_row("Copies", "", self.pending_copies)
         for other in scheduler.host.shadowed(plugin.id):
             skipped = QLabel(f"Version {other.version}" if other.version else "No version")
             skipped.setObjectName("unit")
@@ -160,20 +192,28 @@ class PluginCard(Card):
         self.status = QLabel()
         self.status.setObjectName("rowDescription")
         self.status.setWordWrap(True)
-        actions = QWidget()
-        buttons = QHBoxLayout(actions)
-        buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(8)
-        self.refresh_button = QPushButton("Refresh now")
+        # They wrap, so a plugin with many commands fits a narrow window.
+        buttons = ButtonRow()
+        self.refresh_button = buttons.add(QPushButton("Refresh now"))
         self.refresh_button.clicked.connect(lambda: scheduler.refresh(plugin.id))
-        buttons.addWidget(self.refresh_button)
         self.command_buttons: list[QPushButton] = []
         for command in scheduler.host.commands(plugin.id):
             button = QPushButton(command.label)
             button.clicked.connect(partial(self._run, command))
-            buttons.addWidget(button)
+            buttons.add(button)
             self.command_buttons.append(button)
-        self.add_row("Status", "", actions)
+        if self.copy is None:
+            self.copy_button = QPushButton("Add copy")
+            self.copy_button.setToolTip(
+                f"Another {plugin.label} with its own keywords and settings, such as for a "
+                "second account or server."
+            )
+            self.copy_button.clicked.connect(add_copy)
+        else:
+            self.copy_button = QPushButton("Remove copy")
+            self.copy_button.clicked.connect(remove_copy)
+        buttons.add(self.copy_button)
+        self.add_block("Status", "", buttons)
         self.add_block("", "", self.status)
         self.enabled.toggled.connect(self._show_details)
         self.fold.toggled.connect(self._show_details)
@@ -185,6 +225,23 @@ class PluginCard(Card):
         on = self.enabled.isChecked()
         self.fold.setEnabled(on)
         self.show_details(on and self.fold.isChecked())
+        if not self.pending_copies.text():
+            self.pending_row.setVisible(False)
+
+    def show_pending_copies(self, labels: list[str]) -> None:
+        """Name the copies that load from the next start."""
+        self.pending_copies.setText(
+            f"{', '.join(labels)} {'loads' if len(labels) == 1 else 'load'} from the next start."
+            if labels
+            else ""
+        )
+        self._show_details()
+
+    def edited_copy(self) -> PluginCopy | None:
+        """This copy with the edited name; None for a plugin that is no copy."""
+        if self.copy is None or self.name is None:
+            return None
+        return replace(self.copy, label=self.name.text().strip())
 
     def _add_option(self, option: PluginOption, value: OptionValue) -> None:
         editor = option_editor(option, value)
@@ -291,6 +348,9 @@ class PluginPages(QObject):
         self.current = current  # The dialog's other edits, for commands run before saving.
         host = self.host = scheduler.host
         unfolded = UnfoldedCards(unfolded_file)
+        self.restart = restart
+        self.copies = list(settings.plugin_copies)  # Edited with the other settings.
+        self.removed: set[str] = set()  # Ids of copies removed in this dialog.
         self.cards = [
             PluginCard(
                 plugin,
@@ -298,9 +358,12 @@ class PluginPages(QObject):
                 scheduler,
                 self.edited_settings,
                 unfolded,
+                partial(self.add_copy, plugin),
+                partial(self.remove_copy, plugin.id),
             )
             for plugin in host.plugins
         ]
+        self._show_pending_copies()
         self.data_folder = Path(data_folder) if data_folder else None
         self.source_section = (
             SourceSection(settings, sources, self.loaded_folders, self.turn_on, restart, self)
@@ -360,14 +423,15 @@ class PluginPages(QObject):
             sections.append(section_title("Where plugins come from"))
             sections.append(self.source_section.sources_card)
         if self.data_folder is not None:
-            folder_button = QPushButton("Open plugin folder")
-            folder_button.clicked.connect(self.open_folder)
+            # Below the long path, which would otherwise leave the button no room.
+            buttons = ButtonRow()
+            buttons.add(QPushButton("Open plugin folder")).clicked.connect(self.open_folder)
             folder = Card()
-            folder.add_row(
+            folder.add_block(
                 "Plugin folder",
-                f"{self.data_folder}\nInstalled plugins lie here; a plugin folder you copy in "
+                f"{breakable_path(self.data_folder)}\nInstalled plugins lie here; a plugin folder you copy in "
                 "loads as well.",
-                folder_button,
+                buttons,
             )
             sections.append(folder)
         sections.append(
@@ -377,6 +441,68 @@ class PluginPages(QObject):
             )
         )
         return sections
+
+    def add_copy(self, plugin: Plugin) -> None:
+        """Add another instance of `plugin`, which loads from the next start."""
+        taken = {copy.id for copy in self.copies} | {loaded.id for loaded in self.host.plugins}
+        number = 2
+        while copy_id(plugin.id, number) in taken:
+            number += 1
+        copy = PluginCopy(copy_id(plugin.id, number), plugin.id, f"{plugin.label} {number}")
+        self.copies.append(copy)
+        self._show_pending_copies()
+        text = (
+            f"{copy.label} is added and is on from the next start, with keywords and settings "
+            "of its own."
+        )
+        window = self.cards[0].window()
+        if self.restart is None:
+            message(window, "Plugin copy added", text, SUCCESS)
+            return
+        answer = show_message(
+            window,
+            "Plugin copy added",
+            f"{text} Restart now? Your settings are saved first.",
+            [("Later", SECONDARY), (RESTART_NOW, PRIMARY)],
+            SUCCESS,
+        )
+        if answer == RESTART_NOW:
+            self.restart()
+
+    def remove_copy(self, plugin_id: str) -> None:
+        """Remove the copy `plugin_id` with its settings once saved; it loads until a restart."""
+        card = next(card for card in self.cards if card.plugin.id == plugin_id)
+        if not ask(
+            card.window(),
+            "Remove plugin copy",
+            f"Remove {card.plugin.label} with its settings and items? It stays loaded until "
+            "the next start.",
+            "Remove",
+            kind=WARNING,
+        ):
+            return
+        self.copies = [copy for copy in self.copies if copy.id != plugin_id]
+        self.removed.add(plugin_id)
+        card.hide()
+
+    def _show_pending_copies(self) -> None:
+        for card in self.cards:
+            card.show_pending_copies(
+                [
+                    copy.label
+                    for copy in self.copies
+                    if copy.of == card.plugin.id and self.host.plugin(copy.id) is None
+                ]
+            )
+
+    def edited_copies(self) -> tuple[PluginCopy, ...]:
+        """The configured copies, with the names edited on their cards."""
+        edited = {
+            copy.id: copy
+            for card in self.cards
+            if card.plugin.id not in self.removed and (copy := card.edited_copy()) is not None
+        }
+        return tuple(edited.get(copy.id, copy) for copy in self.copies)
 
     def loaded_folders(self) -> set[str]:
         """Path keys of the folders the loaded plugins came from."""
@@ -401,16 +527,21 @@ class PluginPages(QObject):
             card.show_status()
 
     def configs(self) -> tuple[PluginConfig, ...]:
-        """The edited plugins, plus configured plugins that are not installed now."""
+        """The edited plugins, plus configured plugins that are not installed now.
+
+        A removed copy's settings go with it.
+        """
         shown = {card.plugin.id for card in self.cards}
         kept = tuple(config for config in self.original.plugins if config.id not in shown)
-        return (*(card.config() for card in self.cards), *kept)
+        edited = (card.config() for card in self.cards if card.plugin.id not in self.removed)
+        return (*edited, *kept)
 
     def apply_to(self, settings: Settings) -> Settings:
         """`settings` with the edits of these pages: plugins, sources and activations."""
         edited = replace(
             settings,
             plugins=self.configs(),
+            plugin_copies=self.edited_copies(),
             plugin_time_limit_ms=self.time_limit.value(),
             plugins_pause_offline=self.pause_offline.isChecked(),
         )
@@ -436,9 +567,9 @@ def _keywords_field(words: tuple[str, ...], accessible_name: str) -> QLineEdit:
 def _source_location(source: PluginSource) -> str:
     """Where the plugin's code sits, for its settings card."""
     if source.folder is not None:
-        return str(source.folder)
+        return breakable_path(source.folder)
     if source.path is not None:
-        return str(source.path)
+        return breakable_path(source.path)
     return f"Installed package {source.origin}"
 
 

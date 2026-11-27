@@ -14,8 +14,10 @@ from PySide6.QtCore import (
     Property,
     QByteArray,
     QEasingCurve,
+    QPoint,
     QPointF,
     QPropertyAnimation,
+    QRect,
     QRectF,
     QRegularExpression,
     QSize,
@@ -45,6 +47,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QLayoutItem,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -80,6 +83,9 @@ INFO_DIALOG_MARGIN = 24
 INFO_HEADER_SPACING = 16  # Between the icon and the texts.
 HERO_ICON_SIZE = 72  # A welcome's icon, centered above its texts.
 ROW_SPACING = 16  # Between a row's text and its control.
+BUTTON_SPACING = 8  # Between the buttons of a row of them.
+# A dialog's buttons are at least this wide, so a short "OK" is still easy to hit.
+DIALOG_BUTTON_MIN_WIDTH = 100
 ENTRY_ICON_SIZE = QSize(28, 28)
 HEADER_ICON_SIZE = 28  # The icon before a foldable card's title.
 FOLD_ICON_SIZE = QSize(16, 16)
@@ -112,19 +118,27 @@ def key_caps(*combinations: tuple[str, ...], large: bool = False) -> QWidget:
 
     Large ones introduce a shortcut, as on the first start; small ones list them.
     """
+    spacing = LARGE_KEY_SPACING if large else KEY_SPACING
     keys = QWidget()
-    layout = QHBoxLayout(keys)
+    # Small ones list shortcuts beside their action: in a narrow window a combination
+    # wraps onto the next line as a whole, its "or" leading it.
+    layout = FlowLayout(keys, spacing) if not large else QHBoxLayout(keys)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(LARGE_KEY_SPACING if large else KEY_SPACING)
+    layout.setSpacing(spacing)
     for index, combination in enumerate(combinations):
+        group = QWidget()
+        caps = QHBoxLayout(group)
+        caps.setContentsMargins(0, 0, 0, 0)
+        caps.setSpacing(spacing)
         if index:
             separator = QLabel("or")
             separator.setObjectName("keysOr" if large else "unit")
-            layout.addWidget(separator)
+            caps.addWidget(separator)
         for key in combination:
             cap = QLabel(key)
             cap.setObjectName("kbdLarge" if large else "kbd")
-            layout.addWidget(cap)
+            caps.addWidget(cap)
+        layout.addWidget(group)
     return keys
 
 
@@ -470,6 +484,7 @@ def _texts(title: str, description: str) -> QVBoxLayout:
     if title:
         heading = QLabel(title)
         heading.setObjectName("rowTitle")
+        heading.setWordWrap(True)  # A long title wraps in a narrow window.
         layout.addWidget(heading)
     if description:
         detail = QLabel(description)
@@ -567,6 +582,107 @@ def _hero_header(icon: QIcon, heading: QLabel, subtitle: QLabel) -> QVBoxLayout:
         label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         header.addWidget(label, 0, Qt.AlignmentFlag.AlignHCenter)
     return header
+
+
+def breakable_path(path: object) -> str:
+    """`path` for a label that wraps: a long path then breaks after a backslash.
+
+    Qt wraps only at spaces and hyphens, so a long path would otherwise widen the
+    whole page. The zero-width spaces are invisible.
+    """
+    return str(path).replace("\\", "\\\u200b")
+
+
+class _DialogButton(QPushButton):
+    """A dialog's button: never narrower than `DIALOG_BUTTON_MIN_WIDTH`, nor than its text.
+
+    A minimum width in the style sheet would become an explicit minimum, below the
+    text's width, to which a crowded layout then squeezes a long label.
+    """
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if self.objectName() != "linkButton":
+            hint.setWidth(max(hint.width(), DIALOG_BUTTON_MIN_WIDTH))
+        return hint
+
+
+class ButtonRow(QWidget):
+    """Buttons side by side that wrap onto further lines when the row is too narrow."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.flow = FlowLayout(self, BUTTON_SPACING)
+
+    def add(self, button: QPushButton) -> QPushButton:
+        self.flow.addWidget(button)
+        return button
+
+
+class FlowLayout(QLayout):
+    """Lays widgets out left to right, starting a new line where the next one does not fit."""
+
+    def __init__(self, parent: QWidget | None = None, spacing: int = BUTTON_SPACING):
+        super().__init__(parent)
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(spacing)
+        self._items: list[QLayoutItem] = []
+
+    def addItem(self, item: QLayoutItem) -> None:
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> QLayoutItem | None:
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int) -> QLayoutItem | None:
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientation:
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._arrange(QRect(0, 0, width, 0), move=False)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._arrange(rect, move=True)
+
+    def sizeHint(self) -> QSize:
+        """Everything on one line."""
+        visible = [item.sizeHint() for item in self._items if not item.isEmpty()]
+        if not visible:
+            return QSize(0, 0)
+        width = sum(size.width() for size in visible) + self.spacing() * (len(visible) - 1)
+        return QSize(width, max(size.height() for size in visible))
+
+    def minimumSize(self) -> QSize:
+        """The widest item: wider rows wrap."""
+        size = QSize(0, 0)
+        for item in self._items:
+            if not item.isEmpty():
+                size = size.expandedTo(item.minimumSize())
+        return size
+
+    def _arrange(self, rect: QRect, *, move: bool) -> int:
+        """Place the items within `rect`, or only measure; the height they take."""
+        x, y, line_height = rect.x(), rect.y(), 0
+        for item in self._items:
+            if item.isEmpty():
+                continue
+            size = item.sizeHint()
+            if x > rect.x() and x + size.width() > rect.right() + 1:
+                x, y, line_height = rect.x(), y + line_height + self.spacing(), 0
+            if move:
+                item.setGeometry(QRect(QPoint(x, y), size))
+            x += size.width() + self.spacing()
+            line_height = max(line_height, size.height())
+        return y + line_height - rect.y()
 
 
 class InfoDialog(QDialog):
@@ -687,7 +803,7 @@ class InfoDialog(QDialog):
 
     @staticmethod
     def _button(text: str, slot) -> QPushButton:
-        button = QPushButton(text)
+        button = _DialogButton(text)
         button.clicked.connect(slot)
         # Only the primary button is the default, however the focus moves.
         button.setAutoDefault(False)

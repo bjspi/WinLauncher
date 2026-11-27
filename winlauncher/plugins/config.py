@@ -12,6 +12,32 @@ KEYWORD = re.compile(r"[\w-]+")  # Also checked for the keywords a plugin sugges
 DEFAULT_SOURCES = ("https://github.com/bjspi/WinLauncher-Plugins.git",)
 
 
+COPY_MARK = "~"  # Joins a copy's plugin id and number; no plugin's own id contains it.
+
+
+def copy_id(of: str, number: int) -> str:
+    """The id of copy `number` of plugin `of`, such as `jira~2`."""
+    return f"{of}{COPY_MARK}{number}"
+
+
+@dataclass(frozen=True, slots=True)
+class PluginCopy:
+    """Another instance of a loaded plugin, with its own settings, items and data folder."""
+
+    id: str  # `copy_id(of, number)`: the key of its settings and its data folder.
+    of: str  # The id of the plugin it copies.
+    label: str  # Shown instead of the plugin's label, before each item's name.
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(value, str) for value in (self.id, self.of, self.label)):
+            raise ValueError("A plugin copy needs an id, the plugin it copies and a name.")
+        of, mark, number = self.id.rpartition(COPY_MARK)
+        if not mark or of != self.of or not of or not number.isdigit():
+            raise ValueError(f"The plugin copy {self.id!r} must be named <plugin>~<number>.")
+        if not self.label.strip():
+            raise ValueError(f"The plugin copy {self.id} needs a name.")
+
+
 def source_key(source: str) -> str:
     """`source` without the differences that name the same place, for comparisons."""
     key = source.strip().rstrip("/\\").casefold()

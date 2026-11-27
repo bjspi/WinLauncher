@@ -821,6 +821,18 @@ first; the chevron or a click on the header unfolds them, and which cards are
 unfolded is remembered at once in `<data>/plugin-cards.json`, apart from Save. A
 plugin that is off shows its header only.
 
+**Add copy** on a card adds a further instance of that plugin to `plugin_copies`
+(`id` `<plugin>~<number>`, the lowest number from 2 that is neither configured nor
+loaded; `of`, the plugin; `label`, at first “<label> <number>”) and offers a
+restart, as installing does; until then the card names the copies that load from
+the next start. At start each copy whose plugin loaded becomes a plugin of its own:
+a subclass with the copy's id and label, suggesting the plugin's keywords and route
+keywords with the number appended, from the same source. A copy of a plugin that
+is not loaded is listed among the problems. A copy's card has its name (shown from
+the next start) and **Remove copy**, which after a confirmation hides the card and
+drops the copy and its settings on save; it stays loaded until the next start,
+which deletes the data folder of every copy no longer configured.
+
 Settings store per plugin `id`, `enabled`, `keywords`, `routes` (route id to its
 keywords), `in_search`, `refresh_minutes` (1–1440), `boost` (-100–100) and
 `options` (names to booleans, integers or strings; an invalid or missing value uses
@@ -1163,7 +1175,10 @@ fields, so its next Save keeps it. The window opens at the size it was last
 resized to, kept in `settings-window.json` beside the settings rather than in them;
 a smaller screen shrinks it for that time without forgetting the size. Folder
 lists never scroll sideways: a long row is shortened in the middle, and its
-tooltip shows the full path.
+tooltip shows the full path. In a narrow window no button is narrower than its
+label: rows of buttons, shortcut keys and row titles wrap onto further lines
+instead, a path in a description breaks after a backslash, and a plugin card's
+buttons sit on a line of their own below its options.
 
 Opening any modal dialog hides the bar, even when pinned, so the new prompt is
 in front. Dialogs opened from Settings or another dialog belong to that window

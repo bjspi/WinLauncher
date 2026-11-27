@@ -26,9 +26,10 @@ from PySide6.QtWidgets import (
 from winlauncher.commands import SHORTCUT_MODIFIERS, MenuCommand, shortcut_clash
 from winlauncher.platform.shell import alias_target
 from winlauncher.ui.messages import WARNING, ask
-from winlauncher.ui.widgets import ToggleSwitch, pick_path
+from winlauncher.ui.widgets import FlowLayout, ToggleSwitch, pick_path
 
 LIST_WIDTH = 200
+COMBO_MIN_CHARACTERS = 12  # A choice box shows at least this much of its entry.
 ROW_SIZE = QSize(LIST_WIDTH, 42)  # Two text lines: title and command line.
 LIST_ICON_SIZE = QSize(24, 24)
 ICON_FILES = "Icons (*.ico *.png *.svg *.webp);;Programs and libraries (*.exe *.dll);;All files (*)"
@@ -145,6 +146,12 @@ class CommandList(QWidget):
             self.shortcut.addItem(
                 f"{modifier}+Enter, {modifier}+click, Ctrl+{modifier}+1–9", modifier
             )
+        # Its long entries would otherwise set the form's width; the open list shows them.
+        for combo in (self.show_for, self.shortcut):
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(COMBO_MIN_CHARACTERS)
         self.shortcut.setAccessibleName("Shortcut")
         self.shortcut.setToolTip(
             "Runs the command instead of opening: on the selected result with Enter, "
@@ -187,11 +194,10 @@ class CommandList(QWidget):
         add.clicked.connect(self.add_command)
         self.duplicate.clicked.connect(self.duplicate_selected)
         self.remove.clicked.connect(self.remove_selected)
-        buttons = QHBoxLayout()
+        buttons = FlowLayout()  # Wraps in a narrow window instead of cutting labels.
         buttons.addWidget(add)
         buttons.addWidget(self.duplicate)
         buttons.addWidget(self.remove)
-        buttons.addStretch()
         content = QHBoxLayout()
         content.setSpacing(FORM_SPACING)
         content.addWidget(self.list, 1)
