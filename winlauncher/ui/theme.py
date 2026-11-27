@@ -256,9 +256,6 @@ QToolButton#pinButton { background: transparent; border: 1px solid transparent; 
 QToolButton#pinButton:hover { background: $tool_hover; }
 QToolButton#pinButton:checked { background: $scope; }
 QToolButton#pinButton:focus { border-color: $accent; }
-QToolButton#foldButton { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px; }
-QToolButton#foldButton:hover { background: $tool_hover; }
-QToolButton#foldButton:focus { border-color: $accent; }
 QToolButton#scope { background: $scope; color: $scope_text; border: 1px solid transparent; border-radius: 11px; padding: 3px 10px; font-size: 9pt; }
 QToolButton#scope:hover { background: $scope_hover; }
 QToolButton#scope:focus { border-color: $accent; }
@@ -346,6 +343,7 @@ QLabel#rowTitle { font-weight: 600; color: $text; }
 QLabel#rowDescription { color: $subtle; font-size: 9pt; }
 QFrame#footer { background: $field; border: 0; border-top: 1px solid $card_border; }
 QLabel#savedMessage { color: $success; font-weight: 600; }
+QLabel#savedMessage[problem="true"] { color: $invalid; }
 QDialog#settings QPushButton { padding: 7px 16px; border-radius: 8px; }
 QDialog#settings QLineEdit { border-radius: 8px; padding: 6px 9px; }
 QDialog#settings QLineEdit#settingsSearch { background: $nav_hover; border-color: $nav_hover; padding-left: 4px; }

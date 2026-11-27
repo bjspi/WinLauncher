@@ -92,7 +92,7 @@ and replaces it, and your settings and catalog stay. You can
 a `winlauncher` command that starts without a console window:
 
 ```powershell
-pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.23.4"
+pipx install "winlauncher[rust] @ git+https://github.com/bjspi/WinLauncher.git@v0.23.5"
 winlauncher --show
 ```
 
@@ -172,8 +172,8 @@ Type `az headphones` and press Enter to search, or just `az` to open the site's
 home page. URLs without `%s` open the exact saved page. Search text keeps its case,
 spaces and punctuation and is URL-encoded automatically. Website keywords work
 in the global launcher with the **All** filter; Explorer searches keep their file
-behavior. Keywords are unique regardless of case. Save applies changes immediately
-and keeps Settings open. Cancel / Close discards only edits since the last save.
+behavior. Keywords are unique regardless of case. Settings saves every change by
+itself, typed text once you pause typing; there is no Save button.
 Favicons load in the background directly from each site's
 `/favicon.ico`; unavailable icons use a globe.
 
@@ -422,8 +422,8 @@ OCR. Narrow the filename, extension or folder first for large collections.
 files are scanned concurrently (1–16, default 4). This applies to `contains:`,
 `content:` and `rg:`; filename search still uses the catalog. The Rust engine uses
 ripgrep libraries directly, with reusable workers and no per-file processes.
-Higher values can increase disk activity and memory use. Save applies the change
-to the next search without rebuilding the catalog.
+Higher values can increase disk activity and memory use. The change applies to
+the next search without rebuilding the catalog.
 
 Content patterns match anywhere within a line and support `*`, `?`, `[0-9]` and
 `[!0-9]`. They do not span lines. Regex punctuation such as `.` and `+` stays

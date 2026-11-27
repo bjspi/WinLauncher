@@ -1,9 +1,7 @@
-"""The plugin pages of Settings: getting plugins, and one card per plugin to set it up."""
+"""The plugin pages of Settings: getting plugins, and one page per plugin to set it up."""
 
 from __future__ import annotations
 
-import json
-import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -11,7 +9,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QUrl
+from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QLabel,
@@ -56,46 +54,6 @@ from winlauncher.ui.widgets import (
 
 KEYWORD_FIELD_WIDTH = 160  # Room for a few keywords, separated by commas.
 RESTART_NOW = "Restart now"
-logger = logging.getLogger(__name__)
-
-
-class UnfoldedCards:
-    """The plugins whose card shows its details, remembered across starts.
-
-    How the page looks is no setting: it is written at once, apart from Save and
-    Cancel. A file that cannot be read or written only loses what was remembered.
-    """
-
-    def __init__(self, path: Path | None):
-        self.path = path
-        self.plugin_ids = self._read()
-
-    def __contains__(self, plugin_id: str) -> bool:
-        return plugin_id in self.plugin_ids
-
-    def remember(self, plugin_id: str, unfolded: bool) -> None:
-        if unfolded:
-            self.plugin_ids.add(plugin_id)
-        else:
-            self.plugin_ids.discard(plugin_id)
-        if self.path is None:
-            return
-        try:
-            self.path.write_text(json.dumps(sorted(self.plugin_ids)), encoding="utf-8")
-        except OSError as exc:
-            logger.warning("Unfolded plugin cards could not be saved: %s", exc)
-
-    def _read(self) -> set[str]:
-        if self.path is None or not self.path.is_file():
-            return set()
-        try:
-            stored = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            logger.warning("Unfolded plugin cards could not be read: %s", exc)
-            return set()
-        if not isinstance(stored, list):
-            return set()
-        return {plugin_id for plugin_id in stored if isinstance(plugin_id, str)}
 
 
 class PluginCard(Card):
@@ -107,7 +65,6 @@ class PluginCard(Card):
         config: PluginConfig,
         scheduler: PluginScheduler,
         edited_settings: Callable[[], Settings],
-        unfolded: UnfoldedCards,
         add_copy: Callable[[], None],
         remove_copy: Callable[[], None],
     ):
@@ -120,11 +77,7 @@ class PluginCard(Card):
         self.enabled = ToggleSwitch(f"Use the {plugin.label} plugin")
         self.enabled.setChecked(config.enabled)
         source = scheduler.host.source(plugin.id)
-        self.fold = self.add_header(
-            _plugin_icon(plugin, source), plugin.label, plugin.description, self.enabled
-        )
-        self.fold.setChecked(plugin.id in unfolded)
-        self.fold.toggled.connect(partial(unfolded.remember, plugin.id))
+        self.add_header(plugin_icon(plugin, source), plugin.label, plugin.description, self.enabled)
         version = QLabel(f"Version {source.version}" if source.version else "No version")
         version.setObjectName("unit")
         self.add_row("Installed from", _source_location(source), version)
@@ -216,15 +169,12 @@ class PluginCard(Card):
         self.add_block("Status", "", buttons)
         self.add_block("", "", self.status)
         self.enabled.toggled.connect(self._show_details)
-        self.fold.toggled.connect(self._show_details)
         self._show_details()
         self.show_status()
 
     def _show_details(self) -> None:
-        """Details show while unfolded; a plugin that is off shows its header only."""
-        on = self.enabled.isChecked()
-        self.fold.setEnabled(on)
-        self.show_details(on and self.fold.isChecked())
+        """A plugin that is off shows its header only."""
+        self.show_details(self.enabled.isChecked())
         if not self.pending_copies.text():
             self.pending_row.setVisible(False)
 
@@ -283,7 +233,7 @@ class PluginCard(Card):
         elif state.error:
             parts.append(state.error)
         elif state.refreshed is None:
-            parts.append("Not listed yet. Turn it on and save, then use Refresh now.")
+            parts.append("Not listed yet. Turn it on, then use Refresh now.")
         parts.extend(self._search_status())
         self.status.setText(" ".join(parts))
         saved = self.scheduler.host.config(self.plugin.id, self.scheduler.settings().plugins)
@@ -324,12 +274,16 @@ class PluginCard(Card):
 
 
 class PluginPages(QObject):
-    """The two plugin pages of the Settings dialog.
+    """The plugin pages of the Settings dialog.
 
     `install_sections` installs plugins and lists where they come from;
-    `settings_sections` holds one card per loaded plugin, so setting plugins up
-    stays apart from getting them.
+    `settings_sections` holds what all plugins share, and each card of `cards`
+    gets a page of its own below it, so setting plugins up stays apart from
+    getting them.
     """
+
+    # Copies were added or removed: an edit no widget reports.
+    copies_changed = Signal()
 
     def __init__(
         self,
@@ -340,14 +294,11 @@ class PluginPages(QObject):
         parent: QObject,
         sources: SourceWatcher | None = None,
         restart: Callable[[], None] | None = None,
-        unfolded_file: Path | None = None,
     ):
-        """`unfolded_file` remembers which cards show their details; None forgets it."""
         super().__init__(parent)  # Ends the status connection with the dialog.
         self.original = settings
         self.current = current  # The dialog's other edits, for commands run before saving.
         host = self.host = scheduler.host
-        unfolded = UnfoldedCards(unfolded_file)
         self.restart = restart
         self.copies = list(settings.plugin_copies)  # Edited with the other settings.
         self.removed: set[str] = set()  # Ids of copies removed in this dialog.
@@ -357,7 +308,6 @@ class PluginPages(QObject):
                 host.config(plugin.id, settings.plugins),
                 scheduler,
                 self.edited_settings,
-                unfolded,
                 partial(self.add_copy, plugin),
                 partial(self.remove_copy, plugin.id),
             )
@@ -399,17 +349,13 @@ class PluginPages(QObject):
         self.settings_sections: list[QWidget] = [
             section_title("All plugins"),
             shared,
-            section_title("Each plugin"),
+            _note(
+                "Each plugin has a page of its own, listed below Plugin settings at the left."
+                if self.cards
+                else "No plugin is loaded. Install or activate one under Plugins; it loads at "
+                "the next start."
+            ),
         ]
-        self.settings_sections.extend(
-            self.cards
-            or [
-                _note(
-                    "No plugin is loaded. Install or activate one under Plugins; it loads at "
-                    "the next start."
-                )
-            ]
-        )
         scheduler.status_changed.connect(self.show_status)
         self.show_status()
 
@@ -451,6 +397,7 @@ class PluginPages(QObject):
         copy = PluginCopy(copy_id(plugin.id, number), plugin.id, f"{plugin.label} {number}")
         self.copies.append(copy)
         self._show_pending_copies()
+        self.copies_changed.emit()
         text = (
             f"{copy.label} is added and is on from the next start, with keywords and settings "
             "of its own."
@@ -470,7 +417,7 @@ class PluginPages(QObject):
             self.restart()
 
     def remove_copy(self, plugin_id: str) -> None:
-        """Remove the copy `plugin_id` with its settings once saved; it loads until a restart."""
+        """Remove the copy `plugin_id` with its settings; it stays loaded until a restart."""
         card = next(card for card in self.cards if card.plugin.id == plugin_id)
         if not ask(
             card.window(),
@@ -484,6 +431,7 @@ class PluginPages(QObject):
         self.copies = [copy for copy in self.copies if copy.id != plugin_id]
         self.removed.add(plugin_id)
         card.hide()
+        self.copies_changed.emit()
 
     def _show_pending_copies(self) -> None:
         for card in self.cards:
@@ -553,6 +501,9 @@ class PluginPages(QObject):
             active_plugins=self.source_section.active_plugins(),
         )
 
+    def card(self, plugin_id: str) -> PluginCard:
+        return next(card for card in self.cards if card.plugin.id == plugin_id)
+
     def edited_settings(self) -> Settings:
         return self.apply_to(self.current())
 
@@ -573,7 +524,7 @@ def _source_location(source: PluginSource) -> str:
     return f"Installed package {source.origin}"
 
 
-def _plugin_icon(plugin: Plugin, source: PluginSource) -> QIcon:
+def plugin_icon(plugin: Plugin, source: PluginSource) -> QIcon:
     """The manifest's icon, as under Available plugins; else the plugin's own, else a plug."""
     for path in (_manifest_icon(source), plugin.icon):
         if path and not (icon := QIcon(str(path))).isNull():

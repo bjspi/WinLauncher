@@ -66,7 +66,7 @@ from winlauncher.ui.indexing import IndexJobKind
 from winlauncher.ui.messages import MessageDialog, message
 from winlauncher.ui.plugins import ask_text
 from winlauncher.ui.search_session import PendingAction
-from winlauncher.ui.settings import SearchFolderList, SettingsDialog
+from winlauncher.ui.settings import SearchFolderList, SettingsDialog, format_advanced_rules
 from winlauncher.ui.tasks import TaskCategory
 from winlauncher.ui.theme import colors
 from winlauncher.ui.widgets import NUMBER_FIELD_WIDTH, InfoDialog, pick_path
@@ -2136,21 +2136,43 @@ class UiFlowTest(unittest.TestCase):
         self.assertEqual(folders.list.item(0).toolTip(), folder)
         folders.deleteLater()
 
-    def test_settings_can_be_saved_repeatedly_without_closing(self):
+    def test_settings_save_themselves_while_the_window_stays_open(self):
         dialog = self.settings_dialog(self.controller.settings, save=self.controller.apply_settings)
         dialog.show()
-        save_button = dialog.buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.assertEqual(dialog.buttons.standardButtons(), QDialogButtonBox.StandardButton.Close)
         for limit in (25, 30):
             dialog.limit.setValue(limit)
-            save_button.click()
+            self.assertTrue(dialog.save_timer.isActive())  # After a pause in typing.
+            dialog.save_timer.timeout.emit()
             self.assertTrue(dialog.isVisible())
             self.assertEqual(self.controller.settings_file.load().max_results, limit)
             self.assertEqual(dialog.saved_message.text(), "Settings saved.")
         dialog.limit.setValue(40)
+        dialog.reject()  # What still waited is saved on closing.
+        self.assertFalse(dialog.isVisible())
+        self.assertEqual(self.controller.settings_file.load().max_results, 40)
+        self.assertEqual(dialog.result_settings.max_results, 40)
+        dialog.deleteLater()
+
+    def test_invalid_settings_are_not_saved_and_closing_asks_first(self):
+        saved = []
+        dialog = self.settings_dialog(self.controller.settings, save=saved.append)
+        dialog.show()
+        dialog.show_page("Advanced rules")
+        dialog.rule_json.setPlainText("{")
+        dialog.save_timer.timeout.emit()
+        self.assertEqual(saved, [])
+        self.assertIn("not valid JSON", dialog.saved_message.text())
+        with patch("winlauncher.ui.settings.ask", return_value=False) as asked:
+            dialog.reject()
+        asked.assert_called_once()
+        self.assertTrue(dialog.isVisible())  # Kept open to fix the rules.
+        dialog.rule_json.setPlainText(format_advanced_rules(self.controller.settings))
+        dialog.save_timer.timeout.emit()
+        self.assertEqual(dialog.saved_message.text(), "")  # Nothing changed, nothing saved.
+        self.assertEqual(saved, [])
         dialog.reject()
         self.assertFalse(dialog.isVisible())
-        self.assertEqual(self.controller.settings_file.load().max_results, 30)
-        self.assertEqual(dialog.result_settings.max_results, 30)
         dialog.deleteLater()
 
     def test_hidden_completions_do_not_submit_searches(self):

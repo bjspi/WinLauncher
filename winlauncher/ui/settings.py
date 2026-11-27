@@ -1,8 +1,9 @@
 """Settings dialog. Values are validated by `Settings`; this module only reads widgets.
 
-Autostart changes the Startup shortcut immediately (the shortcut is the source of
-truth, shared with the tray). Every other change applies on Save. Saving keeps
-the dialog open; closing discards only changes made since the last save.
+Every change is saved by itself: a switch or choice at once, typed text after a
+pause in typing. Edits that are not valid yet are not saved; the footer names
+the problem until they are. Autostart changes the Startup shortcut, which is the
+source of truth shared with the tray, not the settings file.
 """
 
 from __future__ import annotations
@@ -11,12 +12,15 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut, QWheelEvent
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QWheelEvent
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QAbstractItemView,
     QAbstractScrollArea,
     QComboBox,
     QDialog,
@@ -31,6 +35,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -100,6 +106,8 @@ logger = logging.getLogger(__name__)
 
 ADVANCED_RULE_FIELDS = ("name_priorities", "extension_priorities", "attribute_priorities")
 SAVED_MESSAGE_MS = 2500  # How long the footer confirms a save.
+CHANGE_SAVE_MS = 300  # A switch, choice or list edit is saved this soon.
+TYPING_SAVE_MS = 1000  # Typed text is saved once typing paused this long.
 FOUND_MS = 1600  # How long a setting chosen from search stays lit.
 REVEAL_MARGIN = 60  # Room above and below a setting scrolled into view.
 EXPORT_FILE_NAME = "WinLauncher settings.json"
@@ -111,6 +119,8 @@ DIALOG_SIZE = QSize(920, 780)
 SCREEN_MARGIN = 40  # Kept free above and below the dialog.
 SIDEBAR_WIDTH = 228
 NAV_ICON_SIZE = 18
+NAV_INDENT = 18  # A plugin's page below Plugin settings in the page list.
+PLUGIN_SETTINGS = "Plugin settings"
 BRAND_ICON_SIZE = 32
 PAGE_MARGINS = (32, 26, 32, 24)  # Left, top, right, bottom around a page's cards.
 PAGE_SPACING = 10
@@ -536,12 +546,28 @@ def _levels_text(levels: int) -> str:
 
 
 class _PageSpec(NamedTuple):
-    icon: str
+    icon: str | QIcon  # A line icon's name, tinted by the theme, or the icon itself.
     title: str
     subtitle: str
     build: Callable[[], list[QWidget]]
     # Copies the page's fields into the settings; None for pages without fields.
     read: Callable[[Settings], Settings] | None = None
+    # The plugin of a page listed below Plugin settings, shown while that is chosen.
+    plugin_id: str = ""
+
+
+class _NavDelegate(QStyledItemDelegate):
+    """Indents the plugins' pages below Plugin settings."""
+
+    def __init__(self, specs: list[_PageSpec], parent: QWidget):
+        super().__init__(parent)
+        self.specs = specs
+
+    def paint(self, painter, option: QStyleOptionViewItem, index) -> None:
+        if self.specs[index.row()].plugin_id:
+            option = QStyleOptionViewItem(option)
+            option.rect.adjust(NAV_INDENT, 0, 0, 0)
+        super().paint(painter, option, index)
 
 
 def _remembered_size(path: Path | None) -> QSize:
@@ -575,7 +601,6 @@ class SettingsDialog(QDialog):
         plugins: PluginScheduler | None = None,
         plugin_folder: str = "",
         plugin_sources: SourceWatcher | None = None,
-        plugin_cards: Path | None = None,
         placement: BarPlacement | None = None,
         restart: Callable[[], None] | None = None,
         replace_all: Callable[[Settings], None] | None = None,
@@ -585,7 +610,7 @@ class SettingsDialog(QDialog):
     ):
         super().__init__(parent)
         # The window's size as the user left it, like the launcher bar's width: not
-        # a setting, so written on closing, apart from Save and Cancel. None forgets it.
+        # a setting, so written on closing. None forgets it.
         self.size_file = size_file
         self.original = settings
         self.result_settings = settings
@@ -609,9 +634,7 @@ class SettingsDialog(QDialog):
         # Built with the first plugin page shown; see `plugin_pages`.
         self._plugin_pages: PluginPages | None = None
         self._plugin_arguments = (
-            (plugins, plugin_folder, plugin_sources, restart, plugin_cards)
-            if plugins is not None
-            else None
+            (plugins, plugin_folder, plugin_sources, restart) if plugins is not None else None
         )
         self.pages = QStackedWidget()
         self.nav = QListWidget()
@@ -619,13 +642,22 @@ class SettingsDialog(QDialog):
         self.nav.setAccessibleName("Settings pages")
         self.nav.setIconSize(QSize(NAV_ICON_SIZE, NAV_ICON_SIZE))
         self._specs = self._page_specs()
-        self.nav_icons = [spec.icon for spec in self._specs]
+        self.nav.setItemDelegate(_NavDelegate(self._specs, self.nav))
         # A page is built when it is first shown: building all of them took most
-        # of a second. Save reads only built pages; the others keep `original`.
+        # of a second. Saving reads only built pages; the others keep `original`.
         self._built: set[int] = set()
         for spec in self._specs:
-            self.nav.addItem(QListWidgetItem(spec.title))
+            item = QListWidgetItem(spec.title)
+            if isinstance(spec.icon, QIcon):
+                item.setIcon(spec.icon)
+            self.nav.addItem(item)
             self.pages.addWidget(QWidget())
+        # Saves the edits a moment after the last one; see `_save_soon`.
+        self.save_timer = QTimer(self)
+        self.save_timer.setSingleShot(True)
+        self.save_timer.timeout.connect(self._save_edits)
+        # Why the edits shown are not valid, so not saved; empty once they are.
+        self.invalid_edits = ""
         self._use_theme_icons()
         theme().changed.connect(self._use_theme_icons)
         self.nav.currentRowChanged.connect(self._show_row)
@@ -634,11 +666,7 @@ class SettingsDialog(QDialog):
         self.search.active_changed.connect(lambda active: self.nav.setVisible(not active))
         self.search.chosen.connect(self._open_setting)
         QShortcut(QKeySequence.StandardKey.Find, self, self.search.focus)
-        self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        # Save keeps the dialog open; Cancel (Close after a save) leaves it.
-        self.buttons.accepted.connect(self.save)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.buttons.rejected.connect(self.reject)
         self.saved_message = QLabel()
         self.saved_message.setObjectName("savedMessage")
@@ -663,6 +691,19 @@ class SettingsDialog(QDialog):
         self._opened_size = self.size()
 
     def done(self, result: int) -> None:
+        """Save what is still waiting; edits that are not valid are dropped only when asked."""
+        if self.save_timer.isActive():
+            self.save_timer.stop()
+            self._save_edits()
+        if self.invalid_edits and not ask(
+            self,
+            "Close without these changes?",
+            f"{self.invalid_edits} Changes are saved only once they are valid.",
+            "Close anyway",
+            kind=WARNING,
+        ):
+            return
+        self.invalid_edits = ""
         if self.size_file is not None and self.size() != self._opened_size:
             size = {"width": self.width(), "height": self.height()}
             try:
@@ -684,11 +725,12 @@ class SettingsDialog(QDialog):
                 ),
                 _PageSpec(
                     "gear",
-                    "Plugin settings",
-                    "Each plugin's switch, keywords and options. A keyword puts one plugin "
-                    "on top, @keyword answers from it alone.",
+                    PLUGIN_SETTINGS,
+                    "What all plugins share. Each plugin's switch, keywords and options are on "
+                    "its own page below.",
                     lambda: self.plugin_pages.settings_sections,
                 ),
+                *self._plugin_specs(),
             ]
             if self._plugin_arguments is not None
             else []
@@ -760,10 +802,40 @@ class SettingsDialog(QDialog):
             ),
         ]
 
+    def _plugin_specs(self) -> list[_PageSpec]:
+        """A page per loaded plugin, holding its card."""
+        from winlauncher.ui.plugin_settings import plugin_icon  # It builds on this module.
+
+        host = self._plugin_arguments[0].host
+        return [
+            _PageSpec(
+                plugin_icon(plugin, host.source(plugin.id)),
+                plugin.label,
+                "A keyword puts the plugin on top, @keyword answers from it alone.",
+                partial(self._plugin_card, plugin.id),
+                plugin_id=plugin.id,
+            )
+            for plugin in host.plugins
+        ]
+
+    def _plugin_card(self, plugin_id: str) -> list[QWidget]:
+        return [self.plugin_pages.card(plugin_id)]
+
     def _show_row(self, row: int) -> None:
         if row >= 0:
             self._build_page(row)
             self.pages.setCurrentIndex(row)
+            self._show_plugin_rows(row)
+
+    def _show_plugin_rows(self, row: int) -> None:
+        """List the plugins' pages while Plugin settings or one of them is shown."""
+        spec = self._specs[row]
+        shown = bool(spec.plugin_id) or spec.title == PLUGIN_SETTINGS
+        removed = self._plugin_pages.removed if self._plugin_pages is not None else set()
+        for index, other in enumerate(self._specs):
+            if other.plugin_id:
+                hidden = not shown or other.plugin_id in removed
+                self.nav.item(index).setHidden(hidden)
 
     def _build_page(self, row: int) -> None:
         if row in self._built:
@@ -775,20 +847,48 @@ class SettingsDialog(QDialog):
         self.pages.insertWidget(row, page)
         self.pages.removeWidget(placeholder)
         placeholder.deleteLater()
+        self._watch(page)
+
+    def _watch(self, page: QWidget) -> None:
+        """Save soon after a field of `page` changes, typed text once typing paused."""
+
+        def typed(*_) -> None:
+            self._save_soon(TYPING_SAVE_MS)
+
+        def changed(*_) -> None:
+            self._save_soon(CHANGE_SAVE_MS)
+
+        for widget in page.findChildren(QWidget):
+            if isinstance(widget, QLineEdit | QPlainTextEdit):
+                widget.textChanged.connect(typed)
+            elif isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(changed)
+            elif isinstance(widget, QAbstractButton) and widget.isCheckable():
+                widget.toggled.connect(changed)
+            elif isinstance(widget, QAbstractItemView) and (model := widget.model()) is not None:
+                # Lists such as search folders, websites and menu commands.
+                model.rowsInserted.connect(changed)
+                model.rowsRemoved.connect(changed)
+                model.rowsMoved.connect(changed)
+                model.dataChanged.connect(changed)
+                model.modelReset.connect(changed)
 
     def _searchable(self) -> list[SettingEntry]:
         """Every page and its cards' titled rows; searching builds the pages not shown yet."""
         self.build_all_pages()
         entries = []
         for row, spec in enumerate(self._specs):
-            entries.append(SettingEntry(row, spec.title, spec.title, spec.subtitle))
+            # A plugin's page is found by its card's header, named like the page.
+            place = PLUGIN_SETTINGS if spec.plugin_id else spec.title
+            if not spec.plugin_id:
+                entries.append(SettingEntry(row, place, spec.title, spec.subtitle))
             content = self.pages.widget(row).widget()
             for card in content.findChildren(Card):
                 # Plugin cards' rows share titles; the card's header names whose they are.
-                details = f"{spec.title} › {card.heading}" if card.heading else spec.title
+                details = f"{place} › {card.heading}" if card.heading else place
                 for index, (title, description, widget) in enumerate(card.rows):
                     if title:
-                        page = details if index else spec.title  # The header is the first row.
+                        page = details if index else place  # The header is the first row.
                         entries.append(SettingEntry(row, page, title, description, widget))
         return entries
 
@@ -830,7 +930,7 @@ class SettingsDialog(QDialog):
         if self._plugin_pages is None and self._plugin_arguments is not None:
             from winlauncher.ui.plugin_settings import PluginPages  # It builds on this module.
 
-            plugins, folder, sources, restart, cards = self._plugin_arguments
+            plugins, folder, sources, restart = self._plugin_arguments
             self._plugin_pages = PluginPages(
                 self.original,
                 plugins,
@@ -839,9 +939,16 @@ class SettingsDialog(QDialog):
                 self,
                 sources,
                 self.save_and_restart if restart is not None else None,
-                cards,
             )
+            self._plugin_pages.copies_changed.connect(self._copies_changed)
         return self._plugin_pages
+
+    def _copies_changed(self) -> None:
+        self._save_soon(CHANGE_SAVE_MS)
+        row = self.nav.currentRow()
+        self._show_plugin_rows(row)
+        if self.nav.item(row).isHidden():  # The copy shown was removed.
+            self.nav.setCurrentRow(self._row(PLUGIN_SETTINGS))
 
     # Frame ----------------------------------------------------------------------
 
@@ -888,7 +995,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.search.field)
         layout.addWidget(self.nav, 1)
         layout.addWidget(self.search.results, 1)
-        hint = QLabel("Changes apply when you save; autostart applies at once.")
+        hint = QLabel("Changes are saved as you make them.")
         hint.setObjectName("sidebarHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -993,7 +1100,7 @@ class SettingsDialog(QDialog):
         transfer = Card()
         transfer.add_row(
             "Export settings",
-            "Save all settings as shown here to a file, for another computer or as a backup. "
+            "Save all settings to a file, for another computer or as a backup. "
             "Plugin sign-ins are not included.",
             _button("Export…", self.export_settings),
         )
@@ -1016,7 +1123,7 @@ class SettingsDialog(QDialog):
         ]
 
     def export_settings(self) -> None:
-        """Write the settings as shown, unsaved edits included, to a file the user picks."""
+        """Write the settings as shown to a file the user picks."""
         try:
             settings = self.read_settings()
         except ValueError as exc:
@@ -1045,11 +1152,14 @@ class SettingsDialog(QDialog):
         if ask(
             self,
             "Replace all settings?",
-            f"Every setting, including unsaved changes here, is replaced by those in "
-            f"{path.name}. Export the current ones first to keep them.",
+            f"Every setting is replaced by those in {path.name}. Export the current ones "
+            "first to keep them.",
             "Replace",
             kind=WARNING,
         ):
+            # This window closes over the replaced settings: its fields must not win.
+            self.save_timer.stop()
+            self.invalid_edits = ""
             self.replace_all(settings)
 
     def analyze_catalog(self) -> None:
@@ -1193,7 +1303,7 @@ class SettingsDialog(QDialog):
             folders.add_row(
                 "Analyze catalog",
                 "Where many entries pile up that you never open, and what would thin them "
-                "out. Ticked suggestions fill in the settings; Save keeps them.",
+                "out. Ticked suggestions fill in the settings.",
                 self.analyze_button,
             )
         folders.add_row(
@@ -1387,13 +1497,14 @@ class SettingsDialog(QDialog):
         self.autostart.setChecked(actual)
 
     def _use_theme_icons(self) -> None:
-        for row, icon in enumerate(self.nav_icons):
-            self.nav.item(row).setIcon(line_icon(icon, colors().faint, colors().accent))
+        for row, spec in enumerate(self._specs):
+            if isinstance(spec.icon, str):  # A plugin's own icon keeps its colors.
+                self.nav.item(row).setIcon(line_icon(spec.icon, colors().faint, colors().accent))
 
     def add_exclusion(self, *, folder: Path | None = None, pattern: str | None = None) -> None:
         """An exclusion saved elsewhere meanwhile, such as from a result's menu.
 
-        It joins the fields, so a later Save here keeps it instead of dropping it.
+        It joins the fields, so saving them later keeps it instead of dropping it.
         """
         if self._row("Exclusions") not in self._built:
             # Its fields read `original` when they are built.
@@ -1488,26 +1599,73 @@ class SettingsDialog(QDialog):
             attribute_priorities=advanced.attributes,
         )
 
-    def save(self) -> bool:
-        """Validate and store the edits; the dialog stays open for further changes."""
-        self.saved_message.clear()
+    def close_at_quit(self) -> None:
+        """Close as WinLauncher quits: save valid edits still waiting, drop others unasked."""
+        if self.save_timer.isActive():
+            self.save_timer.stop()
+            self._save_edits()
+        self.invalid_edits = ""
+        self.reject()
+
+    def _save_soon(self, delay_ms: int) -> None:
+        """Save the edits after `delay_ms`, unless another edit comes first."""
+        if isValid(self.save_timer):  # Fields still report while the closed window is deleted.
+            self.save_timer.start(delay_ms)
+
+    def _save_edits(self) -> None:
+        """Save the edits if they changed anything; the footer tells what came of it."""
         try:
             settings = self.read_settings()
         except ValueError as exc:
+            self._show_problem(str(exc), invalid=True)
+            return
+        if settings == self.original:
+            self._show_problem("")
+            return
+        try:
+            self._store(settings)
+        except OSError as exc:
+            self._show_problem(f"Not saved: {exc}")
+
+    def save(self) -> bool:
+        """Validate and store the edits now, such as before a restart; a problem is told."""
+        self.save_timer.stop()
+        try:
+            settings = self.read_settings()
+        except ValueError as exc:
+            self._show_problem(str(exc), invalid=True)
             message(self, "Check your settings", str(exc), WARNING)
             return False
         try:
-            if self.persist:
-                self.persist(settings)
+            self._store(settings)
         except OSError as exc:
             message(self, "Settings not saved", str(exc), ERROR)
             return False
+        return True
+
+    def _store(self, settings: Settings) -> None:
+        """Raise OSError when the settings file cannot be written."""
+        if self.persist:
+            self.persist(settings)
         self.result_settings = settings
         self.original = settings
-        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
+        self._show_problem("")
         self.saved_message.setText("Settings saved.")
         self.saved_message_timer.start()
-        return True
+        if self._plugin_pages is not None:
+            self._plugin_pages.show_status()  # Refresh now follows the saved switch.
+
+    def _show_problem(self, problem: str, *, invalid: bool = False) -> None:
+        """Name why the edits are not saved in the footer, until it is cleared.
+
+        Only `invalid` edits make closing ask: typing fixes them, not a full disk.
+        """
+        self.invalid_edits = problem if invalid else ""
+        self.saved_message_timer.stop()
+        self.saved_message.setText(problem)
+        self.saved_message.setProperty("problem", bool(problem))
+        self.saved_message.style().unpolish(self.saved_message)
+        self.saved_message.style().polish(self.saved_message)
 
     def save_and_restart(self) -> None:
         """Keep the edits, then restart WinLauncher, such as to load a new plugin."""

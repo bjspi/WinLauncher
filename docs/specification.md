@@ -29,7 +29,7 @@ how many entries each root lists and, for a chosen depth, how many of them would
 leaves out at least 30 %, the projects switch when projects' subfolders hold 1,000
 entries or more, and a low rank (-20) for up to five of the largest folders from
 1,000 entries of which nothing was opened, each with the entries it touches and the
-opened ones among them; ticked suggestions fill in the dialog, unsaved. Each root
+opened ones among them; ticked suggestions fill in the dialog's fields. Each root
 folder is itself an entry, so `D:\Projects` is found by name; drive roots have no name and are not listed, and an Explorer
 folder outside every root only lends its scope. With application discovery enabled, Start menu
 directories are scanned for launchable entries and HKCU/HKLM App Paths are read in
@@ -550,7 +550,7 @@ free and vertically relative to the screen height, kept on screen. Resizing a
 centered bar keeps it centered. **Center search bar** in the bar's menu, the tray
 menu and Settings → General shows the same state and applies at once; choosing
 it centers the open bar. Widths and position are remembered across starts in
-`<data>/launcher-bar.json`, apart from Settings' Save; an unreadable file only
+`<data>/launcher-bar.json`, apart from the settings; an unreadable file only
 loses them. The Explorer bar keeps its fixed width and dock position.
 
 **File preview** (`file_preview`, default false) under Settings → General lets Alt+P
@@ -814,12 +814,12 @@ plugin work and never prevents WinLauncher from quitting.
 
 Settings has two plugin pages. **Plugins** gets plugins: what the sources offer,
 the problems of the last start, the source list and the plugin folder. **Plugin
-settings** holds one card per loaded plugin, all on one page. A card's header shows
-the plugin's icon (the manifest's `icon`, else the plugin's own, else a plug), its
-name and description, a chevron and the on switch. The other rows are folded at
-first; the chevron or a click on the header unfolds them, and which cards are
-unfolded is remembered at once in `<data>/plugin-cards.json`, apart from Save. A
-plugin that is off shows its header only.
+settings** holds what all plugins share. Each loaded plugin has a page of its own
+with its card, listed indented below Plugin settings with the plugin's icon; these
+entries show only while Plugin settings or one of them is chosen. A card's header
+shows the plugin's icon (the manifest's `icon`, else the plugin's own, else a
+plug), its name and description and the on switch. A plugin that is off shows its
+header only.
 
 **Add copy** on a card adds a further instance of that plugin to `plugin_copies`
 (`id` `<plugin>~<number>`, the lowest number from 2 that is neither configured nor
@@ -829,8 +829,8 @@ the next start. At start each copy whose plugin loaded becomes a plugin of its o
 a subclass with the copy's id and label, suggesting the plugin's keywords and route
 keywords with the number appended, from the same source. A copy of a plugin that
 is not loaded is listed among the problems. A copy's card has its name (shown from
-the next start) and **Remove copy**, which after a confirmation hides the card and
-drops the copy and its settings on save; it stays loaded until the next start,
+the next start) and **Remove copy**, which after a confirmation hides its page and
+drops the copy and its settings; it stays loaded until the next start,
 which deletes the data folder of every copy no longer configured.
 
 Settings store per plugin `id`, `enabled`, `keywords`, `routes` (route id to its
@@ -982,8 +982,8 @@ installation, else `python -m pip install` on WinLauncher's interpreter).
 - **Uninstall** (remote) asks, then deletes the folder; settings and data stay.
 - **Activate** (local) asks, installs the packages, then adds the folder to
   `active_plugins`; **Deactivate** removes it. Both are edits of the settings,
-  saved with the others. An activated folder whose source is no longer listed is
-  dropped on save.
+  saved like the others. An activated folder whose source is no longer listed is
+  dropped when the settings are saved.
 
 Installed and activated plugins are on from the next start (their settings card
 is switched on if it was loaded before). After a change the page offers **Restart
@@ -1021,13 +1021,14 @@ included: every typed word must appear, ignoring case, in the title, description
 or page name; title matches come first. The matches replace the page list while
 text is typed, each with its page below it, and for a plugin card's rows the page
 and the plugin, such as Plugin settings › Jira, so the plugin's name finds them
-too; the first search builds the pages not shown yet. The field, with a magnifier,
-is a shade off the sidebar until it has the focus; opening Settings focuses the page list. Enter or a click opens the page, scrolls to the row, unfolding nothing
-but showing a folded card's header instead, and lights the row up briefly. Enter
-in the field never saves. Esc clears typed text first; then it closes Settings.
+too; a plugin's card is found under Plugin settings and opens the plugin's page. The
+first search builds the pages not shown yet. The field, with a magnifier,
+is a shade off the sidebar until it has the focus; opening Settings focuses the page list. Enter or a click opens the page, scrolls to the row, showing the card's
+header instead for a row hidden with a plugin that is off, and lights the row up
+briefly. Enter in the field never closes Settings. Esc clears typed text first; then it closes Settings.
 
 **Settings → General → Settings file**: **Export…** writes the settings as the
-dialog shows them, unsaved edits included, as the same JSON as `settings.json`, to
+dialog shows them, edits not saved yet included, as the same JSON as `settings.json`, to
 a file the user picks. **Import…** reads such a file, validated like
 `settings.json`; an unreadable or unusable file changes nothing and says why.
 After confirming, every setting is replaced and saved, and Settings reopens
@@ -1171,7 +1172,7 @@ command. Opening Settings, or again, which brings the open window forward, hides
 bar: the bar stays on top of every window, so whatever opened last is in front, and
 the bar returns over Settings when called again. An exclusion added
 from a result's menu meanwhile is saved at once and also joins the open window's
-fields, so its next Save keeps it. The window opens at the size it was last
+fields, so saving them later keeps it. The window opens at the size it was last
 resized to, kept in `settings-window.json` beside the settings rather than in them;
 a smaller screen shrinks it for that time without forgetting the size. Folder
 lists never scroll sideways: a long row is shortened in the middle, and its
@@ -1205,8 +1206,15 @@ Exclude, as after other dialogs.
 Escape in the bar reaches the bar and leaves Settings and its dialogs open;
 Escape in a dialog closes only that dialog with one press.
 
-All other settings apply on Save. Validation or save errors keep the dialog open
-with the edits intact.
+Settings saves itself: a switch, choice or list edit after 0.3 s, typed text once
+typing paused for a second, and whatever still waits when the window closes. Only
+changes are written, and each save applies like any other (`apply_settings`), so
+a new search folder rescans then. There is no Save or Cancel, only **Close**. Edits
+that are not valid yet, such as half-typed JSON rules, are not saved: the footer
+names the problem in red until they are, and closing then asks before it drops
+them. A file that cannot be written is named there too, without asking on close.
+Quitting WinLauncher closes Settings first, saving its valid edits and dropping
+others unasked. Autostart and Center search bar are no settings and apply at once.
 
 Messages and questions use WinLauncher's own dialog instead of a stock message
 box: an icon badge tinted by kind (information, question, update, success,

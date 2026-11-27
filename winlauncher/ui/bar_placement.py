@@ -6,9 +6,9 @@ opens at the same relative spot of whichever screen the cursor is on, until
 the expanded view is deliberately wider than the compact one. Whether the file
 preview was left open is remembered too, so the bar opens the same way.
 
-Like the unfolded plugin cards, this is how the bar looks, not a setting: it is
-written at once, apart from the Settings dialog's Save and Cancel. A file that
-cannot be read or written only loses what was remembered.
+This is how the bar looks, not a setting: it is written at once, apart from the
+settings file. A file that cannot be read or written only loses what was
+remembered.
 """
 
 from __future__ import annotations

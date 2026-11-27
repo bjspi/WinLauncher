@@ -89,7 +89,7 @@ class WebsiteUiTest(unittest.TestCase):
         self.icons = WebsiteIcons()
         self.addCleanup(self.icons.close)
 
-    def test_settings_edit_add_remove_save_and_cancel(self):
+    def test_settings_edit_add_remove_and_save(self):
         original = Settings(roots=(), websites=(AMAZON,))
         saved = []
         dialog = SettingsDialog(original, save=saved.append, website_icons=self.icons)
@@ -100,9 +100,11 @@ class WebsiteUiTest(unittest.TestCase):
         editor.title.setText(YOUTUBE.title)
         editor.url.setText(YOUTUBE.url)
         self.assertEqual(dialog.read_settings().websites[1], YOUTUBE)
-        dialog.reject()
-        self.assertEqual(saved, [])
-        self.assertEqual(dialog.result_settings, original)
+        dialog.reject()  # Closing saves the edits still waiting.
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0].websites[1], YOUTUBE)
+        self.assertEqual(dialog.result_settings, saved[0])
+        saved.clear()
         dialog.deleteLater()
         dialog = SettingsDialog(original, save=saved.append, website_icons=self.icons)
         dialog.websites.title.setText("Amazon DE")

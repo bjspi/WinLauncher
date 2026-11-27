@@ -101,7 +101,6 @@ HIDDEN_SCOPE_CLEANUP_MS = 500
 DETAILS_HEIGHT = 120  # Scan errors and problems in the index status dialog.
 # Explorer follows the result where arrow-key repeats stop, not every row passed.
 EXPLORER_SELECT_DELAY_MS = 120
-PLUGIN_CARDS_FILE = "plugin-cards.json"  # Which plugin settings cards show their details.
 SETTINGS_WINDOW_FILE = "settings-window.json"  # The Settings window's size.
 BAR_PLACEMENT_FILE = "launcher-bar.json"  # The launcher bar's widths and position.
 
@@ -818,7 +817,7 @@ class LauncherController(QObject):
         except OSError as exc:
             messages.message(self.window, "Settings not saved", str(exc), messages.ERROR)
             return
-        if self.settings_dialog is not None:  # Its next Save must keep the new rule.
+        if self.settings_dialog is not None:  # Its next save must keep the new rule.
             self.settings_dialog.add_exclusion(
                 folder=chosen if pattern is None else None, pattern=pattern
             )
@@ -875,7 +874,6 @@ class LauncherController(QObject):
             plugins=self.plugin_refresh,
             plugin_folder=str(self.own_plugin_folder),
             plugin_sources=self.plugin_sources,
-            plugin_cards=self.data_dir / PLUGIN_CARDS_FILE,
             placement=self.placement,
             restart=self.restart,
             replace_all=self.replace_settings,
@@ -1158,6 +1156,8 @@ class LauncherController(QObject):
     # Shutdown -----------------------------------------------------------------
 
     def close(self) -> None:
+        if self.settings_dialog is not None:  # Saves its last edits while all still runs.
+            self.settings_dialog.close_at_quit()
         self._closed = True
         self.keyboard_timer.stop()
         self.watch_timer.stop()
@@ -1176,8 +1176,6 @@ class LauncherController(QObject):
         self.website_icons.close()
         self.tray.hide()
         self.window.hide()
-        if self.settings_dialog is not None:
-            self.settings_dialog.reject()
 
 
 def _details(title: str, text: str) -> QPlainTextEdit:

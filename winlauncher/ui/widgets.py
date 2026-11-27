@@ -23,14 +23,12 @@ from PySide6.QtCore import (
     QSize,
     Qt,
     QTimer,
-    Signal,
 )
 from PySide6.QtGui import (
     QColor,
     QHideEvent,
     QIcon,
     QIntValidator,
-    QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -52,13 +50,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from winlauncher.ui.dialogs import run_modal
-from winlauncher.ui.theme import colors, theme
+from winlauncher.ui.theme import colors
 
 KEY_SPACING = 4
 LARGE_KEY_SPACING = 6
@@ -87,8 +84,7 @@ BUTTON_SPACING = 8  # Between the buttons of a row of them.
 # A dialog's buttons are at least this wide, so a short "OK" is still easy to hit.
 DIALOG_BUTTON_MIN_WIDTH = 100
 ENTRY_ICON_SIZE = QSize(28, 28)
-HEADER_ICON_SIZE = 28  # The icon before a foldable card's title.
-FOLD_ICON_SIZE = QSize(16, 16)
+HEADER_ICON_SIZE = 28  # The icon before a plugin card's title.
 ENTRY_ROW_HEIGHT = 44  # Two lines, such as a name and its state.
 ENTRY_VISIBLE_ROWS = 5  # More entries scroll.
 ENTRY_PEEK_ROW = 0.5  # The part of the next entry a scrolling list shows below them.
@@ -362,13 +358,13 @@ class Card(QFrame):
         self.rows.append((title, description, block))
         return block
 
-    def add_header(self, icon: QIcon, title: str, description: str, control: QWidget) -> FoldButton:
-        """The first row of a foldable card: icon, texts, a fold button, then `control`.
+    def add_header(self, icon: QIcon, title: str, description: str, control: QWidget) -> None:
+        """The first row of a card: icon, texts, then `control`.
 
         The rows added after it are the card's details; `show_details` shows or
-        hides them. Clicking the texts works like the fold button.
+        hides them.
         """
-        header = _ClickableRow()
+        header = QWidget()
         layout = QHBoxLayout(header)
         layout.setContentsMargins(0, 10, 0, 10)
         layout.setSpacing(ROW_SPACING)
@@ -376,14 +372,10 @@ class Card(QFrame):
         picture.setPixmap(icon.pixmap(HEADER_ICON_SIZE, HEADER_ICON_SIZE))
         layout.addWidget(picture, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(_texts(title, description), 1)
-        fold = FoldButton(f"Details of {title}")
-        header.clicked.connect(fold.click)
-        layout.addWidget(fold, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
         self._append(header)
         self.rows.append((title, description, header))
         self.heading = title  # Names the card's details, such as in a search result.
-        return fold
 
     def show_details(self, visible: bool) -> None:
         """Show or hide every row below the header."""
@@ -397,39 +389,6 @@ class Card(QFrame):
             divider.setFixedHeight(1)
             self._layout.addWidget(divider)
         self._layout.addWidget(widget)
-
-
-class FoldButton(QToolButton):
-    """A chevron that unfolds a card's details while checked."""
-
-    def __init__(self, accessible_name: str, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("foldButton")
-        self.setAccessibleName(accessible_name)
-        self.setCheckable(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setIconSize(FOLD_ICON_SIZE)
-        self.toggled.connect(self._use_icon)
-        theme().changed.connect(self._use_icon)
-        self._use_icon()
-
-    def _use_icon(self) -> None:
-        self.setIcon(line_icon("chevron-down" if self.isChecked() else "chevron-right"))
-
-
-class _ClickableRow(QWidget):
-    """A row that reports clicks on its empty parts and texts."""
-
-    clicked = Signal()
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override.
-        if event.button() is Qt.MouseButton.LeftButton and self.rect().contains(event.pos()):
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
 
 
 class EntryList(QListWidget):

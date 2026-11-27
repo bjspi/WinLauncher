@@ -1322,8 +1322,6 @@ class PluginUiTest(unittest.TestCase):
         )
         self.addCleanup(dialog.deleteLater)
         dialog.build_all_pages()
-        for card in dialog.plugin_pages.cards:
-            card.fold.setChecked(True)
         dialog.show()
         self.addCleanup(dialog.hide)
         # The Websites page would ask the network for favicons.
@@ -1390,14 +1388,10 @@ class PluginUiTest(unittest.TestCase):
         self.addCleanup(dialog.deleteLater)
         card = dialog.plugin_pages.cards[0]
         self.assertIn("3 items", card.status.text())
-        self.assertIn(card, dialog.plugin_pages.settings_sections)
-        self.assertFalse(card.keywords.isVisibleTo(card))  # Folded until unfolded.
-        card.fold.click()
         self.assertTrue(card.keywords.isVisibleTo(card))
-        card.enabled.setChecked(False)  # Turned off, the card folds to its header.
+        card.enabled.setChecked(False)  # Turned off, the card shows its header only.
         self.assertFalse(card.keywords.isVisibleTo(card))
         self.assertTrue(card.enabled.isVisibleTo(card))
-        self.assertFalse(card.fold.isEnabled())
         card.enabled.setChecked(True)
         self.assertTrue(card.keywords.isVisibleTo(card))
         card.keywords.setText("ff, fff")
@@ -1463,7 +1457,7 @@ class PluginUiTest(unittest.TestCase):
         self.assertEqual(dialog.read_settings().plugins[0].options["folders"], "")
 
     def test_the_card_shows_the_manifests_icon(self):
-        from winlauncher.ui.plugin_settings import _plugin_icon
+        from winlauncher.ui.plugin_settings import plugin_icon
         from winlauncher.ui.widgets import line_icon
 
         folder = self.root.parent / "jira"
@@ -1477,32 +1471,33 @@ class PluginUiTest(unittest.TestCase):
         )
         plug = line_icon("plug").cacheKey()
         source = PluginSource("jira", folder / "plugin.py")
-        self.assertNotEqual(_plugin_icon(self.plugin, source).cacheKey(), plug)
-        self.assertEqual(_plugin_icon(self.plugin, PluginSource("fake")).cacheKey(), plug)
+        self.assertNotEqual(plugin_icon(self.plugin, source).cacheKey(), plug)
+        self.assertEqual(plugin_icon(self.plugin, PluginSource("fake")).cacheKey(), plug)
 
-    def test_unfolded_cards_are_remembered_across_dialogs(self):
-        from winlauncher.ui.settings import SettingsDialog
+    def test_each_plugin_has_a_page_listed_below_plugin_settings_while_it_is_chosen(self):
+        from winlauncher.ui.settings import PLUGIN_SETTINGS, SettingsDialog
 
-        remembered = self.root.parent / "plugin-cards.json"
-
-        def open_dialog() -> SettingsDialog:
-            dialog = SettingsDialog(
-                self.controller.settings,
-                website_icons=self.controller.website_icons,
-                plugins=self.controller.plugin_refresh,
-                plugin_cards=remembered,
-            )
-            self.addCleanup(dialog.deleteLater)
-            return dialog
-
-        open_dialog().plugin_pages.cards[0].fold.click()
-        self.assertEqual(json.loads(remembered.read_text(encoding="utf-8")), ["fake"])
-        card = open_dialog().plugin_pages.cards[0]
-        self.assertTrue(card.fold.isChecked())
-        self.assertTrue(card.keywords.isVisibleTo(card))
-        remembered.write_text("not json", encoding="utf-8")
-        with self.assertLogs("winlauncher.ui.plugin_settings", "WARNING"):
-            self.assertFalse(open_dialog().plugin_pages.cards[0].fold.isChecked())
+        dialog = SettingsDialog(
+            self.controller.settings,
+            website_icons=self.controller.website_icons,
+            plugins=self.controller.plugin_refresh,
+        )
+        self.addCleanup(dialog.deleteLater)
+        titles = [dialog.nav.item(row).text() for row in range(dialog.nav.count())]
+        parent = titles.index(PLUGIN_SETTINGS)
+        row = parent + 1
+        self.assertEqual(titles[row], self.plugin.label)
+        self.assertTrue(dialog.nav.item(row).isHidden())  # Only below Plugin settings.
+        dialog.nav.setCurrentRow(parent)
+        self.assertFalse(dialog.nav.item(row).isHidden())
+        dialog.nav.setCurrentRow(row)
+        card = dialog.plugin_pages.cards[0]
+        self.assertTrue(card.isVisibleTo(dialog.pages.currentWidget()))
+        self.assertNotIn(card, dialog.plugin_pages.settings_sections)
+        dialog.nav.setCurrentRow(0)
+        self.assertTrue(dialog.nav.item(row).isHidden())
+        dialog.show_page(self.plugin.label)  # Opened from search, it lists them again.
+        self.assertFalse(dialog.nav.item(row).isHidden())
 
 
 class PluginCopyPagesTest(unittest.TestCase):

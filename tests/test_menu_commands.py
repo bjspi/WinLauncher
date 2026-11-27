@@ -294,7 +294,7 @@ class MenuCommandUiTest(unittest.TestCase):
         self.icons = WebsiteIcons()
         self.addCleanup(self.icons.close)
 
-    def test_settings_edit_add_remove_save_and_cancel(self):
+    def test_settings_edit_add_remove_and_save(self):
         original = Settings(roots=(), menu_commands=(TERMINAL,))
         saved = []
         dialog = SettingsDialog(original, save=saved.append, website_icons=self.icons)
@@ -312,8 +312,12 @@ class MenuCommandUiTest(unittest.TestCase):
         self.assertIn("Editor", editor.list.item(1).text())
         editor.list.setCurrentRow(1)
         self.assertEqual(editor.show_for.currentText(), "Folders and files")
-        dialog.reject()
-        self.assertEqual(saved, [])
+        dialog.reject()  # Closing saves the edits still waiting.
+        self.assertEqual(
+            [settings.menu_commands for settings in saved],
+            [(MenuCommand("Windows Terminal", TERMINAL.command), EDITOR)],
+        )
+        saved.clear()
         dialog.deleteLater()
         dialog = SettingsDialog(original, save=saved.append, website_icons=self.icons)
         dialog.menu_commands.command.setText("cmd.exe")

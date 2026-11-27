@@ -71,7 +71,7 @@ flowchart TD
 | `platform/file_dialog.py` | Quick Switch: read an Open/Save dialog's folder and drive its file-name box |
 | `ui/preview.py` | Alt+P's preview: bounded loading of images, PDF pages, Markdown, code colored by Pygments, text and folders off the GUI thread, plugin items' own previews, and its pane |
 | `platform/shell_menu.py` | Explorer's classic context menu for a result, through the shell's COM vtables |
-| `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with one foldable card per plugin |
+| `ui/plugins.py`, `ui/plugin_settings.py` | Plugin refresh timers, questions from plugin workers, item icons, the Plugin settings page with a page per plugin below it |
 | `ui/answers.py` | Asks the plugins that answer typed text, on their own worker, for the calculator's row |
 | `ui/stall_tracer.py` | Logs the GUI thread's stack in the middle of an event-loop stall |
 | `ui/garbage.py` | Runs Python's cycle collector on the GUI thread only |
